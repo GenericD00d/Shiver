@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The debug overlay, and the only place cleartext is allowed.
+
+  `tauri android dev` points the webview at the vite dev server over http — on the emulator's
+  10.0.2.2, or the host's address on the LAN for a real device — so a debug build that forbade
+  cleartext would simply show a blank page. This replaces the strict `main` config for debug builds
+  only, and matches what `app/build.gradle.kts` already does with `usesCleartextTraffic`.
+
+  Release builds never see this file, and so never permit cleartext. That is the one that ships.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

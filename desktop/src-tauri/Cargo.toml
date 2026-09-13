@@ -1,0 +1,47 @@
+[package]
+name = "shiver"
+version = "0.1.0"
+description = "A multi-server desktop and mobile client for Sharkord"
+authors = ["Shiver"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+# the _lib suffix keeps the library name from colliding with the binary name on windows
+name = "shiver_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `unstable` is what exposes Window::add_child, the multiwebview api Shiver's server rail is built on
+tauri = { version = "2", features = ["unstable"] }
+tauri-plugin-opener = "2"
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+thiserror = "2"
+
+# the os credential store has no android/ios backend, so secrets are keychain-backed on desktop only
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+# Only for resetting the camera and microphone permissions WebView2 remembers per site. Tauri hands
+# out the `ICoreWebView2Controller` and nothing above it exposes the profile those live on, so this
+# is the one place Shiver talks to WebView2 directly. Versions match what Tauri already resolves, so
+# no second copy of the bindings is pulled in.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows-core = "0.61"

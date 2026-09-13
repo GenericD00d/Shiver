@@ -1,0 +1,174 @@
+import { useCallback, useEffect, useState } from 'react';
+
+import { api, errorMessage } from '../api';
+import type { PushStatus } from '../types';
+
+/** Distributors people actually have, so the list reads as names rather than package ids. */
+const KNOWN: Record<string, string> = {
+  'io.heckel.ntfy': 'ntfy',
+  'org.unifiedpush.distributor.nextpush': 'NextPush',
+  'org.unifiedpush.distributor.fcm': 'UnifiedPush via FCM',
+  'com.sunup.distributor': 'Sunup'
+};
+
+const label = (packageName: string) => KNOWN[packageName] ?? packageName;
+
+/** What each server's row says under its name. The failure is the one worth explaining. */
+const SERVER_STATE: Record<string, string> = {
+  off: 'Will not wake this phone',
+  waiting: 'Waiting for the distributor to answer…',
+  ready: 'Ready — this server can wake you',
+  failed: 'The distributor refused. Open it, check it is set up, then turn this off and on again'
+};
+
+/**
+ * Being told about messages while Shiver is closed.
+ *
+ * Shiver's notifications come from its own connections, which only run while it does — so once
+ * Android has killed the app, the phone goes quiet. The usual fix is Google FCM, which would make a
+ * self-hosted client depend on Google. This is the other way: a **distributor** app holds one
+ * connection on behalf of every app on the phone, and hands each one an address its server can post
+ * to. The battery cost is paid once, by the distributor, rather than once per app.
+ *
+ * It needs two things the user has to know about, which is why this screen exists rather than being
+ * silent: a distributor installed, and the Shiver plugin on the server. Either missing means Shiver
+ * behaves exactly as it did before — quiet when closed — so the failure mode is honest, not broken.
+ */
+export const BackgroundNotifications = () => {
+  const [status, setStatus] = useState<PushStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const read = useCallback(() => {
+    api
+      .pushStatus()
+      .then(setStatus)
+      .catch(() => setStatus(null));
+  }, []);
+
+  useEffect(read, [read]);
+
+  // an endpoint arrives as a broadcast some moments after the distributor is picked, so the screen
+  // is told rather than left showing "0 of 2" until something else redraws it
+  useEffect(() => {
+    const stop = api.onPush(read);
+
+    return () => {
+      void stop.then((unlisten) => unlisten());
+    };
+  }, [read]);
+
+  const chooseServer = useCallback(
+    async (entryId: string, wanted: boolean) => {
+      setError(null);
+
+      try {
+        await api.setPushServer(entryId, wanted);
+        read();
+      } catch (cause) {
+        setError(errorMessage(cause));
+      }
+    },
+    [read]
+  );
+
+  const choose = useCallback(
+    async (distributor: string) => {
+      setBusy(true);
+      setError(null);
+
+      try {
+        await api.setPushDistributor(distributor);
+        read();
+      } catch (cause) {
+        setError(errorMessage(cause));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [read]
+  );
+
+  if (!status) return null;
+
+  if (!status.distributors.length) {
+    return (
+      <>
+        <p className="hint">
+          Shiver can only notify you while it is running. To be told about messages after Android has
+          closed it, install a UnifiedPush distributor — <strong>ntfy</strong> is the usual one, and
+          works against your own server if you self-host it. Shiver will use it as soon as it is
+          there.
+        </p>
+        <p className="hint">
+          This also needs the Shiver plugin installed on the server doing the notifying. Without
+          either, nothing breaks — Shiver just stays quiet while it is closed, as it does now.
+        </p>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <p className="hint">
+        A distributor holds one connection for every app on your phone, so Shiver can be told about
+        messages without running itself. The server also needs the Shiver plugin; without it that
+        server simply cannot wake you.
+      </p>
+
+      {error ? <p className="error">{error}</p> : null}
+
+      <ul className="servers">
+        {status.distributors.map((distributor) => (
+          <li key={distributor}>
+            <button
+              type="button"
+              className="server"
+              disabled={busy}
+              onClick={() => void choose(distributor)}
+            >
+              <span className="server-icon">{label(distributor).slice(0, 1).toUpperCase()}</span>
+
+              <span className="server-text">
+                <span className="server-name">{label(distributor)}</span>
+                <span className="server-origin">
+                  {status.chosen === distributor ? 'In use' : 'Tap to use this one'}
+                </span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      {status.chosen ? (
+        <>
+          <h3 className="section">Which servers may wake you</h3>
+
+          <p className="hint">
+            One at a time, because each one is a separate address this phone can be reached on, and
+            a server you turn on can tell when you have unread messages even while Shiver is closed.
+            Nothing is registered until you say so here.
+          </p>
+
+          {status.servers.length === 0 ? (
+            <p className="hint">No servers yet. Add one and it will appear here.</p>
+          ) : null}
+
+          {status.servers.map((server) => (
+            <label className="checkbox" key={server.id}>
+              <input
+                type="checkbox"
+                checked={server.wanted}
+                onChange={(event) => void chooseServer(server.id, event.target.checked)}
+              />
+              <span>
+                {server.name}
+                <small>{SERVER_STATE[server.state]}</small>
+              </span>
+            </label>
+          ))}
+        </>
+      ) : null}
+    </>
+  );
+};

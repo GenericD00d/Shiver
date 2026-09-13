@@ -1,0 +1,1094 @@
+/* these are Sharkord's own dark theme, converted from the oklch values in its index.css, so a
+   default Shiver and a default Sharkord look like the same application */
+:root {
+  --shiver-rail-width: 72px;
+  --shiver-bg: #0a0a0a;
+  --shiver-rail: #171717;
+  --shiver-accent: #e5e5e5;
+  --shiver-on-accent: #171717;
+  --shiver-surface: #262626;
+  --shiver-surface-hover: #333333;
+  --shiver-border: rgb(255 255 255 / 10%);
+  --shiver-text: #fafafa;
+  --shiver-text-dim: #a1a1a1;
+  --shiver-danger: #ff6467;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: transparent;
+  color: var(--shiver-text);
+  font: 14px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  height: 100%;
+}
+
+/* the rail is the only part of the shell always visible: the active server webview covers the rest */
+.rail {
+  width: var(--shiver-rail-width);
+  flex: 0 0 var(--shiver-rail-width);
+  height: 100%;
+  background: var(--shiver-rail);
+  border-right: 1px solid var(--shiver-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.rail::-webkit-scrollbar {
+  display: none;
+}
+
+.rail-item {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  border: none;
+  padding: 0;
+  border-radius: 16px;
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 600;
+  transition: border-radius 120ms ease, background 120ms ease;
+}
+
+.rail-item:hover {
+  border-radius: 14px;
+  background: var(--shiver-surface-hover);
+}
+
+.rail-item.active {
+  border-radius: 14px;
+  box-shadow: 0 0 0 2px var(--shiver-accent);
+}
+
+/* The drop target extends into the gaps either side of a tile. The negative margin cancels the
+   padding, so the rail looks identical while the droppable box is 8px taller. */
+.rail-slot {
+  flex: 0 0 auto;
+  padding: 4px 0;
+  margin: -4px 0;
+}
+
+/* the edges of a tile reorder, the centre merges, so the two need to look different: a line where
+   the item would land, versus a ring around the tile it would join */
+.rail-item,
+.rail-folder-tile {
+  position: relative;
+}
+
+.rail-item.insert-before::after,
+.rail-item.insert-after::after,
+.rail-folder-tile.insert-before::after,
+.rail-folder-tile.insert-after::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--shiver-accent);
+}
+
+.rail-item.insert-before::after,
+.rail-folder-tile.insert-before::after {
+  top: -6px;
+}
+
+.rail-item.insert-after::after,
+.rail-folder-tile.insert-after::after {
+  bottom: -6px;
+}
+
+.rail-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* the tile used to clip this, which also clipped anything meant to overhang it: the unread badge
+     and, less visibly, the drop indicator, whose line sits 6px outside the tile and so never drew
+     on a server at all. the icon rounds itself now and the tile clips nothing. `inherit` follows
+     the tile through its hover and merge-target radii, transition included. */
+  border-radius: inherit;
+  transition: border-radius 120ms ease;
+}
+
+.rail-add {
+  background: var(--shiver-surface);
+  color: var(--shiver-accent);
+  font-size: 24px;
+  line-height: 1;
+}
+
+/* dropping a server onto another makes a folder of the two, so that target reads differently
+   from a plain reorder */
+.rail-item.merge-target {
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--shiver-accent);
+}
+
+.rail-folder {
+  width: 48px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+/* collapsed, the tile is a 2x2 preview of the folder's first four servers */
+.rail-folder-tile {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  border: none;
+  padding: 4px;
+  border-radius: 16px;
+  background: var(--shiver-surface);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: border-radius 120ms ease, background 120ms ease;
+}
+
+.rail-folder-tile:hover {
+  border-radius: 14px;
+  background: var(--shiver-surface-hover);
+}
+
+.rail-folder-tile.drop-target {
+  box-shadow: 0 0 0 2px var(--shiver-accent);
+}
+
+.rail-folder-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+}
+
+.rail-folder-mini {
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--shiver-surface-hover);
+  color: var(--shiver-text);
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.rail-folder-mini img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* expanded, the tile collapses to a small marker and the members list below it */
+.rail-folder-tile.expanded {
+  height: 20px;
+  flex: 0 0 20px;
+  border-radius: 10px;
+  padding: 0;
+}
+
+.rail-folder-open {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--shiver-text-dim);
+}
+
+.rail-folder-contents {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-radius: 16px;
+  background: var(--shiver-bg);
+}
+
+.rail-item.in-folder {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 13px;
+  font-size: 14px;
+}
+
+/* Unread on a server icon, matching the bell's badge because they count the same thing, and
+   overhanging the tile the way the bell's does. That is why `.rail-item` no longer clips its
+   contents: see `.rail-item img`, which now rounds itself instead.
+
+   Pale with dark text, which is Sharkord's own unread badge (`bg-primary text-primary-foreground`)
+   rather than Shiver's invention. It also frees the colour red: Sharkord paints a badge red when it
+   is a mention, and Shiver paints the offline mark red, so red now means something is *wanted from
+   you* rather than being the ordinary colour of having messages. */
+.rail-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--shiver-text);
+  color: var(--shiver-rail);
+  font-size: 9px;
+  line-height: 16px;
+  font-weight: 700;
+  pointer-events: none;
+  /* the same hairline as the status dot, so the two badges on a tile match */
+  box-shadow: 0 0 0 1px var(--shiver-rail);
+}
+
+/* A server that is not answering, marked on the icon itself rather than beside it.
+
+   A permanent dot on every icon is a light that is on when nothing is wrong, which is nearly
+   always, so it stops being read. This appears only when something needs attention.
+
+   The exclamation is cut *out* of the red rather than drawn on it, so the server's own icon shows
+   through the mark and the tile still reads as that server. `border-radius: inherit` keeps the
+   overlay on the tile's shape through its hover and merge-target radii. */
+.rail-offline {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.rail-offline svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.rail-spacer {
+  flex: 1 1 auto;
+  min-height: 8px;
+}
+
+.rail-divider {
+  width: 32px;
+  height: 1px;
+  flex: 0 0 1px;
+  background: var(--shiver-border);
+}
+
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* the bell overlay: its own webview floating in the space the bridge reserves at the right end of
+   Sharkord's top bar, so the page is transparent behind the collapsed bell */
+.overlay-root,
+.overlay-root body,
+.overlay-root #root {
+  background: transparent;
+}
+
+/* The bell's webview is a fixed 48x48 that never resizes, so the button simply centres in it. */
+.bell-root {
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+/* the same shape as the rail's settings icon, so the two read as one set of Shiver controls */
+.icon-button {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 12px;
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  transition: border-radius 120ms ease, background 120ms ease;
+}
+
+.icon-button:hover,
+.icon-button.active {
+  background: var(--shiver-surface-hover);
+}
+
+/* the rail's badge, and for the reason given there: the two count the same thing */
+.icon-button .badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--shiver-text);
+  color: var(--shiver-rail);
+  font-size: 9px;
+  line-height: 16px;
+  font-weight: 700;
+}
+
+/* fills its own webview, which the core has already sized and placed under the bell */
+.popup {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--shiver-border);
+  border-bottom: 1px solid var(--shiver-border);
+  background: var(--shiver-rail);
+  overflow: hidden;
+}
+
+.popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--shiver-border);
+}
+
+.popup-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.popup-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 12px 12px;
+}
+
+.popup-body .empty {
+  margin: 16px 0;
+  font-size: 13px;
+}
+
+.popup-body .feed-item {
+  padding: 10px 0;
+}
+
+/* the content area is empty whenever a server webview is on top of it */
+.content {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.panel-header .actions {
+  margin-top: 0;
+}
+
+.panel-header h1 {
+  margin-bottom: 4px;
+}
+
+.panel-header p.hint {
+  margin-bottom: 0;
+}
+
+.empty {
+  color: var(--shiver-text-dim);
+  max-width: 460px;
+}
+
+.feed,
+.dm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-width: 720px;
+}
+
+.feed-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--shiver-border);
+}
+
+.feed-item.read {
+  opacity: 0.55;
+}
+
+.feed-item img,
+.feed-item .fallback,
+.dm-row img,
+.dm-row .fallback {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--shiver-surface);
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.feed-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.feed-body p {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.feed-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.dim {
+  color: var(--shiver-text-dim);
+  font-size: 12px;
+}
+
+button.small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* The DM inbox mirrors Sharkord's own per-server DM list: same 288px column (w-72), same p-2
+   container, same row metrics (rounded, px-2 py-1.5, text-sm, gap-2, 24px avatar), same
+   muted-foreground text turning accent on hover. */
+.dm-layout {
+  display: flex;
+  height: 100%;
+}
+
+.dm-sidebar {
+  width: 288px;
+  flex: 0 0 288px;
+  height: 100%;
+  padding: 8px;
+  background: var(--shiver-rail);
+  border-right: 1px solid var(--shiver-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.dm-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  color: var(--shiver-text-dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dm-close {
+  border: none;
+  background: none;
+  color: var(--shiver-text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.dm-close:hover {
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+}
+
+.dm-search {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 4px;
+  background: var(--shiver-bg);
+  color: var(--shiver-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.dm-search:focus {
+  outline: 1px solid var(--shiver-accent);
+  outline-offset: -1px;
+}
+
+.dm-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dm-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--shiver-text-dim);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dm-item:hover,
+.dm-item.selected {
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+}
+
+.dm-item img,
+.dm-avatar {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--shiver-surface-hover);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--shiver-text);
+}
+
+.dm-item-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.dm-item-name,
+.dm-item-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-item-meta {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.dm-item-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.dm-error {
+  margin: 0;
+  padding: 8px;
+  border-radius: 4px;
+  background: rgb(255 100 103 / 12%);
+  color: var(--shiver-danger);
+  font-size: 12px;
+}
+
+.dm-empty {
+  margin: 0;
+  padding: 16px 8px;
+  color: var(--shiver-text-dim);
+  font-size: 12px;
+}
+
+.dm-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+  background: var(--shiver-bg);
+  color: var(--shiver-text-dim);
+  font-size: 13px;
+}
+
+.dm-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel {
+  height: 100%;
+  background: var(--shiver-bg);
+  padding: 32px;
+  overflow-y: auto;
+}
+
+/* a server webview is native and paints over any html, so Shiver's "modal" is only ever shown with
+   the active server hidden. the backdrop is what makes it read as a dialog rather than a page. */
+.modal-backdrop {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--shiver-bg);
+  overflow-y: auto;
+}
+
+.card {
+  width: 100%;
+  max-width: 420px;
+  padding: 24px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 12px;
+  background: var(--shiver-rail);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.45);
+}
+
+.card h1 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.card p.hint {
+  margin: 0 0 20px;
+  color: var(--shiver-text-dim);
+  font-size: 13px;
+}
+
+.card .field:last-of-type {
+  margin-bottom: 20px;
+}
+
+.card .actions {
+  justify-content: flex-end;
+}
+
+.panel h1 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.panel p.hint {
+  margin: 0 0 24px;
+  color: var(--shiver-text-dim);
+}
+
+.field {
+  display: block;
+  margin-bottom: 16px;
+  max-width: 420px;
+}
+
+.field span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--shiver-text-dim);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.field input[type='text'] {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 8px;
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+  font: inherit;
+}
+
+.field input[type='text']:focus {
+  outline: 2px solid var(--shiver-accent);
+  outline-offset: -1px;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.field-row input[type='color'] {
+  width: 44px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--shiver-border);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.field-row input[type='range'] {
+  flex: 1;
+  max-width: 260px;
+  accent-color: var(--shiver-accent);
+}
+
+/* fixed width so the row does not shuffle as the number goes from 5% to 250% */
+.volume-readout {
+  min-width: 46px;
+  color: var(--shiver-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 520px;
+  margin-bottom: 16px;
+}
+
+.checkbox input {
+  margin-top: 3px;
+}
+
+.checkbox small {
+  display: block;
+  color: var(--shiver-text-dim);
+}
+
+button.primary,
+button.ghost {
+  padding: 9px 16px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--shiver-accent);
+  color: var(--shiver-on-accent);
+  font-weight: 600;
+}
+
+button.ghost {
+  background: transparent;
+  border-color: var(--shiver-border);
+  color: var(--shiver-text);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.error {
+  color: var(--shiver-danger);
+  margin: 0 0 16px;
+  max-width: 420px;
+}
+
+.preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  margin-bottom: 20px;
+  padding: 12px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 10px;
+  background: var(--shiver-surface);
+}
+
+.preview img,
+.preview .fallback {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--shiver-surface-hover);
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+}
+
+.preview strong {
+  display: block;
+}
+
+.preview small {
+  color: var(--shiver-text-dim);
+}
+
+.menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 8px;
+  background: var(--shiver-surface);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+}
+
+.menu button {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--shiver-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu button:hover {
+  background: var(--shiver-surface-hover);
+}
+
+.menu button.danger {
+  color: var(--shiver-danger);
+}
+
+.menu hr {
+  margin: 4px 6px;
+  border: none;
+  border-top: 1px solid var(--shiver-border);
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Global voice controls
+
+   These live in the rail because the rail is the only part of the shell a server webview never
+   covers, which is what makes the call reachable from any server. 72px is not much to work with,
+   so the tile leans on its tooltip for the full names and keeps the buttons legible instead.
+   --------------------------------------------------------------------------------------------- */
+
+.voice-tile {
+  width: 66px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 2px;
+  border-radius: 8px;
+  background: var(--shiver-surface);
+}
+
+.voice-where {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.voice-channel,
+.voice-server {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-channel {
+  font-size: 10px;
+  font-weight: 600;
+  /* green is Sharkord's own colour for a channel you are connected to */
+  color: #05df72;
+}
+
+.voice-server {
+  font-size: 9px;
+  color: var(--shiver-text-dim);
+}
+
+.voice-buttons {
+  display: flex;
+  gap: 1px;
+  justify-content: center;
+}
+
+.voice-button {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--shiver-text-dim);
+  cursor: pointer;
+}
+
+.voice-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.voice-button:hover:not(:disabled) {
+  background: var(--shiver-surface-hover);
+  color: var(--shiver-text);
+}
+
+.voice-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* muted and deafened use the same red Sharkord marks its own controls with, so the state reads the
+   same whichever copy of the control the user happens to be looking at */
+.voice-button.muted {
+  color: var(--shiver-danger);
+}
+
+.voice-button.leave:hover {
+  background: var(--shiver-danger);
+  color: #ffffff;
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Connecting: Shiver's own view of a server whose client is not up yet
+
+   With the message cache on this is the saved messages, so the server can be read immediately;
+   with it off it is the loading screen DESIGN.md specifies as the default. Both are read-only:
+   the real client takes the area back the moment it has connected.
+   --------------------------------------------------------------------------------------------- */
+
+@keyframes shiver-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 2px solid var(--shiver-border);
+  border-top-color: var(--shiver-accent);
+  border-radius: 50%;
+  animation: shiver-spin 0.8s linear infinite;
+}
+
+.spinner.small {
+  width: 11px;
+  height: 11px;
+  border-width: 1.5px;
+}
+
+/* What Shiver shows while a server comes up, and when it does not answer. A spinner and a sentence:
+   Shiver used to draw the server's last messages here from a local cache, and it was never worth
+   it — every version of it was a partial copy of a client Shiver exists not to reproduce. */
+.connecting {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--shiver-text-dim);
+}
+
+.connecting p {
+  margin: 0;
+}
+
+.connecting-failed {
+  color: var(--shiver-text);
+  font-size: 15px;
+}
+
+/* Recording a system-wide shortcut. The field is a button because it is operated by pressing keys
+   into it rather than typing text, and a real input would try to insert what it captured. */
+.hotkey {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hotkey-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 6px;
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hotkey-input.recording {
+  border-color: var(--shiver-accent);
+  color: var(--shiver-text-dim);
+}
+
+.hotkey-hint {
+  flex: 1 0 100%;
+  color: var(--shiver-danger);
+}

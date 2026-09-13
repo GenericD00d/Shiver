@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  No cleartext, said to the platform.
+
+  Shiver already refuses http everywhere it matters: a server cannot be added, signed in to, or
+  opened as a socket over it, and there is deliberately no exemption for localhost or a private
+  address (`model.rs` normalisation, `login.rs`). This says the same thing one level down, where
+  the platform enforces it rather than Shiver — so a request that somehow got past the Rust, from a
+  dependency or from a server's own page, still does not leave the device in the clear.
+
+  The debug build overlays this file (`src/debug/res/xml/`) to allow the dev server, which vite
+  serves over http.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <!-- the system store only. User-added CAs are deliberately not trusted: Shiver's whole
+                 threat model is a server the user does not control, and a certificate installed on
+                 the device would let one of them sit in the middle of every other. -->
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
