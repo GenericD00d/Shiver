@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Shiver",
-  "version": "0.1.2-test12",
+  "version": "0.1.2",
   "identifier": "com.shiver.mobile",
   "build": {
     "beforeDevCommand": "bun run build:bridge && bun run dev",
@@ -19,9 +19,6 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "android": {
-      "versionCode": 1011
-    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

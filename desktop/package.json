@@ -1,7 +1,7 @@
 {
   "name": "shiver",
   "private": true,
-  "version": "0.1.2-test12",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",

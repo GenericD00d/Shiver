@@ -3468,7 +3468,7 @@ dependencies = [
 
 [[package]]
 name = "shiver-mobile"
-version = "0.1.2-test12"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
@@ -3492,7 +3492,7 @@ dependencies = [
 
 [[package]]
 name = "shiver-sharkord"
-version = "0.1.2-test12"
+version = "0.1.2"
 dependencies = [
  "futures-util",
  "serde_json",

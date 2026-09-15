@@ -1,6 +1,6 @@
 [package]
 name = "shiver"
-version = "0.1.2-test12"
+version = "0.1.2"
 description = "A multi-server desktop and mobile client for Sharkord"
 authors = ["Shiver"]
 edition = "2021"

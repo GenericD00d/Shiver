@@ -1,6 +1,6 @@
 [package]
 name = "shiver-sharkord"
-version = "0.1.2-test12"
+version = "0.1.2"
 description = "Shiver's read-only client for Sharkord's tRPC-over-WebSocket protocol"
 edition = "2021"
 rust-version = "1.77"
