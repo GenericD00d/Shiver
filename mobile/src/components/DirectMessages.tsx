@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { api } from '../api';
 import type { DmEntry } from '../types';
@@ -50,48 +50,112 @@ const when = (at: number | null) => {
  */
 export const DirectMessages = ({ onOpen }: Props) => {
   const [dms, setDms] = useState<DmEntry[] | null>(null);
+  const [query, setQuery] = useState('');
 
+  /**
+   * Loaded on arrival and again whenever the core hears from a server.
+   *
+   * Once was not enough, and this is why the list looked broken: Shiver holds no socket to the
+   * server it is *showing*, so leaving that server for this screen is the moment its connection
+   * starts — and connecting means a websocket, `connectionParams`, a handshake, `joinServer` and
+   * then `dms.get`. All of that lands well after this screen has mounted. Fetching once on mount
+   * therefore asked for the list at the one moment it was guaranteed to be least complete, and
+   * nothing ever asked again: a screen that said "no conversations" while the conversations were
+   * arriving behind it.
+   *
+   * `onUnread` fires from the same `publish` that follows a server being read — see the watch loop,
+   * where `remember_dms` is immediately followed by `recount`. So every server that finishes
+   * connecting brings this list up to date as it arrives, rather than the user having to leave and
+   * come back.
+   */
   useEffect(() => {
-    api
-      .listDms()
-      .then(setDms)
-      .catch(() => setDms([]));
+    let live = true;
+
+    const load = () => {
+      api
+        .listDms()
+        .then((next) => {
+          if (live) setDms(next);
+        })
+        .catch(() => {
+          if (live) setDms([]);
+        });
+    };
+
+    load();
+
+    const pending = api.onUnread(load);
+
+    return () => {
+      live = false;
+      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
+    };
   }, []);
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+
+    if (!needle) return dms ?? [];
+
+    // name or server, the same two desktop matches on: those are the two things on a row, and
+    // searching what is not shown is how a search box gets a reputation for being broken
+    return (dms ?? []).filter(
+      (dm) =>
+        dm.userName.toLowerCase().includes(needle) ||
+        dm.serverName.toLowerCase().includes(needle)
+    );
+  }, [dms, query]);
 
   if (dms === null) return <p className="hint">Looking…</p>;
 
   if (!dms.length) {
     return (
       <p className="hint">
-        No conversations on your other servers yet. Shiver finds them on the servers it is watching,
-        which is every server but the one you are looking at.
+        No conversations yet. Every server you are signed in to is listed here together, so this is
+        all of them rather than one server's.
       </p>
     );
   }
 
   return (
-    <ul className="servers">
-      {dms.map((dm) => (
-        <li key={`${dm.entryId}:${dm.channelId}`}>
-          <button
-            type="button"
-            className="server"
-            onClick={() => onOpen(dm.entryId, dm.userName)}
-          >
-            <span className="server-icon">{initial(dm.userName)}</span>
+    <>
+      <input
+        className="dm-search"
+        type="text"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Search"
+        spellCheck={false}
+        autoComplete="off"
+      />
 
-            <span className="server-text">
-              <span className="server-name">{dm.userName}</span>
-              <span className="server-origin">
-                {dm.accountLabel ? `${dm.serverName} · as ${dm.accountLabel}` : dm.serverName}
+      {filtered.length === 0 ? (
+        <p className="hint">Nobody by that name.</p>
+      ) : null}
+
+      <ul className="servers">
+        {filtered.map((dm) => (
+          <li key={`${dm.entryId}:${dm.channelId}`}>
+            <button
+              type="button"
+              className="server"
+              onClick={() => onOpen(dm.entryId, dm.userName)}
+            >
+              <span className="server-icon">{initial(dm.userName)}</span>
+
+              <span className="server-text">
+                <span className="server-name">{dm.userName}</span>
+                <span className="server-origin">
+                  {dm.accountLabel ? `${dm.serverName} · as ${dm.accountLabel}` : dm.serverName}
+                </span>
               </span>
-            </span>
 
-            {/* what the list is sorted by, said out loud */}
-            <span className="dm-when">{when(dm.lastMessageAt)}</span>
-          </button>
-        </li>
-      ))}
-    </ul>
+              {/* what the list is sorted by, said out loud */}
+              <span className="dm-when">{when(dm.lastMessageAt)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 };

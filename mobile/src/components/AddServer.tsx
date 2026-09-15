@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 
 import { api, errorMessage } from '../api';
+import type { ServerInfo } from '../types';
 
 type Props = {
   onAdded: () => void;
@@ -9,9 +10,15 @@ type Props = {
 /**
  * Adds a server, signing in on the way.
  *
- * One step. It used to look the server up and then add it, which made the user press a button whose
- * only job was to prove the address worked — the address is checked as part of adding either way,
- * and a server that does not answer still fails.
+ * **Two steps, as desktop has always had.** This was one step for a while, on the reasoning that a
+ * button whose only job is to prove the address works earns nothing — adding checks the address
+ * anyway, and a server that does not answer still fails. What changed is what the first step is
+ * *for*: it now shows the server's own name and logo before any credentials are typed, so the
+ * person can see they are about to hand a password to the server they meant. That is worth a tap.
+ *
+ * What it still cannot tell them is whether Shiver's companion plugin is installed. Nothing says so
+ * without a session — `/info` does not mention plugins and `plugins.get` answers only an admin — so
+ * the answer arrives on the first connection and is shown in the server list instead.
  *
  * The password goes to the server named above it and nowhere else, and what comes back is a session
  * kept in Android's encrypted store. Leaving both fields empty is a real choice rather than a lapse:
@@ -31,9 +38,25 @@ export const AddServer = ({ onAdded }: Props) => {
    * is a second secret at rest, encrypted under a key the Android Keystore holds and Shiver cannot
    * extract — the same protection the session itself already gets.
    */
-  const [remember, setRemember] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** what the server said about itself, once checked; null until then */
+  const [preview, setPreview] = useState<ServerInfo | null>(null);
+
+  const check = useCallback(async () => {
+    if (!address.trim() || busy) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      setPreview(await api.probeServer(address.trim()));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }, [address, busy]);
 
   const add = useCallback(async () => {
     if (!address.trim() || busy) return;
@@ -46,21 +69,23 @@ export const AddServer = ({ onAdded }: Props) => {
         address.trim(),
         identity.trim() || null,
         password || null,
-        remember && !!password
+        !!password
       );
       onAdded();
     } catch (cause) {
       setError(errorMessage(cause));
       setBusy(false);
     }
-  }, [address, busy, identity, onAdded, password, remember]);
+  }, [address, busy, identity, onAdded, password]);
 
   return (
     <form
       className="panel"
       onSubmit={(event) => {
         event.preventDefault();
-        void add();
+
+        // one button, two steps: it checks the address, and once that has answered it adds
+        void (preview ? add() : check());
       }}
     >
       <label className="field">
@@ -78,9 +103,28 @@ export const AddServer = ({ onAdded }: Props) => {
           spellCheck={false}
           placeholder="chat.example.com"
           value={address}
-          onChange={(event) => setAddress(event.target.value)}
+          // the preview describes the address that was checked, so a further edit invalidates it
+          onChange={(event) => {
+            setAddress(event.target.value);
+            setPreview(null);
+          }}
         />
       </label>
+
+      {preview ? (
+        <div className="preview">
+          {preview.iconUrl ? (
+            <img src={preview.iconUrl} alt="" />
+          ) : (
+            <span className="fallback">{preview.name.slice(0, 1).toUpperCase()}</span>
+          )}
+
+          <span className="preview-text">
+            <strong>{preview.name}</strong>
+            <small>{preview.origin}</small>
+          </span>
+        </div>
+      ) : null}
 
       <label className="field">
         <span>Username</span>
@@ -106,32 +150,19 @@ export const AddServer = ({ onAdded }: Props) => {
       </label>
 
 
-      <label className="checkbox">
-        <input
-          type="checkbox"
-          checked={remember}
-          onChange={(event) => setRemember(event.target.checked)}
-        />
-        <span>
-          Stay signed in on this device
-          <small>
-            Lets Shiver keep watching this server for messages after its session expires, which
-            Sharkord makes it do every seven days. Without this, the server goes quiet until you
-            open it again. Your password is stored encrypted under a key the phone's Keystore holds.
-          </small>
-        </span>
-      </label>
-
       <p className="hint">
         Shiver signs in for you, so the server opens straight into the app. Your password goes only to
-        this server, and the session it returns is kept in Android's encrypted store. Leave both
-        empty to sign in on the server's own page instead.
+        this server, and both it and the session are kept in Android's encrypted store, under a key
+        the phone's Keystore holds — so Shiver can sign you in again when the session runs out, which
+        Sharkord makes it do every seven days. You can take the password back at any time by holding
+        the server in the rail. Leave both empty to sign in on the server's own page instead, which
+        is the only thing that works for a server behind an identity provider.
       </p>
 
       {error ? <p className="error">{error}</p> : null}
 
       <button type="submit" className="primary wide" disabled={busy || !address.trim()}>
-        {busy ? 'Adding…' : 'Add server'}
+        {busy ? (preview ? 'Adding…' : 'Checking…') : preview ? 'Sign in and add' : 'Check server'}
       </button>
     </form>
   );

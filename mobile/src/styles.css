@@ -139,6 +139,22 @@ body {
   color: var(--shiver-text-dim);
 }
 
+/* The conversation search, borrowing the form fields' look so it reads as part of Shiver rather
+   than as something bolted on. Full width because it sits above a full-width list, and 16px because
+   anything smaller makes Android zoom the page when the field takes focus. */
+.dm-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+  padding: 12px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 10px;
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+  font: inherit;
+  font-size: 16px;
+}
+
 /* How long ago the last message in a conversation was. Pushed to the far end and allowed no
    shrinking, so a long display name ellipsises rather than squeezing the thing the list is sorted
    by out of view. */
@@ -225,6 +241,36 @@ body {
   margin: 4px 0 0;
   font-size: 14px;
   color: var(--shiver-text-dim);
+}
+
+/* The initial where the server has no logo, sized to the space the logo would have taken so the
+   row does not change height depending on whether one was set. */
+.preview .fallback {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--shiver-surface-hover, #333333);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.preview-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* the address under the name, ellipsised rather than wrapped: it is confirmation, not reading */
+.preview-text small {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--shiver-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 button {
@@ -427,6 +473,17 @@ button {
   font-size: 12px;
 }
 
+/* The companion-plugin verdict. Colour is the quick read and the tick or cross is the reliable
+   one — roughly one man in twelve cannot separate these two hues, and neither can a screen
+   reader, so the glyph is in the text rather than implied by the colour. */
+.server-note.has-plugin {
+  color: #4ade80;
+}
+
+.server-note.no-plugin {
+  color: #f87171;
+}
+
 /* A server Shiver cannot watch. Red, because unlike everything else on this row it is not a state
    the user chose — it means that server's messages are not reaching this phone at all. */
 .server-problem {
@@ -516,18 +573,33 @@ button {
   border-radius: inherit;
 }
 
+/* Kept in step with `.badge` in `mobile/bridge/index.ts` — the same badge, drawn twice.
+ *
+ * Mobile has two rails and has to: this one is React on Shiver's own pages, the other is vanilla
+ * dom in a **closed shadow root** inside a server's page, where there is no IPC and where Sharkord's
+ * Tailwind preflight would restyle anything Shiver rendered. Neither can reach the other's styles,
+ * which is exactly how they came to disagree — this one was `--shiver-danger`, a red reserved for
+ * things that have gone wrong, against the other's white.
+ *
+ * `scripts/check-rails.py` fails if they drift again. */
 .rail-badge {
   position: absolute;
   top: -2px;
   right: -2px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--shiver-danger);
-  color: #0a0a0a;
+  /* A circle, not a pill. `padding: 0 4px` used to widen it with the number inside, so one digit
+     was round and two were an oval — the badge changing shape as the count went from 9 to 10. A
+     fixed square box with a 50% radius is the same shape whatever it says; "99+" is the widest it
+     can ever be and fits 18px at this size, because the count is capped before it is drawn. */
+  min-width: 18px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  text-align: center;
+  background: var(--shiver-text, #fafafa);
+  color: var(--shiver-rail, #171717);
   font-size: 9px;
-  line-height: 16px;
+  line-height: 18px;
   font-weight: 700;
   pointer-events: none;
   /* the same hairline as the desktop badge, against the rail behind it */

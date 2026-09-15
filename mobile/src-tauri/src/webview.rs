@@ -290,6 +290,12 @@ pub struct PageContext<'a> {
     pub session: Option<&'a str>,
     /// what was kept when this server's storage was last wiped
     pub carried: Option<&'a str>,
+    /// The unread floor to store in the companion plugin, so this user's devices share one badge.
+    ///
+    /// Arriving at a server is the one thing that moves the floor, and this page *is* that arrival
+    /// — so the value travels with it rather than being evaluated in afterwards. Empty where there
+    /// is nothing to say, which is any server Shiver has not yet connected to.
+    pub read_floor: Option<&'a std::collections::HashMap<i64, u32>>,
     /// the rail's folders, so the tiles inside a server's page group the way Shiver's own do
     pub folders: &'a [crate::model::Folder],
     /// **this entry's** push endpoint, so the page can hand it to the Shiver plugin's relay. Never
@@ -315,6 +321,14 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
         "muted": page.muted,
         "soundVolume": page.settings.sound_volume.min(crate::model::MAX_SOUND_VOLUME),
         "minimiseAttachments": page.settings.minimise_attachments,
+        // json object keys are strings, so the channel ids go over as strings and are parsed back
+        // on the way in — see `parse_shared_floor` in `shiver-sharkord`
+        "readFloor": page.read_floor.map(|floor| {
+            floor
+                .iter()
+                .map(|(channel_id, count)| (channel_id.to_string(), *count))
+                .collect::<std::collections::HashMap<String, u32>>()
+        }),
         // where the back control sends the user. the page cannot call Shiver — it has no IPC, by the
         // same rule that protects the desktop client — so going back is a navigation, not a call.
         "home": home,
@@ -762,6 +776,11 @@ pub fn navigation_allowed(home: Option<&str>, server_origin: Option<&str>, targe
         return true;
     };
 
+    same_place(home, target)
+}
+
+/// Whether a url is where Shiver's own pages live.
+fn same_place(home: &str, target: &Url) -> bool {
     Url::parse(home).is_ok_and(|home| {
         home.scheme() == target.scheme()
             && home.host_str() == target.host_str()
@@ -769,6 +788,37 @@ pub fn navigation_allowed(home: Option<&str>, server_origin: Option<&str>, targe
             // place, and Shiver must not treat one as the other
             && home.port_or_known_default() == target.port_or_known_default()
     })
+}
+
+/// Records that the webview has landed back on Shiver's own pages.
+///
+/// **`show_shiver` is not the only way back.** A server's page has no IPC, so everything the bridge
+/// offers that leaves the server — settings, adding a server, the direct-message list — gets there
+/// by navigating (`goHome`), which calls no command and so ran none of the bookkeeping that command
+/// does. `Showing::server` went on naming the server the user had left, which meant `inbox::sync`
+/// never gave that server a socket: its badge stopped moving and its conversations were missing from
+/// the one screen built to list every server's, for as long as the user stayed on Shiver's pages.
+///
+/// Called from the page-load hook, so it covers every arrival however it was reached.
+pub fn landed_home(app: &AppHandle) {
+    let showing = app.state::<Showing>();
+
+    // already known, and `sync` is not free — it is called on every page load otherwise
+    if showing.server().is_none() {
+        return;
+    }
+
+    showing.set_server(None);
+
+    // nothing is on screen now, so every server Shiver has a token for is worth watching
+    crate::inbox::sync(app);
+}
+
+/// Whether a loaded page is one of Shiver's own rather than a server's.
+pub fn is_home(app: &AppHandle, target: &Url) -> bool {
+    app.state::<Showing>()
+        .home()
+        .is_some_and(|home| same_place(&home, target))
 }
 
 /// `null` while the user is on Sharkord's own colours, so a stock Shiver restyles nothing.

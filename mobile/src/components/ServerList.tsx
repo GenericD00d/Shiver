@@ -12,6 +12,12 @@ type Props = {
   onAcceptAnySize: (id: string, accept: boolean) => void;
   /** servers Shiver can sign in again by itself, because it was asked to keep the password */
   remembered: string[];
+  /**
+   * entry id -> the companion plugin's version there, or null where Shiver connected and found
+   * none. A server **absent from this map** has not been connected to yet, which is a third answer
+   * and deliberately not drawn as either of the other two.
+   */
+  plugins: Record<string, string | null>;
   onSignIn: (id: string) => void;
 };
 
@@ -37,6 +43,7 @@ export const ServerList = ({
   signedOut,
   problems,
   remembered,
+  plugins,
   onSignIn,
   onAcceptAnySize
 }: Props) => (
@@ -66,6 +73,19 @@ export const ServerList = ({
                   server it is can say, so it is said here, once, on the row it is about. */}
               {server.acceptAnySize ? (
                 <span className="server-note">Any message size allowed</span>
+              ) : null}
+
+              {/* What this server can do for Shiver. The tick and the cross carry the meaning as
+                  well as the colour does, so it still reads on a display where the two greens and
+                  reds are hard to tell apart, and when read aloud. */}
+              {server.id in plugins ? (
+                plugins[server.id] ? (
+                  <span className="server-note has-plugin">
+                    {'✓'} Shiver plugin {plugins[server.id]}
+                  </span>
+                ) : (
+                  <span className="server-note no-plugin">{'✗'} No Shiver plugin</span>
+                )
               ) : null}
             </span>
           </button>

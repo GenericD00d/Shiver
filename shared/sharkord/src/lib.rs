@@ -20,7 +20,14 @@
 //!    with the whole initial state, including `readStates`.
 //! 6. Subscribe. `channels.onReadStateDelta` is the one Shiver needs.
 //!
-//! Unread is modelled the way Sharkord's own client models it: the `readStates` map from the join
+//! **Both clients use this crate.** It used to be a module inside `mobile/`, because Android was
+//! the only place that needed it — a phone gives a window one webview, so a server not on screen
+//! had no page to report from. Desktop now wants the same thing for a different reason: a webview
+//! per server costs far more memory than a socket does, and people are in dozens of servers. What
+//! is transcribed here was worked out by probing a live server, and a second copy of it would start
+//! drifting the day one client learned something the other did not.
+//!
+//! //! Unread is modelled the way Sharkord's own client models it: the `readStates` map from the join
 //! is the baseline, and each delta event adds to one channel's count. The server deliberately sends
 //! a delta of 1 rather than a recomputed total — see `db/publishers.ts` — so Shiver must accumulate.
 
@@ -31,7 +38,9 @@ use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
-use crate::error::{Error, Result};
+pub use crate::error::{Error, Result};
+
+mod error;
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -72,10 +81,24 @@ const MAX_FRAME: usize = 16 * 1024 * 1024;
 const HANDSHAKE_ID: u32 = 1;
 const JOIN_ID: u32 = 2;
 const DMS_ID: u32 = 3;
+const PLUGIN_DATA_ID: u32 = 4;
 const READ_STATE_ID: u32 = 10;
+const READ_STATE_UPDATE_ID: u32 = 12;
 const MESSAGE_ID: u32 = 11;
 
 const READ_STATE_PATH: &str = "channels.onReadStateDelta";
+
+/// The *other* read-state subscription, and the one that says a channel was **read**.
+///
+/// Sharkord publishes two different events and they go to two different subscriptions:
+/// `CHANNEL_READ_STATES_DELTA` carries "one more unread here" for an arriving message, and
+/// `CHANNEL_READ_STATES_UPDATE` carries the recomputed count when `channels.markAsRead` runs —
+/// deliberately, so that "the caller's other sessions need to drop the unread badge too".
+///
+/// Shiver subscribed only to the first. Everything else was in place to act on a read and none of
+/// it ever ran, because the event was never asked for: **six builds** went out trying to fix a
+/// badge that would not clear, and this one line is why.
+const READ_STATE_UPDATE_PATH: &str = "channels.onReadStateUpdate";
 const MESSAGE_PATH: &str = "messages.onNew";
 
 /// One direct-message conversation on one server.
@@ -120,6 +143,26 @@ pub struct Joined {
     pub user_names: HashMap<i64, String>,
     /// this user's conversations on this server, for Shiver's own direct-message list
     pub dms: Vec<DirectMessage>,
+    /// The unread floor this user last stored on **this server**, shared across their devices.
+    ///
+    /// Kept in the companion plugin's per-user storage, which is what makes it shared: the plugin
+    /// holds it server-side against the user's own account, so the phone and the desktop measure
+    /// their badges from the same place. Without the plugin each device keeps its own floor and the
+    /// two drift — read a server on one and the other goes on claiming those messages are unread.
+    ///
+    /// `None` where the plugin is absent, or where it has nothing stored yet.
+    pub shared_floor: Option<HashMap<i64, u32>>,
+    /// the version of Shiver's companion plugin on this server, if it is installed.
+    ///
+    /// Read from the join payload's `pluginsMetadata`, which costs nothing extra: it arrives with
+    /// everything else. Worth knowing because it is **not** otherwise askable as an ordinary user —
+    /// `plugins.get`, the obvious way to list them, needs `MANAGE_PLUGINS` and so answers only an
+    /// admin, and `/info` does not mention plugins at all.
+    ///
+    /// The version rather than a flag, because the features that depend on this plugin depend on
+    /// particular versions of it, and "installed" has already once meant "installed but too old to
+    /// do the thing being asked of it".
+    pub plugin_version: Option<String>,
 }
 
 /// A message that arrived on a server Shiver is watching but not showing.
@@ -142,6 +185,15 @@ pub struct NewMessage {
 pub enum Event {
     /// one channel's unread count moved by `delta`
     Unread { channel_id: i64, delta: i64 },
+    /// one channel's unread count **is now** `count`, which is how a read arrives.
+    ///
+    /// Sharkord sends two shapes down the same subscription and they mean opposite things. A new
+    /// message publishes a `delta` to add; `channels.markAsRead` publishes the recomputed `count`
+    /// for that channel — deliberately, "the caller's other sessions need to drop the unread badge
+    /// too" (`routers/channels/mark-as-read.ts`). Read as a delta it is nonsense, and read as
+    /// nothing at all — which is what Shiver did — a channel read on one device left the badge
+    /// standing on every other one until the socket happened to reconnect.
+    UnreadSet { channel_id: i64, count: u32 },
     /// somebody posted, and Shiver has the message itself rather than only a count
     Posted(NewMessage),
 }
@@ -307,9 +359,28 @@ pub fn parse_join(data: &Value) -> Joined {
         dm_channels,
         channel_names,
         user_names,
+        plugin_version: plugin_version(data, SHIVER_PLUGIN_ID),
+        // asked for separately, after the join, by the query that can reach the plugin's storage
+        shared_floor: None,
         // filled in after the join, by the query that knows who each conversation is with
         dms: Vec::new(),
     }
+}
+
+/// The id Shiver's companion plugin installs under.
+pub const SHIVER_PLUGIN_ID: &str = "shiver";
+
+/// The installed version of one plugin, from a join payload's `pluginsMetadata`.
+///
+/// Separated and pure so it can be tested against the shape Sharkord actually sends
+/// (`TPluginMetadata`: `pluginId`, `name`, `description`, `version`).
+fn plugin_version(data: &Value, plugin_id: &str) -> Option<String> {
+    data.get("pluginsMetadata")?
+        .as_array()?
+        .iter()
+        .find(|plugin| plugin.get("pluginId").and_then(Value::as_str) == Some(plugin_id))
+        .and_then(|plugin| plugin.get("version").and_then(Value::as_str))
+        .map(str::to_string)
 }
 
 /// A `messages.onNew` emission, if that is what this frame is.
@@ -376,10 +447,65 @@ async fn fetch_dms(socket: &mut Socket, joined: &Value) -> Result<Vec<DirectMess
     let conversations = await_reply(socket, DMS_ID, "dms.get").await?;
 
     let Some(conversations) = conversations.as_array() else {
+        eprintln!("[shiver] dms.get did not answer with a list, so no conversations were read");
+
         return Ok(Vec::new());
     };
 
-    Ok(parse_dms(conversations, joined))
+    let parsed = parse_dms(conversations, joined);
+
+    // Counted out loud, because this is the one step here that fails **silently**: every field in
+    // `parse_dms` is read with `and_then`, so a payload whose shape has moved yields a shorter list
+    // rather than an error, and an empty conversation list looks exactly like having no
+    // conversations. The two numbers disagreeing is the whole diagnosis.
+    if parsed.len() != conversations.len() {
+        eprintln!(
+            "[shiver] dms.get returned {} conversation(s) and {} could be read — the rest are              missing a userId, or a name for it in the join payload",
+            conversations.len(),
+            parsed.len()
+        );
+    }
+
+    Ok(parsed)
+}
+
+/// Reads this user's shared unread floor out of the companion plugin's storage.
+///
+/// `plugins.getUserData` is a **query** and needs only `USE_PLUGINS`, so an ordinary member can ask
+/// and this connection stays read-only — which matters, because that is a property of this whole
+/// module rather than an accident. The matching write is not done here and cannot be: it is a
+/// mutation, and it is performed by the bridge from inside the server's own page, where Shiver
+/// already writes the muted-channel list.
+///
+/// Failing costs the shared floor and nothing else. Every caller falls back to its local one.
+async fn fetch_shared_floor(socket: &mut Socket) -> Result<Option<HashMap<i64, u32>>> {
+    let stored = call(
+        socket,
+        PLUGIN_DATA_ID,
+        "plugins.getUserData",
+        serde_json::json!({ "pluginId": SHIVER_PLUGIN_ID }),
+    )
+    .await?;
+
+    Ok(parse_shared_floor(&stored))
+}
+
+/// The reading of that answer, separated from the asking of it.
+///
+/// Json object keys are strings, so the channel ids arrive as `"12"` rather than `12` and have to
+/// be parsed back. A key that is not a number, or a count that is not one, is skipped rather than
+/// failing the lot: this row is written by Shiver but it is stored on somebody else's server.
+fn parse_shared_floor(stored: &Value) -> Option<HashMap<i64, u32>> {
+    let floor = stored.get("readFloor")?.as_object()?;
+
+    Some(
+        floor
+            .iter()
+            .filter_map(|(channel_id, count)| {
+                Some((channel_id.parse::<i64>().ok()?, count.as_u64()? as u32))
+            })
+            .collect(),
+    )
 }
 
 /// The reading of that answer, separated from the asking of it.
@@ -471,9 +597,28 @@ fn as_count(value: &Value) -> Option<u32> {
 /// A read-state delta, if that is what this frame is.
 pub fn parse_delta(data: &Value) -> Option<Event> {
     let channel_id = data.get("channelId").and_then(Value::as_i64)?;
-    let delta = data.get("delta").and_then(Value::as_i64)?;
 
-    Some(Event::Unread { channel_id, delta })
+    // `delta` first, because it is the common one: every arriving message is one of these. A frame
+    // carrying `count` instead is a read — see `Event::UnreadSet`.
+    if let Some(delta) = data.get("delta").and_then(Value::as_i64) {
+        return Some(Event::Unread { channel_id, delta });
+    }
+
+    let count = data.get("count").and_then(Value::as_u64)?;
+
+    Some(Event::UnreadSet {
+        channel_id,
+        count: count.min(u64::from(u32::MAX)) as u32,
+    })
+}
+
+/// Sets one channel's unread count outright, for a read reported by another of this user's devices.
+pub fn set_unread(read_states: &mut HashMap<i64, u32>, channel_id: i64, count: u32) {
+    if count == 0 {
+        read_states.remove(&channel_id);
+    } else {
+        read_states.insert(channel_id, count);
+    }
 }
 
 /// What Shiver shows on a server's tile: what arrived while Shiver was watching, minus muted channels.
@@ -601,11 +746,34 @@ pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Se
         Err(error) => eprintln!("[shiver] could not read {origin}'s direct messages: {error}"),
     }
 
+    // Only where the plugin is actually installed. Asking a server that has none is a round trip
+    // whose answer is always nothing, on every connection to every such server.
+    if parsed.plugin_version.is_some() {
+        match fetch_shared_floor(&mut socket).await {
+            Ok(floor) => parsed.shared_floor = floor,
+            Err(error) => {
+                eprintln!("[shiver] could not read {origin}'s shared unread floor: {error}")
+            }
+        }
+    }
+
     let joined = parsed;
 
     send(
         &mut socket,
         request_frame(READ_STATE_ID, "subscription", READ_STATE_PATH, Value::Null),
+    )
+    .await?;
+
+    // and the one that reports a channel being read, which is a separate subscription entirely
+    send(
+        &mut socket,
+        request_frame(
+            READ_STATE_UPDATE_ID,
+            "subscription",
+            READ_STATE_UPDATE_PATH,
+            Value::Null,
+        ),
     )
     .await?;
 
@@ -665,6 +833,11 @@ impl Session {
 
             match parse_reply(&text) {
                 Reply::Data { id, data } if id == Some(u64::from(READ_STATE_ID)) => {
+                    if let Some(event) = parse_delta(&data) {
+                        return Some(event);
+                    }
+                }
+                Reply::Data { id, data } if id == Some(u64::from(READ_STATE_UPDATE_ID)) => {
                     if let Some(event) = parse_delta(&data) {
                         return Some(event);
                     }
@@ -1026,5 +1199,127 @@ mod tests {
         apply_delta(&mut states, 1, -5);
 
         assert_eq!(states.get(&1), Some(&0));
+    }
+}
+
+#[cfg(test)]
+mod plugin_tests {
+    use super::{plugin_version, SHIVER_PLUGIN_ID};
+
+    fn payload() -> serde_json::Value {
+        serde_json::json!({
+            "pluginsMetadata": [
+                { "pluginId": "something-else", "name": "Other", "version": "2.0.0" },
+                { "pluginId": "shiver", "name": "Shiver", "version": "0.1.0" }
+            ]
+        })
+    }
+
+    #[test]
+    fn finds_the_plugin_among_others() {
+        assert_eq!(plugin_version(&payload(), SHIVER_PLUGIN_ID), Some("0.1.0".into()));
+    }
+
+    #[test]
+    fn absent_when_not_installed() {
+        let without = serde_json::json!({ "pluginsMetadata": [] });
+
+        assert_eq!(plugin_version(&without, SHIVER_PLUGIN_ID), None);
+    }
+
+    #[test]
+    fn absent_when_the_server_does_not_mention_plugins() {
+        // an older Sharkord, or a payload shape that has moved: not installed, as far as Shiver can
+        // tell, which is the safe answer — the features behind it degrade rather than misbehave
+        assert_eq!(plugin_version(&serde_json::json!({}), SHIVER_PLUGIN_ID), None);
+    }
+}
+
+#[cfg(test)]
+mod floor_tests {
+    use super::parse_shared_floor;
+
+    #[test]
+    fn reads_channel_ids_back_out_of_string_keys() {
+        let stored = serde_json::json!({ "readFloor": { "12": 3, "40": 0 } });
+        let floor = parse_shared_floor(&stored).expect("a floor");
+
+        assert_eq!(floor.get(&12), Some(&3));
+        assert_eq!(floor.get(&40), Some(&0));
+    }
+
+    #[test]
+    fn nothing_stored_is_no_floor() {
+        // a plugin row that exists but has only the muted list in it
+        let stored = serde_json::json!({ "mutedChannels": [1, 2] });
+
+        assert!(parse_shared_floor(&stored).is_none());
+    }
+
+    #[test]
+    fn a_row_that_is_not_an_object_is_no_floor() {
+        assert!(parse_shared_floor(&serde_json::Value::Null).is_none());
+        assert!(parse_shared_floor(&serde_json::json!({ "readFloor": 7 })).is_none());
+    }
+
+    #[test]
+    fn rubbish_entries_are_skipped_rather_than_failing_the_lot() {
+        // stored by Shiver, but held on somebody else's server
+        let stored = serde_json::json!({ "readFloor": { "12": 3, "no": 1, "40": "lots" } });
+        let floor = parse_shared_floor(&stored).expect("a floor");
+
+        assert_eq!(floor.len(), 1);
+        assert_eq!(floor.get(&12), Some(&3));
+    }
+}
+
+#[cfg(test)]
+mod read_state_tests {
+    use super::{parse_delta, set_unread, Event};
+    use std::collections::HashMap;
+
+    #[test]
+    fn a_new_message_is_a_delta() {
+        let frame = serde_json::json!({ "channelId": 4, "delta": 1 });
+
+        assert_eq!(
+            parse_delta(&frame),
+            Some(Event::Unread { channel_id: 4, delta: 1 })
+        );
+    }
+
+    #[test]
+    fn a_read_on_another_device_is_a_count() {
+        // what `channels.markAsRead` publishes to the caller's other sessions
+        let frame = serde_json::json!({ "channelId": 4, "count": 0 });
+
+        assert_eq!(
+            parse_delta(&frame),
+            Some(Event::UnreadSet { channel_id: 4, count: 0 })
+        );
+    }
+
+    #[test]
+    fn a_frame_that_is_neither_is_ignored() {
+        assert_eq!(parse_delta(&serde_json::json!({ "channelId": 4 })), None);
+        assert_eq!(parse_delta(&serde_json::json!({ "delta": 1 })), None);
+    }
+
+    #[test]
+    fn setting_to_zero_forgets_the_channel() {
+        let mut states: HashMap<i64, u32> = [(4, 5)].into_iter().collect();
+
+        set_unread(&mut states, 4, 0);
+
+        assert!(!states.contains_key(&4));
+    }
+
+    #[test]
+    fn setting_replaces_rather_than_adding() {
+        let mut states: HashMap<i64, u32> = [(4, 5)].into_iter().collect();
+
+        set_unread(&mut states, 4, 2);
+
+        assert_eq!(states.get(&4), Some(&2));
     }
 }

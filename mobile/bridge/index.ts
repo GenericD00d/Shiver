@@ -55,21 +55,6 @@ type RailFolder = {
   expanded: boolean;
 };
 
-/**
- * One conversation on *this* server, read from this page's own Sharkord store.
- *
- * Never handed over by the core. Shiver knows the user's conversations on every server they have
- * added, and putting that list in a page would tell one server who the user privately messages on
- * all the others — so the cross-server list lives on Shiver's own screen, which a server's page
- * cannot read. What is built here is this page's own data, which it already had.
- */
-type DirectMessage = {
-  entryId: string;
-  serverName: string;
-  channelId: number;
-  userName: string;
-};
-
 type ShiverConfig = {
   entryId: string;
   origin: string;
@@ -87,6 +72,14 @@ type ShiverConfig = {
   openDmUser: string | null;
   /** this server's own session, when Shiver signed in for the user; never any other server's */
   session: string | null;
+  /**
+   * The unread floor to store for this server, when the core wants one written.
+   *
+   * Absent unless the user is arriving at this server, which is the only thing that moves it. It is
+   * this server's own per-channel counts and nothing else — no other server is named here, as
+   * everywhere in this config.
+   */
+  readFloor?: Record<string, number> | null;
   /**
    * The UnifiedPush endpoint for *this* server, when Shiver has one.
    *
@@ -244,6 +237,10 @@ function install(shiver: ShiverConfig) {
   // the rail is rebuilt on each install, because the servers in it may have changed
   window.__SHIVER_RAIL__ = mountRail(shiver);
 
+  // the core hands the floor over in the page config, because this page is the user opening this
+  // server, which is the one event that moves it
+  if (shiver.readFloor) void storeReadFloor(shiver.readFloor);
+
   if (shiver.openDmUser) {
     // arrived by tapping a conversation in Shiver's own list; land on it
     openConversation(shiver.openDmUser);
@@ -254,6 +251,7 @@ function install(shiver: ShiverConfig) {
 
   installSoundVolume(shiver.soundVolume);
   installAttachmentCards(shiver.minimiseAttachments);
+  installReactionNames();
   installVoiceColors();
   installPageActions();
   quietTheLoadingScreen();
@@ -693,11 +691,9 @@ function mountRail(shiver: ShiverConfig): Rail {
   const setOpen = (next: boolean) => {
     open = next;
 
-    // Anything the rail opened goes with it. The direct-message list is drawn beside the rail
-    // rather than inside it, so it does not slide away on its own — closed by a swipe it simply
-    // stayed on screen with nothing left to dismiss it.
+    // Anything the rail opened goes with it: a menu is drawn beside the rail rather than inside
+    // it, so it does not slide away on its own.
     if (!next) {
-      root.querySelector('.dm-panel')?.remove();
       root.querySelector('.menu')?.remove();
     }
 
@@ -725,13 +721,6 @@ function mountRail(shiver: ShiverConfig): Rail {
       return true;
     }
 
-    const panel = root.querySelector('.dm-panel');
-
-    if (panel) {
-      panel.remove();
-
-      return true;
-    }
 
     setOpen(!open);
 
@@ -747,14 +736,15 @@ function mountRail(shiver: ShiverConfig): Rail {
       label: 'Direct messages',
       content: messagesIcon(),
       onPick: () => {
-        // a second tap on the tile puts it away again, the way the tile itself would be expected to
-        if (root.querySelector('.dm-panel')) {
-          root.querySelector('.dm-panel')?.remove();
-
-          return;
-        }
-
-        openDmPanel(root, shiver, () => setOpen(false));
+        // Straight to Shiver's own screen, which is the only place a conversation list can be
+        // complete. This tile used to draw a panel here listing *this* server's conversations, with
+        // a row at the bottom leading to the others — two lists that looked different, and the one
+        // the user was most likely to open showed the least. The reason the cross-server list can
+        // never be drawn on this page has not changed: a page on a server's origin has no IPC, and
+        // rendering the list here would hand this server the name of everyone the user privately
+        // messages everywhere else.
+        setOpen(false);
+        goHome('#dms');
       }
     }),
     el('div', 'divider')
@@ -1217,6 +1207,149 @@ const HOLD_SLOP = 10;
  * that are not text or links, and it also brings the system's own selection menu with it. That
  * event is suppressed here for the same reason.
  */
+/** Sharkord's reaction pill. `message-reactions.tsx`: `flex items-center gap-1 h-9`, plus a border
+ *  class that only appears once you have reacted yourself — so the border is no use for finding
+ *  them all. */
+const REACTION_PILL = 'button[class~="h-9"][class~="gap-1"]';
+
+/**
+ * Long-press a reaction to see who reacted.
+ *
+ * Sharkord already knows the names and already renders them — `Reaction` wraps each pill in a Radix
+ * `Tooltip` whose content is `useReactorNames(userIds, pluginIds)`. On a phone that tooltip is
+ * simply unreachable: **Radix refuses touch outright**, its trigger returning early from
+ * `onPointerMove` whenever `pointerType === 'touch'`. So the information is there and there is no
+ * gesture that asks for it.
+ *
+ * Rather than draw a second list of names from data Shiver would have to find for itself, the press
+ * hands Radix the pointer events it will accept — `pointerType: 'mouse'` — and Sharkord opens its
+ * own tooltip, with its own content, in its own place. Nothing here knows what a reactor is called.
+ *
+ * Tap is not available: tapping a pill toggles your own reaction, which is the one thing that must
+ * keep working. Long press is what the rest of this client already uses for "tell me more".
+ */
+function installReactionNames() {
+  // `install` runs again on every page load in this document, and these listeners are on `document`
+  // — a second set would dispatch every pointer event twice and swallow the wrong clicks.
+  if (document.documentElement.dataset.shiverReactionNames) return;
+
+  document.documentElement.dataset.shiverReactionNames = '1';
+
+  let timer = 0;
+  let shown: HTMLElement | null = null;
+  let startX = 0;
+  let startY = 0;
+
+  const tell = (pill: HTMLElement, entering: boolean) => {
+    const names = entering ? ['pointerenter', 'pointermove'] : ['pointerleave'];
+
+    for (const name of names) {
+      // `pointerenter` and `pointerleave` do not bubble, by specification; `pointermove` does
+      pill.dispatchEvent(
+        new PointerEvent(name, { bubbles: name === 'pointermove', pointerType: 'mouse' })
+      );
+    }
+  };
+
+  const hide = () => {
+    if (!shown) return;
+
+    tell(shown, false);
+    shown = null;
+  };
+
+  const cancel = () => {
+    window.clearTimeout(timer);
+    timer = 0;
+  };
+
+  document.addEventListener(
+    'touchstart',
+    (event) => {
+      const touch = event.touches[0];
+
+      if (!touch) return;
+
+      const pill = (event.target as HTMLElement | null)?.closest<HTMLElement>(REACTION_PILL) ?? null;
+
+      // any touch dismisses the last one, including the one that opens the next
+      hide();
+
+      if (!pill) return;
+
+      startX = touch.clientX;
+      startY = touch.clientY;
+
+      timer = window.setTimeout(() => {
+        shown = pill;
+        tell(pill, true);
+
+        // the release that follows must not also toggle the reaction
+        pill.dataset.shiverHeld = '1';
+      }, HOLD_MS);
+    },
+    { passive: true, capture: true }
+  );
+
+  document.addEventListener(
+    'touchmove',
+    (event) => {
+      const touch = event.touches[0];
+
+      if (!touch) return;
+
+      if (
+        Math.abs(touch.clientX - startX) > HOLD_SLOP ||
+        Math.abs(touch.clientY - startY) > HOLD_SLOP
+      ) {
+        cancel();
+      }
+    },
+    { passive: true, capture: true }
+  );
+
+  document.addEventListener(
+    'touchend',
+    () => {
+      cancel();
+
+      if (!shown) return;
+
+      // Lifting the finger closes it again, and not because of anything here: the browser follows a
+      // touch sequence with compatibility pointer events, and the `pointerleave` among them is one
+      // Radix does listen to. It cannot usefully be swallowed — `pointerleave` does not bubble, so
+      // it arrives at the trigger itself, where a listener added later cannot get in front of one
+      // added earlier.
+      //
+      // So it is allowed to close, and immediately told to open again. Holding the names up only
+      // while the finger is down would mean reading them from under it.
+      window.setTimeout(() => {
+        if (shown) tell(shown, true);
+      }, 60);
+    },
+    { passive: true, capture: true }
+  );
+
+  document.addEventListener('touchcancel', cancel, { passive: true, capture: true });
+
+  // Swallowed in the capture phase, before Sharkord's own handler can see it: a press that was long
+  // enough to ask who reacted was not a press asking to react.
+  document.addEventListener(
+    'click',
+    (event) => {
+      const pill = (event.target as HTMLElement | null)?.closest<HTMLElement>(REACTION_PILL);
+
+      if (!pill?.dataset.shiverHeld) return;
+
+      delete pill.dataset.shiverHeld;
+
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    true
+  );
+}
+
 function installLongPress(target: HTMLElement, onHold: (at: number) => void) {
   let timer = 0;
   let startX = 0;
@@ -1800,6 +1933,11 @@ function openServerMenu(
   if (folders.length || entry.folderId) menu.append(el('div', 'menu-divider'));
 
   if (active) add('Log out', signOut);
+
+  // The counterpart to keeping the password by default: Shiver stops asking at the add screen, so
+  // it owes the user somewhere to take it back. Routed through Shiver's own page like the others —
+  // this rail is drawn inside a server's page and has no way to call the core.
+  add('Forget my password', () => goHome(`#do=forgetpw:${encodeURIComponent(entry.id)}`));
 
   add('Remove from Shiver', () => goHome(`#do=remove:${encodeURIComponent(entry.id)}`));
 
@@ -2385,10 +2523,29 @@ function pushMutesToPlugin(mutedChannels: number[]) {
  * finger never hovers, so on a phone none of them could be reached at all. Rather than rebuild any
  * of that, Shiver matches the toolbar by the tailwind class still sitting in its class list and shows
  * that same element — every action stays Sharkord's, including which of them the user is allowed.
+ *
+ * **It also decides which long press selects text.** Android starts its own selection on a hold at
+ * about the same moment Shiver's fires at `HOLD_MS`, so one press used to do both: the toolbar
+ * appeared *and* the message came up marked with selection handles over it. Worse than untidy — a
+ * selection that wins the race sends `touchcancel`, which is what `cancel` listens to, so the hold
+ * could be torn up before the toolbar ever appeared. The rail tiles hit this first and answered it
+ * the same way (see `.tile` in the rail's stylesheet).
+ *
+ * So a message is unselectable until its toolbar is up, and selectable once it is: the first press
+ * opens the toolbar and marks nothing, and a second press with the toolbar showing selects text as
+ * normal. Android reads the computed style when the hold begins, and the class lands at 500ms, so
+ * the second press is already looking at the selectable state.
+ *
+ * Anything the user types into stays selectable throughout — editing a message is reached *from*
+ * this toolbar, and a textarea nobody can put a cursor in is not one anybody can edit.
  */
 function styleMessageActions() {
   ensureStyle(ACTIONS_STYLE_ID).textContent = `
 .${MESSAGE_ACTIONS_CLASS} [class*="group-hover:flex"] { display: flex !important; }
+${MESSAGE_ITEM} { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.${MESSAGE_ACTIONS_CLASS} { -webkit-user-select: text; user-select: text; }
+${MESSAGE_ITEM} input, ${MESSAGE_ITEM} textarea, ${MESSAGE_ITEM} [contenteditable]
+  { -webkit-user-select: text; user-select: text; }
 `;
 }
 
@@ -2841,6 +2998,38 @@ type SharkordChannel = { id: number; name: string; isDm?: boolean; type?: string
 type SharkordRole = { id: number; name: string; color?: string; isDefault?: boolean };
 type SharkordUser = { id: number; name: string; roleIds?: number[] };
 
+/** The id Shiver's companion plugin installs under. Matches `SHIVER_PLUGIN_ID` in the rust core. */
+const SHIVER_PLUGIN_ID = 'shiver';
+
+/**
+ * Stores this user's unread floor for this server, where the companion plugin can hold it.
+ *
+ * **This is the write half of the shared badge.** The core reads the floor back on every connection
+ * (`plugins.getUserData`, a query, which is what lets its socket stay read-only) and measures the
+ * badge from it. Writing is a mutation, so it happens here instead: a page is what the user opened,
+ * and opening a server is the only thing that moves the floor.
+ *
+ * The row is read and spread before writing, because a write replaces the whole of it: the muted
+ * channel list lives in the same row and must survive this.
+ *
+ * Silent on failure, and there are two ordinary ones: no plugin installed, and a plugin installed
+ * but switched off — `setUserData` answers NOT_FOUND for both. Neither is worth telling anybody
+ * about, and this device still has its own floor to fall back on.
+ */
+async function storeReadFloor(floor: Record<string, number>) {
+  const actions = sharkordStore()?.actions;
+
+  if (!actions?.getUserData || !actions?.setUserData) return;
+
+  try {
+    const stored = (await actions.getUserData(SHIVER_PLUGIN_ID)) ?? {};
+
+    await actions.setUserData(SHIVER_PLUGIN_ID, { ...stored, readFloor: floor });
+  } catch {
+    // no plugin here, or it is switched off. the local floor still applies.
+  }
+}
+
 /** The plugin store, which is the only way into Sharkord's own state. */
 function sharkordStore() {
   return (
@@ -2854,7 +3043,11 @@ function sharkordStore() {
           selectedChannelId?: number;
         };
         subscribe?: (listener: () => void) => () => void;
-        actions?: { selectChannel?: (id: number) => void };
+        actions?: {
+          selectChannel?: (id: number) => void;
+          getUserData?: (pluginId: string) => Promise<Record<string, unknown> | null>;
+          setUserData?: (pluginId: string, data: Record<string, unknown>) => Promise<void>;
+        };
       };
     }
   ).__SHARKORD_STORE__;
@@ -2903,158 +3096,13 @@ function startedNearTheDrawer(x: number) {
  * lives on that server, and fetching it from inside another server's page would tell that page
  * where the other server is, which is the one thing the rail never says.
  */
-/**
- * This server's own conversations, read from the page.
- *
- * Shiver's core learns conversations from the servers it holds background connections to, and it
- * deliberately holds none for the server on screen — that server reports for itself. Which left the
- * one server the user is actually looking at contributing nothing to the list: with two servers and
- * conversations only on the one in front of you, the panel was empty and said so.
- *
- * Sharkord names a direct-message channel `DM - <a>:<b>` after the two people in it
- * (`routers/dms/open-direct-message.ts`), and the store carries `ownUserId` and the user list — so
- * the page has everything needed to say who each conversation is with, without a round trip.
- */
-function pageDms(shiver: ShiverConfig): DirectMessage[] {
-  const state = sharkordStore()?.getState();
-  const ownUserId = state?.ownUserId;
-
-  if (!state?.channels || !ownUserId) return [];
-
-  const conversations = state.channels
-    .filter((channel) => channel.isDm)
-    .map((channel) => {
-      const pair = /^DM - (\d+):(\d+)$/.exec(channel.name ?? '');
-
-      if (!pair) return null;
-
-      const partner = [Number(pair[1]), Number(pair[2])].find((id) => id !== ownUserId);
-
-      return partner === undefined ? null : { channelId: channel.id, partner };
-    })
-    .filter((conversation): conversation is { channelId: number; partner: number } => !!conversation);
-
-  // named from the user list, which on a big server is tens of thousands of people — so it is
-  // walked once for the handful of ids this user is actually in a conversation with
-  const wanted = new Set(conversations.map((conversation) => conversation.partner));
-  const names = new Map<number, string>();
-
-  for (const user of state.users ?? []) {
-    if (wanted.has(user.id)) names.set(user.id, user.name);
-  }
-
-  return (
-    conversations
-      .map(({ channelId, partner }) => ({
-        entryId: shiver.entryId,
-        serverName: shiver.serverName,
-        channelId,
-        // a conversation with someone no longer in the user list still exists, and saying so is
-        // better than dropping it without explanation — the same call the core makes
-        userName: names.get(partner) ?? 'Unknown'
-      }))
-      // By name, which is not what Shiver's own screen does — that one orders by the latest message,
-      // and this one cannot. `dms.get` is where Sharkord's `lastMessageAt` comes from, and its own
-      // client keeps that answer in component state rather than in the plugin store, so nothing on
-      // this page can read it. The store carries `channels`, whose order is roughly when each
-      // conversation was created, and ordering by that would look arbitrary without being useful.
-      //
-      // So: alphabetical, which is at least stable and searchable by eye. The way to recency here
-      // would be the core pushing this server's own timestamps into the page — its own data, so no
-      // boundary problem — but they would be as stale as the last time Shiver held a connection to a
-      // server it is now looking at, which is a worse answer than a predictable one.
-      .sort((a, b) => a.userName.localeCompare(b.userName))
-  );
-}
-
-/**
- * The panel showing this server's conversations, and the way to the rest.
- *
- * It used to list every server's, handed over by the core at page load. That told whichever server
- * the user happened to be looking at the name of everyone they privately message on every other
- * server they have added — so the cross-server list moved to Shiver's own screen, which a server's
- * page cannot read, and this panel now draws only what this page already knows.
- *
- * The common case costs nothing: `pageDms` reads this server's conversations out of Sharkord's own
- * store, so they appear instantly and without a round trip. Only the cross-server case navigates.
- */
-function openDmPanel(root: ShadowRoot, shiver: ShiverConfig, closeRail: () => void) {
-  root.querySelector('.dm-panel')?.remove();
-
-  const panel = el('div', 'dm-panel');
-  const heading = el('div', 'dm-heading');
-
-  heading.textContent = 'Direct messages';
-  panel.append(heading);
-
-  const close = () => panel.remove();
-
-  // this server's own, read live from the page — its data, already in reach, so no round trip
-  const dms = pageDms(shiver);
-
-  if (!dms.length) {
-    const empty = el('p', 'dm-empty');
-
-    // Said plainly rather than left blank, and it now says something narrower than it used to: this
-    // panel is about this server, and the line below is the way to the others.
-    empty.textContent = 'No conversations on this server yet.';
-    panel.append(empty);
-  }
-
-  for (const dm of dms) {
-    const row = el('button', 'dm-row');
-    const avatar = el('span', 'dm-avatar');
-    const text = el('span', 'dm-text');
-    const name = el('span', 'dm-name');
-    const where = el('span', 'dm-where');
-
-    row.setAttribute('type', 'button');
-    avatar.textContent = initial(dm.userName);
-    name.textContent = dm.userName;
-    where.textContent = dm.serverName;
-
-    text.append(name, where);
-    row.append(avatar, text);
-
-    row.addEventListener('click', () => {
-      close();
-      closeRail();
-
-      // already here: Sharkord's own list is the thing that knows how to open a conversation, so
-      // Shiver asks it rather than trying to select the channel itself
-      openConversation(dm.userName);
-    });
-
-    panel.append(row);
-  }
-
-  // The way to every other server's conversations, which live on Shiver's own screen because that is
-  // the only place they can be listed without this page being able to read them.
-  const elsewhere = el('button', 'dm-row dm-elsewhere');
-
-  elsewhere.setAttribute('type', 'button');
-  elsewhere.textContent = 'Conversations on your other servers';
-
-  elsewhere.addEventListener('click', () => {
-    close();
-    closeRail();
-    goHome('#dms');
-  });
-
-  panel.append(elsewhere);
-
-  // a tap anywhere off the panel closes it, the rail's menus behave the same way
-  const dismiss = (event: Event) => {
-    if (event.target instanceof Node && panel.contains(event.target)) return;
-
-    close();
-
-    root.removeEventListener('click', dismiss, true);
-  };
-
-  root.append(panel);
-  root.addEventListener('click', dismiss, true);
-}
+/* `pageDms` and `openDmPanel` used to live here: this server's own conversations, read out of
+   Sharkord's store and drawn in a panel beside the rail. Both are gone. Mobile now has exactly one
+   conversation list, on Shiver's own screen, where every server's can appear at once — see the
+   direct-messages tile above. What the panel did that nothing else could was show the *current*
+   server's conversations, since Shiver holds no socket to the server it is displaying; leaving for
+   Shiver's own screen is what starts that socket (`show_shiver` re-syncs), so the list is complete
+   there without this. */
 
 /**
  * Whether a row in Sharkord's list is the conversation Shiver is looking for.
@@ -3091,11 +3139,6 @@ function newFolderId() {
   return crypto.randomUUID
     ? crypto.randomUUID()
     : `rail-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
-
-/** The letter shown where Sharkord would show an avatar. */
-function initial(name: string) {
-  return (name.trim()[0] ?? '?').toUpperCase();
 }
 
 /**
@@ -3277,10 +3320,15 @@ function railStyle() {
    itself instead. The desktop rail's badge, to the pixel, hairline included. */
 /* Pale with dark text, which is Sharkord's own unread badge rather than Shiver's invention — and it
    frees red to mean the offline mark, something wanted from you rather than merely unread. */
-.badge { position: absolute; top: -2px; right: -2px; min-width: 16px; height: 16px;
-  padding: 0 4px; border-radius: 8px; background: var(--shiver-text, #fafafa);
+/* Kept in step with .rail-badge in mobile/src/styles.css — the same badge, drawn twice, because
+   this rail cannot be the React one: no IPC here, and a closed shadow root neither side's stylesheet
+   crosses. scripts/check-rails.py fails if the two drift.
+   (No backticks in this comment: it sits inside a template literal, and one would end the string.) */
+.badge { position: absolute; top: -2px; right: -2px; min-width: 18px; width: 18px; height: 18px;
+  padding: 0; border-radius: 50%; text-align: center;
+  background: var(--shiver-text, #fafafa);
   color: var(--shiver-rail, #171717);
-  font-size: 9px; line-height: 16px; font-weight: 700; pointer-events: none;
+  font-size: 9px; line-height: 18px; font-weight: 700; pointer-events: none;
   box-shadow: 0 0 0 1px var(--shiver-rail, #171717); }
 .tile svg { width: 16px; height: 16px; display: block; }
 
@@ -3295,37 +3343,6 @@ function railStyle() {
   border-radius: 8px; background: none; color: inherit; font: inherit; text-align: left; }
 .menu-item:active { background: #333333; }
 
-/* The direct-message list, sized and spaced like the one it stands in for. It sits beside the rail
-   rather than over it, so the rail is still there to switch servers with. */
-.dm-panel { position: absolute; top: 0; bottom: 0; left: var(--shiver-rail-width);
-  width: min(288px, calc(100vw - var(--shiver-rail-width))); box-sizing: border-box;
-  padding: calc(10px + env(safe-area-inset-top, 0px)) 8px
-    calc(10px + env(safe-area-inset-bottom, 0px));
-  background: var(--shiver-surface-dim, #1f1f1f);
-  border-right: 1px solid var(--shiver-border, rgb(255 255 255 / 10%));
-  overflow-y: auto; scrollbar-width: none; pointer-events: auto; z-index: 1; }
-.dm-panel::-webkit-scrollbar { display: none; }
-.dm-heading { padding: 8px 8px 12px; color: var(--shiver-text-dim, #a1a1a1); font-size: 12px;
-  text-transform: uppercase; letter-spacing: 0.04em; }
-.dm-empty { margin: 0; padding: 8px; color: var(--shiver-text-dim, #8a8a8a);
-  font-size: 13px; line-height: 1.4;
-  font-weight: 400; }
-.dm-row { display: flex; width: 100%; align-items: center; gap: 8px; padding: 8px;
-  border: none; border-radius: 8px; background: none; color: var(--shiver-text, #e5e5e5);
-  font: inherit; text-align: left; }
-.dm-row:active { background: var(--shiver-surface-hover, #333333); }
-.dm-avatar { flex: 0 0 28px; width: 28px; height: 28px; border-radius: 50%;
-  background: var(--shiver-surface-hover, #3a3a3a); color: var(--shiver-text, #e5e5e5);
-  display: grid; place-items: center; font-size: 13px; }
-.dm-text { display: flex; flex-direction: column; min-width: 0; }
-.dm-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dm-where { color: var(--shiver-text-dim, #8a8a8a); font-size: 11px; font-weight: 400;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The hand-off to Shiver's own screen. Set apart above the rule, because it leaves this server
-   rather than opening something on it. */
-.dm-elsewhere { margin-top: 8px; padding-top: 14px; color: var(--shiver-text-dim, #a1a1a1);
-  font-size: 13px; border-top: 1px solid var(--shiver-border, rgb(255 255 255 / 10%));
-  border-radius: 0; }
 .menu-divider { height: 1px; margin: 6px 4px;
   background: var(--shiver-border, rgb(255 255 255 / 12%)); }
 

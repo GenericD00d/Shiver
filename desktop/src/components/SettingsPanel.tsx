@@ -5,7 +5,14 @@ import { api, errorMessage } from '../api';
 import { HotkeyField } from './HotkeyField';
 import { automaticTextColor } from '../theme';
 import { playNotificationSound } from '../sounds';
-import { DEFAULT_ACCENT_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME, type Settings } from '../types';
+import {
+  DEFAULT_ACCENT_COLOR,
+  DEFAULT_THEME_COLOR,
+  MAX_PAGES_KEPT,
+  MAX_SOUND_VOLUME,
+  MIN_PAGES_KEPT,
+  type Settings
+} from '../types';
 
 type Props = {
   settings: Settings;
@@ -200,6 +207,31 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
             there it is the only thing to go on.
           </small>
         </span>
+      </label>
+
+      <label className="field">
+        <span>Servers kept loaded</span>
+        <div className="field-row">
+          <input
+            type="range"
+            min={MIN_PAGES_KEPT}
+            max={MAX_PAGES_KEPT}
+            step={1}
+            value={draft.pagesKept}
+            onChange={(event) => update('pagesKept', Number(event.target.value))}
+          />
+          <output className="volume-readout">{draft.pagesKept}</output>
+        </div>
+        <small className="hint">
+          How many servers keep their client running in the background. A loaded server switches to
+          instantly; the rest have to start when you open them, which takes a moment. Every other
+          setting here is a preference — this one is memory: a loaded server costs roughly a
+          browser tab, so on a long rail this is most of what Shiver uses.
+          <br />
+          <strong>Your notifications are not affected.</strong> Shiver talks to every server you are
+          not looking at directly, so unread badges, the bell and your conversations stay complete
+          whatever this is set to.
+        </small>
       </label>
 
       <label className="field">

@@ -63,7 +63,7 @@ type Intent =
   | { kind: 'open'; id: string; dmUser?: string }
   | { kind: 'screen'; screen: Screen }
   /** an action from the rail's long-press menu inside a server's page, which cannot call Shiver */
-  | { kind: 'do'; action: 'refresh' | 'remove'; id: string }
+  | { kind: 'do'; action: 'refresh' | 'remove' | 'forgetpw'; id: string }
   | null;
 
 const readIntent = (hash: string): Intent => {
@@ -89,7 +89,7 @@ const readIntent = (hash: string): Intent => {
   if (value.startsWith('do=')) {
     const [action, id] = value.slice('do='.length).split(':');
 
-    if ((action === 'refresh' || action === 'remove') && id) {
+    if ((action === 'refresh' || action === 'remove' || action === 'forgetpw') && id) {
       return { kind: 'do', action, id: decodeURIComponent(id) };
     }
   }
@@ -236,6 +236,7 @@ export const App = () => {
         try {
           if (intent.action === 'refresh') await api.refreshServerInfo(intent.id);
           if (intent.action === 'remove') await api.removeServer(intent.id);
+          if (intent.action === 'forgetpw') await api.forgetPassword(intent.id);
         } catch (cause) {
           setError(errorMessage(cause));
         }
@@ -303,6 +304,9 @@ export const App = () => {
 
   const [remembered, setRemembered] = useState<string[]>([]);
 
+  /** what each connected server said about the companion plugin; see `PluginStatus` */
+  const [plugins, setPlugins] = useState<Record<string, string | null>>({});
+
   const signingInServer = servers.find((server) => server.id === signingIn) ?? null;
 
   const readSessions = useCallback(() => {
@@ -314,6 +318,12 @@ export const App = () => {
       )
       .catch(() => undefined);
     api.rememberedServers().then(setRemembered).catch(() => undefined);
+    api
+      .serverPlugins()
+      .then((found) =>
+        setPlugins(Object.fromEntries(found.map((status) => [status.entryId, status.version])))
+      )
+      .catch(() => undefined);
   }, []);
 
   useEffect(readSessions, [readSessions, unread]);
@@ -514,6 +524,7 @@ export const App = () => {
                 problems={problems}
                 onAcceptAnySize={(id, accept) => void handleAcceptAnySize(id, accept)}
                 remembered={remembered}
+                plugins={plugins}
                 onSignIn={(id: string) => {
                   setSigningIn(id);
                   setScreen('signIn');

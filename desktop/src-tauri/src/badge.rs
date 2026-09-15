@@ -11,7 +11,7 @@
 
 use tauri::{AppHandle, Manager};
 
-use crate::{feed::Feed, webviews};
+use crate::webviews;
 
 /// Side of the overlay icon. Windows draws it into the corner of the taskbar button and scales to
 /// suit the display, so this only has to be large enough not to look soft.
@@ -20,16 +20,28 @@ const SIZE: u32 = 32;
 /// `--shiver-danger`, the same colour the rail's unread badge uses.
 const DOT: [u8; 3] = [0xff, 0x64, 0x67];
 
-/// Shiver's own background, used as a rim. Without it the dot sits on a warm icon with almost no edge.
-const RIM: [u8; 3] = [0x0a, 0x0a, 0x0a];
+// There is deliberately no rim. The dot used to be ringed in Shiver's near-black background so it
+// would have an edge against a warm icon, which read as a black border around the badge — the icon
+// is small and the ring is a large fraction of it. The feathered edge below is enough on its own.
 
 /// Puts the mark on the taskbar, or takes it off.
 ///
 /// Called from wherever the feed changes, so it follows the bell rather than keeping a count of its
 /// own — there is one answer to "is anything unread" and it lives in `Feed`.
-pub fn refresh(app: &AppHandle) {
-    let unread: usize = app.state::<Feed>().unread_by_entry().values().sum();
+pub fn refresh<R: tauri::Runtime>(app: &AppHandle<R>) {
+    // The same figure the rail shows, so the taskbar and the rail cannot disagree about whether
+    // anything is waiting. The rail's is the server's own reckoning of unread, which survives a
+    // restart — the feed does not, and a taskbar that forgot every time Shiver closed would be
+    // answering a different question from the one the dot is asking.
+    let unread: usize = app.state::<crate::feed::Feed>().unread_count()
+        + app
+            .state::<crate::watch::Missed>()
+            .counts()
+            .values()
+            .sum::<usize>();
 
+    // No window under a mock runtime, and none before the main window is built. Counting is the
+    // part worth testing; painting a taskbar icon is the platform's business.
     let Ok(window) = webviews::main_window(app) else {
         return;
     };
@@ -56,7 +68,6 @@ fn dot() -> tauri::image::Image<'static> {
     // inset rather than full-bleed: the platform scales this whole image into a small corner slot,
     // so a circle that fills the canvas arrives as a blob with no room to read as a badge
     let outer = centre - 3.0;
-    let inner = outer - 2.5;
 
     for y in 0..SIZE {
         for x in 0..SIZE {
@@ -64,16 +75,14 @@ fn dot() -> tauri::image::Image<'static> {
             let dy = y as f32 - centre;
             let distance = (dx * dx + dy * dy).sqrt();
 
-            // one pixel of feather at each edge, so the circle does not look cut from a grid
+            // one pixel of feather at the edge, so the circle does not look cut from a grid.
+            // `outer` alone now: with no rim there is no second ring to measure.
             let coverage = (outer - distance).clamp(0.0, 1.0);
-            let fill = (inner - distance).clamp(0.0, 1.0);
-
-            let colour = if fill > 0.0 { DOT } else { RIM };
             let at = ((y * SIZE + x) * 4) as usize;
 
-            rgba[at] = colour[0];
-            rgba[at + 1] = colour[1];
-            rgba[at + 2] = colour[2];
+            rgba[at] = DOT[0];
+            rgba[at + 1] = DOT[1];
+            rgba[at + 2] = DOT[2];
             rgba[at + 3] = (coverage * 255.0) as u8;
         }
     }
@@ -109,13 +118,17 @@ mod tests {
         assert_eq!(alpha_at(rgba, SIZE - 1, SIZE - 1), 0);
     }
 
-    /// The rim is the whole reason this is not a plain circle: Shiver's own icon is warm orange, and
-    /// a red dot on it with no edge is barely a dot.
+    /// The badge is one colour all the way to its edge.
+    ///
+    /// It used to be ringed in Shiver's near-black background, on the reasoning that a red dot on a
+    /// warm icon has no edge without one. At sixteen pixels that ring was most of the badge and it
+    /// read as a black border, which is what it was reported as. This is the guard against putting
+    /// it back.
     ///
     /// Found by scanning rather than by naming a pixel, so changing how far the dot is inset does
     /// not quietly turn this into a test of empty space.
     #[test]
-    fn the_dot_has_a_dark_rim_around_the_colour() {
+    fn the_dot_is_one_colour_with_no_rim() {
         let image = dot();
         let rgba = image.rgba();
 
@@ -125,13 +138,13 @@ mod tests {
 
         assert_eq!(
             colour_at(rgba, SIZE / 2, first_solid),
-            RIM,
-            "the edge is the rim"
+            DOT,
+            "the edge is the badge colour, not a rim"
         );
         assert_eq!(
             colour_at(rgba, SIZE / 2, SIZE / 2),
             DOT,
-            "the middle is the colour"
+            "and so is the middle"
         );
         assert!(
             first_solid > 0,

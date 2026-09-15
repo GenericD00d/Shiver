@@ -37,6 +37,8 @@ export type Notification = {
   isDm: boolean;
   at: number;
   read: boolean;
+  /** the version on offer, when this entry is Shiver rather than a server */
+  update: string | null;
 };
 
 export type DmChannel = {
@@ -98,7 +100,15 @@ export type Settings = {
   lastServerId: string | null;
   /** a system-wide shortcut that mutes the microphone, in Tauri's accelerator form */
   muteHotkey: string | null;
+  /** how many servers keep a live page rather than a socket; see `pages_kept` in model.rs */
+  pagesKept: number;
 };
+
+/** Both ends of `pagesKept`. Kept in step with `MIN_PAGES_KEPT` / `MAX_PAGES_KEPT` in model.rs,
+ *  which clamps whatever arrives — this pair only decides what the slider will let you ask for. */
+export const MIN_PAGES_KEPT = 1;
+export const MAX_PAGES_KEPT = 20;
+export const DEFAULT_PAGES_KEPT = 3;
 
 export type Registry = {
   servers: ServerEntry[];

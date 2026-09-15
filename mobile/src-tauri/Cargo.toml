@@ -1,6 +1,6 @@
 [package]
 name = "shiver-mobile"
-version = "0.1.0"
+version = "0.1.2-test12"
 description = "Shiver for Android"
 edition = "2021"
 rust-version = "1.77.2"
@@ -18,10 +18,14 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-shiver-secrets = { path = "../plugins/tauri-plugin-shiver-secrets" }
+# the Sharkord protocol itself, shared with desktop so there is one transcription of it
+shiver-sharkord = { path = "../../shared/sharkord" }
 tauri-plugin-shiver-push = { path = "../plugins/tauri-plugin-shiver-push" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# comparing versions the way versions mean, not the way strings sort
+semver = "1"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 thiserror = "2"

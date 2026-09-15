@@ -37,6 +37,15 @@ pub struct Store {
 }
 
 impl Store {
+    /// An in-memory store, for tests. Never written to disk — the path is one it will not reach.
+    #[cfg(test)]
+    pub(crate) fn for_tests(registry: Registry) -> Self {
+        Self {
+            path: PathBuf::from("shiver-tests-never-written.json"),
+            registry: Mutex::new(registry),
+        }
+    }
+
     pub fn load(app: &AppHandle) -> Result<Self> {
         let dir = app
             .path()

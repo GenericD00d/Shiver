@@ -102,7 +102,7 @@ pub async fn add_server(
         // Only where the user asked. Sharkord's sessions last a week and cannot be refreshed, so
         // this is the difference between a server Shiver keeps watching and one that goes quiet until
         // it is opened again — and it is their call, because it is their password at rest.
-        if remember_password == Some(true) {
+        if remember_password != Some(false) {
             if let Some(password) = password.as_deref() {
                 inbox::remember_password(&app, &entry.id, password);
             }
@@ -110,6 +110,18 @@ pub async fn add_server(
     }
 
     Ok(entry)
+}
+
+/// Takes back the password Shiver is holding for one server.
+///
+/// The counterpart to keeping it by default: Shiver stops asking at the add screen, so it owes the
+/// user a way to undo that. The session is left alone — this means "stop signing me in again", not
+/// "sign me out now".
+#[tauri::command]
+pub fn forget_password(app: AppHandle, id: String) -> Result<()> {
+    inbox::forget_password(&app, &id);
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -469,7 +481,7 @@ pub async fn sign_in_server(
 
     inbox::remember_session(&app, &id, &session);
 
-    if remember_password == Some(true) {
+    if remember_password != Some(false) {
         inbox::remember_password(&app, &id, &password);
     } else {
         inbox::forget_password(&app, &id);
@@ -519,6 +531,29 @@ pub fn watch_problems(app: AppHandle) -> Vec<WatchProblem> {
         .into_iter()
         .map(|(entry_id, reason)| WatchProblem { entry_id, reason })
         .collect()
+}
+
+/// Which servers have Shiver's companion plugin, and which version.
+///
+/// Only servers Shiver has actually connected to appear: the answer comes from the join payload and
+/// there is no way to ask a server about its plugins without signing in — `/info` does not mention
+/// them, and `plugins.get` answers only an admin. So a server absent from this list is "not known
+/// yet", which is a different thing from "no plugin" and must be shown differently.
+#[tauri::command]
+pub fn server_plugins(app: AppHandle) -> Vec<PluginStatus> {
+    app.state::<inbox::Inbox>()
+        .plugins()
+        .into_iter()
+        .map(|(entry_id, version)| PluginStatus { entry_id, version })
+        .collect()
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginStatus {
+    pub entry_id: String,
+    /// `None` means Shiver connected and the plugin was not there
+    pub version: Option<String>,
 }
 
 #[derive(serde::Serialize)]

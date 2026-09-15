@@ -219,6 +219,13 @@ struct State {
     carried: HashMap<String, String>,
     /// entry id -> why Shiver cannot watch it, for the servers where that is permanent
     problems: HashMap<String, String>,
+    /// entry id -> the companion plugin's version there, or `None` for a server without it.
+    ///
+    /// **A key is only present once Shiver has connected**, and that distinction is the point: a
+    /// missing key means "not asked yet", a `None` means "asked, and it is not installed". The two
+    /// must not look the same, or a server Shiver has never reached would be reported as missing
+    /// the plugin. It cannot be asked any earlier — see `plugin_version` in `shiver-sharkord`.
+    plugins: HashMap<String, Option<String>>,
 }
 
 impl Inbox {
@@ -281,6 +288,20 @@ impl Inbox {
         self.state().problems.remove(entry_id);
     }
 
+    /// Records what the join payload said about the companion plugin.
+    fn remember_plugin(&self, entry_id: &str, version: Option<String>) {
+        self.state().plugins.insert(entry_id.to_string(), version);
+    }
+
+    /// Every server Shiver has connected to, and the plugin version it found there.
+    pub fn plugins(&self) -> Vec<(String, Option<String>)> {
+        self.state()
+            .plugins
+            .iter()
+            .map(|(entry_id, version)| (entry_id.clone(), version.clone()))
+            .collect()
+    }
+
     pub fn problems(&self) -> Vec<(String, String)> {
         self.state()
             .problems
@@ -341,8 +362,13 @@ impl Inbox {
         state.tokens.remove(entry_id);
         state.unread.remove(entry_id);
         state.announced.remove(entry_id);
-        state.baselines.remove(entry_id);
         state.read_states.remove(entry_id);
+
+        // **The baseline stays.** It used to go with the session, which meant a token expiring
+        // marked that server read: the next connection found no floor, took a fresh one against
+        // everything the server was holding, and the badge came back at zero. A session ending is
+        // not the user reading anything — only opening the server is, and `sync` is where that is
+        // handled. Same mistake as re-taking the baseline on every reconnect.
 
         if let Some(task) = state.running.remove(entry_id) {
             task.abort();
@@ -359,6 +385,17 @@ impl Inbox {
 
     pub fn forget_remembered(&self, entry_id: &str) {
         self.state().remembered.remove(entry_id);
+    }
+
+    /// This server's unread floor — what was already sitting unread when Shiver first saw it.
+    ///
+    /// Handed to a page so it can put it where this user's other devices will find it. **The
+    /// floor, not the current counts**: publishing the counts would move the floor up to meet them
+    /// every time the server was opened, which is the same as marking everything read on arrival.
+    /// Writing the same floor repeatedly is harmless, and it is how a server that had the plugin
+    /// installed later catches up without anything having to notice.
+    pub fn baseline(&self, entry_id: &str) -> Option<HashMap<i64, u32>> {
+        self.state().baselines.get(entry_id).cloned()
     }
 
     pub fn has_password(&self, entry_id: &str) -> bool {
@@ -467,7 +504,24 @@ fn restore_now(app: &AppHandle) {
             continue;
         };
 
-        if key.starts_with(CARRIED_PREFIX) {
+        if key.starts_with(BASELINE_PREFIX) {
+            // A shape Shiver wrote itself, so a value it cannot read is a value from an older
+            // build or a corrupted store — dropped rather than guessed at, which costs one
+            // launch's badge and not the connection.
+            match serde_json::from_str::<HashMap<i64, u32>>(&value) {
+                Ok(baseline) => {
+                    app.state::<Inbox>()
+                        .state()
+                        .baselines
+                        .insert(entry_id.to_string(), baseline);
+                }
+                Err(error) => {
+                    eprintln!("[shiver] could not read the stored baseline for {entry_id}: {error}");
+
+                    let _ = app.shiver_secrets().remove(&key);
+                }
+            }
+        } else if key.starts_with(CARRIED_PREFIX) {
             app.state::<Inbox>().remember_carried(entry_id, &value);
         } else if key.starts_with(PASSWORD_PREFIX) {
             // Left where it is. A password is read at the moment it is needed and never held in
@@ -485,6 +539,58 @@ fn restore_now(app: &AppHandle) {
 
         sync(app);
     }
+
+    // and then the ones no session came back for, which is the whole point of holding a password
+    sign_in_missing(app);
+}
+
+/// Signs in, at launch, every server that has a password but no session.
+///
+/// `restore_now` above brings back the sessions that were stored, and `sync` watches those. A server
+/// whose session expired since the last launch — Sharkord's last a week and cannot be refreshed —
+/// has none, so it is not in `tokens`, so `sync` never considers it, so no watch is started for it.
+/// The watch loop is the one thing that signs a server back in, which left the server most in need
+/// of a sign-in as the only one that could not get one: it stayed dark, with no badge and no
+/// notifications, until the user happened to open it and the page handed a fresh token over.
+///
+/// That is the whole gap. Everything else about a server is watched from launch already.
+///
+/// One at a time rather than a task each: a launch is already contending for the radio with the
+/// client the user is waiting to see, and these are a handful of small POSTs whose answers are not
+/// needed in any particular order. `sign_in_again` stores the session and calls `sync` itself, so a
+/// server starts being watched as its own sign-in lands rather than after the slowest one.
+fn sign_in_missing(app: &AppHandle) {
+    let handle = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let missing: Vec<(String, String)> = {
+            let inbox = handle.state::<Inbox>();
+            let state = inbox.state();
+            let store = handle.state::<Store>();
+            let registry = store.registry();
+
+            registry
+                .servers
+                .iter()
+                .filter(|server| {
+                    !state.tokens.contains_key(&server.id)
+                        && state.remembered.contains(&server.id)
+                        && server.identity.is_some()
+                })
+                .map(|server| (server.id.clone(), server.origin.clone()))
+                .collect()
+        };
+
+        if missing.is_empty() {
+            return;
+        }
+
+        eprintln!("[shiver] signing in to {} server(s) with no session", missing.len());
+
+        for (entry_id, origin) in missing {
+            sign_in_again(&handle, &entry_id, &origin).await;
+        }
+    });
 }
 
 /// Records a session and starts watching with it, storing it where the next launch will find it.
@@ -561,6 +667,23 @@ pub fn carried_store_key(entry_id: &str) -> String {
 /// What marks a store key as carried page state rather than a session.
 const CARRIED_PREFIX: &str = "carried:";
 
+/// Where a server's unread baseline lives, and what marks the key as one.
+///
+/// **Persisted, and that is the whole point.** The baseline is the floor the badge is measured
+/// from, and while it lived only in memory every restart took a fresh one against whatever the
+/// server currently said — so closing Shiver silently marked everything read, and the badge came
+/// back at zero however much had arrived. Kept across launches, the same floor still applies, so
+/// the count is "since you last opened this server" rather than "since this process started",
+/// including everything that arrived while Shiver was not running.
+///
+/// It goes in the encrypted store because that is the store mobile has, not because a count of
+/// unread messages is a secret.
+pub fn baseline_store_key(entry_id: &str) -> String {
+    format!("{BASELINE_PREFIX}{entry_id}")
+}
+
+const BASELINE_PREFIX: &str = "baseline:";
+
 /// What marks a store key as a password the user asked Shiver to keep.
 ///
 /// Kept only where the user has said so, per server. A session token is worth seven days —
@@ -578,6 +701,7 @@ pub fn password_store_key(entry_id: &str) -> String {
 fn entry_of(key: &str) -> &str {
     key.strip_prefix(CARRIED_PREFIX)
         .or_else(|| key.strip_prefix(PASSWORD_PREFIX))
+        .or_else(|| key.strip_prefix(BASELINE_PREFIX))
         .unwrap_or(key)
 }
 
@@ -594,6 +718,7 @@ pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
     store_off_thread(app, entry_id.to_string(), None);
     store_off_thread(app, carried_store_key(entry_id), None);
     store_off_thread(app, password_store_key(entry_id), None);
+    store_off_thread(app, baseline_store_key(entry_id), None);
 }
 
 /// Brings the set of live connections in line with what Shiver should be watching.
@@ -631,6 +756,17 @@ pub fn sync(app: &AppHandle) {
                 }
             }
         }
+
+        // **The floor is not touched here, and that is deliberate.** Opening a server used to drop
+        // it, so the next connection took a fresh one and the badge came back at zero — walk into a
+        // server with five unread and they were gone whether or not anything had been read.
+        //
+        // The floor answers one question only: what was already sitting unread the first time
+        // Shiver ever saw this server. On a public server that is its whole history, and without a
+        // floor the tile would say 99+ forever. It is not a record of the user glancing at
+        // anything. What the badge counts down is Sharkord's own read state, which falls as
+        // channels are actually read — so five unread becomes four when one of them is read, and
+        // stays at five until then.
 
         (wanted, unwanted)
     };
@@ -699,12 +835,63 @@ async fn watch(app: AppHandle, entry_id: String, origin: String) {
             Ok(mut session) => {
                 let mut read_states = session.joined.read_states.clone();
 
-                // What the server was already holding when Shiver arrived. Everything the badge
-                // reports is measured against this, so a backlog nobody has read is not news.
-                app.state::<Inbox>()
-                    .state()
-                    .baselines
-                    .insert(entry_id.clone(), read_states.clone());
+                // What the server was already holding when Shiver first arrived. Everything the
+                // badge reports is measured against this, so a backlog nobody has read is not news.
+                //
+                // **Only if there is not one already.** A watch starts every time its server stops
+                // being the one on screen, so re-taking this on every connection meant switching to
+                // another server and back silently folded the unread into the baseline and put the
+                // badge to zero — which is exactly what it looked like from the outside: badges
+                // worked, then stopped after a switch, and never came back until new messages
+                // arrived. Cleared deliberately in `sync` when the user opens the server, which is
+                // the one moment "you have seen this" is actually true.
+                // The floor the companion plugin holds for this user on this server, where there
+                // is one. It wins over whatever this device stored: it is the same user's floor,
+                // kept against their account, so a server read on the desktop is read here too.
+                // That is the whole reason it lives on the server rather than on each device.
+                let shared = session.joined.shared_floor.clone();
+
+                let took_baseline = {
+                    let inbox = app.state::<Inbox>();
+                    let mut state = inbox.state();
+
+                    match shared {
+                        Some(shared) => {
+                            let changed = state.baselines.get(&entry_id) != Some(&shared);
+
+                            state.baselines.insert(entry_id.clone(), shared);
+
+                            // written back to this device's store so a launch with no network, or
+                            // with the plugin since removed, still measures from the right place
+                            changed
+                        }
+                        None => {
+                            let before = state.baselines.len();
+
+                            state
+                                .baselines
+                                .entry(entry_id.clone())
+                                .or_insert_with(|| read_states.clone());
+
+                            state.baselines.len() != before
+                        }
+                    }
+                };
+
+                // Written out only when this connection is the one that established it. Re-writing
+                // an existing baseline on every reconnect would be pointless traffic to the store,
+                // and `or_insert_with` above is what decides whether there was one.
+                if took_baseline {
+                    let floor = app
+                        .state::<Inbox>()
+                        .state()
+                        .baselines
+                        .get(&entry_id)
+                        .cloned()
+                        .unwrap_or_else(|| read_states.clone());
+
+                    persist_baseline(&app, &entry_id, &floor);
+                }
 
                 // whatever was wrong before, this connection is proof it is not wrong now
                 app.state::<Inbox>().clear_problem(&entry_id);
@@ -723,12 +910,25 @@ async fn watch(app: AppHandle, entry_id: String, origin: String) {
                 app.state::<Inbox>()
                     .remember_dms(&entry_id, session.joined.dms.clone());
 
+                // whether this server has Shiver's companion plugin, which arrives with the join
+                // and is not askable any other way as an ordinary member
+                app.state::<Inbox>()
+                    .remember_plugin(&entry_id, session.joined.plugin_version.clone());
+
                 recount(&app, &entry_id, &read_states);
 
                 while let Some(event) = session.next_event().await {
                     match event {
                         sharkord::Event::Unread { channel_id, delta } => {
                             sharkord::apply_delta(&mut read_states, channel_id, delta);
+                            recount(&app, &entry_id, &read_states);
+                        }
+                        // The user read that channel — here, or on the desktop, or in a browser.
+                        // It arrives on `channels.onReadStateUpdate`, a different subscription from
+                        // the one that carries arrivals, and not subscribing to it was why a badge
+                        // could not be cleared by reading the thing that caused it.
+                        sharkord::Event::UnreadSet { channel_id, count } => {
+                            sharkord::set_unread(&mut read_states, channel_id, count);
                             recount(&app, &entry_id, &read_states);
                         }
                         sharkord::Event::Posted(message) => {
@@ -740,7 +940,7 @@ async fn watch(app: AppHandle, entry_id: String, origin: String) {
             // A token the server rejects will be rejected again in thirty seconds and every
             // thirty seconds after that, so it is not kept. What happens next depends on whether
             // the user asked Shiver to remember their password for this server.
-            Err(crate::error::Error::Refused(reason)) => {
+            Err(sharkord::Error::Refused(reason)) => {
                 eprintln!("[shiver] {origin} refused Shiver's stored session ({reason})");
 
                 if sign_in_again(&app, &entry_id, &origin).await {
@@ -759,7 +959,7 @@ async fn watch(app: AppHandle, entry_id: String, origin: String) {
             // a server that trims what it sends, or a Shiver with a bigger limit, fixes it without
             // anyone restarting anything — but it is reported rather than only logged, because
             // otherwise that server simply stops existing as far as notifications are concerned.
-            Err(crate::error::Error::TooLarge { size, max }) => {
+            Err(sharkord::Error::TooLarge { size, max }) => {
                 eprintln!(
                     "[shiver] {origin} sent {size} bytes in one message and Shiver accepts {max}, so it is not being watched"
                 );
@@ -1138,6 +1338,15 @@ pub fn remember_password(app: &AppHandle, entry_id: &str, password: &str) {
         password_store_key(entry_id),
         Some(password.to_string()),
     );
+}
+
+/// Writes a server's unread floor to the store, so the next launch measures from the same place.
+fn persist_baseline(app: &AppHandle, entry_id: &str, baseline: &HashMap<i64, u32>) {
+    match serde_json::to_string(baseline) {
+        Ok(encoded) => store_off_thread(app, baseline_store_key(entry_id), Some(encoded)),
+        // costs this server a persisted floor and nothing else; the in-memory one still works
+        Err(error) => eprintln!("[shiver] could not encode the baseline for {entry_id}: {error}"),
+    }
 }
 
 /// Forgets one, either because the user asked or because the server stopped accepting it.

@@ -173,9 +173,21 @@ declare global {
       viewingChannelId: number | null;
       /** addresses the page tried to open in a new window, which is Shiver's to hand to the browser */
       open: string[];
+      /**
+       * Something in the page is filling the screen — a stream being watched, most often.
+       *
+       * Shiver's rail and bell are separate webviews floating over this one, so the page going
+       * fullscreen does not move them: they stay on top of the thing that is supposed to be
+       * filling the screen. The core takes them away while this is true.
+       */
+      fullscreen: boolean;
     };
     __SHIVER_SET_MUTED__?: (muted: number[]) => void;
     __SHIVER_OPEN_DM__?: (name: string) => void;
+    /** jumps the page to one channel, for a notification the user clicked in Shiver's feed */
+    __SHIVER_SELECT_CHANNEL__?: (channelId: number) => void;
+    /** stores this user's unread floor for this server, so their devices share one badge */
+    __SHIVER_SET_READ_FLOOR__?: (floor: Record<string, number>) => void;
     __SHIVER_SET_DM_MODE__?: (enabled: boolean) => void;
     __SHIVER_SET_THEME__?: (theme: ShiverTheme | null) => void;
     __SHIVER_SET_VOICE_LOCK__?: (locked: boolean) => void;
@@ -192,8 +204,18 @@ declare global {
     __SHARKORD_STORE__?: {
       getState: () => SharkordState;
       subscribe: (listener: () => void) => () => void;
-      /** Sharkord's own plugin-facing actions; Shiver uses `selectChannel` to mark channels read */
-      actions?: { selectChannel?: (channelId: number) => void };
+      /**
+       * Sharkord's own plugin-facing actions. Shiver uses `selectChannel` to mark channels read,
+       * and the user-data pair to keep one unread floor across a person's devices.
+       *
+       * These take the plugin id as an argument, unlike `executePluginAction`, which reads it off
+       * the calling stack — which is why those two can be called from here and it cannot.
+       */
+      actions?: {
+        selectChannel?: (channelId: number) => void;
+        getUserData?: (pluginId: string) => Promise<Record<string, unknown> | null>;
+        setUserData?: (pluginId: string, data: Record<string, unknown>) => Promise<void>;
+      };
     };
   }
 }
@@ -270,7 +292,7 @@ function install(shiver: ShiverConfig) {
     openDmFailure = null;
 
     return {
-      notifications: queue.splice(0, queue.length),
+      notifications: resolveDmChannels(queue, state).splice(0, queue.length),
       mutes: muteQueue.splice(0, muteQueue.length),
       dms: pendingDms,
       syncedMutes: pendingSynced,
@@ -278,13 +300,19 @@ function install(shiver: ShiverConfig) {
       openDmFailed: pendingFailure,
       ready: isClientReady(state),
       signedOut: isSignedOut(),
+      fullscreen: document.fullscreenElement !== null,
       voice: readVoice(state),
+      // An open conversation first: it is the one Sharkord does not report through
+      // `selectedChannelId`, which goes on naming whatever ordinary channel was last chosen.
       viewingChannelId:
-        typeof state.selectedChannelId === 'number' ? state.selectedChannelId : null
+        openDmChannelId(state) ??
+        (typeof state.selectedChannelId === 'number' ? state.selectedChannelId : null)
     };
   };
 
   window.__SHIVER_OPEN_DM__ = (name) => openDirectMessage(name);
+  window.__SHIVER_SELECT_CHANNEL__ = (channelId) => selectChannelWhenReady(channelId);
+  window.__SHIVER_SET_READ_FLOOR__ = (floor) => void storeReadFloor(floor);
   window.__SHIVER_SET_DM_MODE__ = (enabled) => setDmMode(enabled);
   window.__SHIVER_SET_THEME__ = (theme) => setTheme(theme);
 
@@ -366,9 +394,14 @@ function installConversationView(shiver: ShiverConfig) {
   window.__SHIVER_OPEN_DM__ = (name) => openDirectMessage(name);
   window.__SHIVER_SET_THEME__ = (theme) => setTheme(theme);
 
-  // still drained, so a conversation Shiver could not open is reported rather than silently missed.
-  // everything else stays empty: the server page for this entry is already reporting it, and two
-  // pages answering for one server would double every notification and fight over the inbox.
+  // Still drained, for two things. A conversation Shiver could not open is reported rather than
+  // silently missed — and **which conversation is on screen**, which is the one fact only this page
+  // has: the server page for this entry carries on reporting whatever channel it was left on.
+  //
+  // Everything else stays empty. The server page is already reporting it, and two pages answering
+  // for one server would double every notification and fight over the inbox. `viewingChannelId` is
+  // not one of those: it is not a notification, and the core reads it from this page alone — see
+  // `mark_read_conversation_read` in `drain.rs`.
   window.__SHIVER_DRAIN__ = () => {
     const pendingFailure = openDmFailure;
 
@@ -383,8 +416,15 @@ function installConversationView(shiver: ShiverConfig) {
       openDmFailed: pendingFailure,
       ready: false,
       signedOut: false,
+      fullscreen: false,
       voice: null,
-      viewingChannelId: null
+      // Read from the store rather than left null, which is what it used to be — so the core was
+      // told nothing about the conversation being read, and reading a DM never cleared its
+      // notification or moved the badge. The whole point of draining this page is here.
+      viewingChannelId:
+        typeof window.__SHARKORD_STORE__?.getState().selectedChannelId === 'number'
+          ? (window.__SHARKORD_STORE__?.getState().selectedChannelId as number)
+          : null
     };
   };
 
@@ -870,6 +910,65 @@ function dmPartnerId(channel: SharkordChannel, ownUserId: number | undefined) {
   if (ownUserId === undefined) return a;
 
   return a === ownUserId ? b : a;
+}
+
+/**
+ * Fills in the channel of any queued direct message whose channel could not be resolved yet.
+ *
+ * A notification is captured the moment Sharkord raises it, and for a direct message the channel is
+ * recovered by looking the author up in the store — which, in the first seconds after a page
+ * connects, has neither the user list nor the dm channels in it yet. So the channel came back null,
+ * and a notification with no channel is one the core will **never** clear: reading a channel clears
+ * notifications *for that channel*, and this one claimed to be for none.
+ *
+ * That is a badge that cannot be got rid of, and it was reported as exactly that. Retrying here
+ * costs nothing — the queue is walked on the way out anyway — and by drain time the store is
+ * usually populated.
+ */
+function resolveDmChannels(queue: QueuedNotification[], state: SharkordState) {
+  for (const queued of queue) {
+    if (!queued.isDm || queued.channelId !== null) continue;
+
+    queued.channelId = findDmChannelIdByUserName(state, queued.author);
+  }
+
+  return queue;
+}
+
+/**
+ * The conversation open in Sharkord's direct-message view, if one is.
+ *
+ * **`selectedChannelId` is not this.** Direct messages are tracked in a different slice entirely —
+ * `app.selectedDmChannelId`, set by `setSelectedDmChannelId` — and none of that reaches the plugin
+ * store, which only carries the *server* slice. Measured on a real client: `selectedChannelId` sat
+ * at 26 for an entire session while a conversation on channel 29 was open and being read. Six
+ * builds went out inferring "what is being read" from a value that does not follow a conversation.
+ *
+ * So it is read off the page instead. Sharkord marks the open row with `bg-accent`, and the row
+ * carries the person's name — which is the same thing a direct message's notification is resolved
+ * by, so the two agree by construction rather than by luck.
+ *
+ * The longest matching name wins, so "Test User" cannot be mistaken for "Test User 2".
+ */
+function openDmChannelId(state: SharkordState) {
+  const rows = document.querySelectorAll<HTMLElement>('[data-testid="dm-item"]');
+
+  for (const row of rows) {
+    // `hover:bg-accent` is a different class, so this does not match a row merely under the pointer
+    if (!row.classList.contains('bg-accent')) continue;
+
+    const text = row.textContent ?? '';
+    let best: string | null = null;
+
+    for (const user of state.users ?? []) {
+      if (!user.name || !text.includes(user.name)) continue;
+      if (best === null || user.name.length > best.length) best = user.name;
+    }
+
+    if (best !== null) return findDmChannelIdByUserName(state, best);
+  }
+
+  return null;
 }
 
 function findDmChannelIdByUserName(state: SharkordState, name: string) {
@@ -1370,6 +1469,82 @@ function markAllChannelsRead(state: SharkordState) {
 
   if (typeof previous === 'number') selectChannel(previous);
 }
+
+/**
+ * Puts the page on one channel, for a notification the user clicked in Shiver's feed.
+ *
+ * `selectChannel` is Sharkord's own published action — the same one `markAllChannelsRead` uses — so
+ * this is asking the client to do what clicking the channel does, including marking it read, rather
+ * than Shiver reaching into its state.
+ *
+ * Retried on a deadline rather than attempted once, for the same reason opening a DM is: the page
+ * may have been built moments ago by the very click being handled, and the store's actions do not
+ * exist until the client has connected. A channel the server does not have is not an error worth
+ * reporting — it is a notification about a channel since deleted, and the retry simply runs out.
+ */
+function selectChannelWhenReady(channelId: number) {
+  const deadline = Date.now() + 25_000;
+
+  const attempt = () => {
+    // the store is read here rather than through a passed-in accessor: this is called from the
+    // core at an arbitrary moment, not from inside something that already holds one
+    const store = window.__SHARKORD_STORE__;
+    const selectChannel = store?.actions?.selectChannel;
+    const known = (store?.getState().channels ?? []).some(
+      (channel: SharkordChannel) => channel.id === channelId
+    );
+
+    if (selectChannel && known) {
+      selectChannel(channelId);
+
+      return true;
+    }
+
+    return Date.now() > deadline;
+  };
+
+  if (attempt()) return;
+
+  const timer = window.setInterval(() => {
+    if (attempt()) window.clearInterval(timer);
+  }, 250);
+}
+
+/**
+ * Stores this user's unread floor for this server, where the companion plugin can hold it.
+ *
+ * **This is the write half of the shared badge.** The core reads the floor back on every connection
+ * (`plugins.getUserData`, a query, which is what lets its socket stay read-only) and measures the
+ * badge from it. Writing is a mutation, so it happens here instead: a page is what the user opened,
+ * and opening a server is the only thing that moves the floor.
+ *
+ * `getUserData`/`setUserData` are called directly rather than through the plugin relay, because
+ * they take the plugin id as an argument. `executePluginAction` is the one that reads it off the
+ * calling stack frame and therefore cannot be called from this script.
+ *
+ * The row is read and spread before writing, because a write replaces the whole of it: the muted
+ * channel list lives in the same row and must survive this.
+ *
+ * Silent on failure, and there are two ordinary ones: no plugin installed, and a plugin installed
+ * but switched off — `setUserData` answers NOT_FOUND for both. Neither is worth telling anybody
+ * about, and each device still has its own floor to fall back on.
+ */
+async function storeReadFloor(floor: Record<string, number>) {
+  const actions = window.__SHARKORD_STORE__?.actions;
+
+  if (!actions?.getUserData || !actions?.setUserData) return;
+
+  try {
+    const stored = (await actions.getUserData(SHIVER_PLUGIN_ID)) ?? {};
+
+    await actions.setUserData(SHIVER_PLUGIN_ID, { ...stored, readFloor: floor });
+  } catch {
+    // no plugin here, or it is switched off. the local floor still applies.
+  }
+}
+
+/** The id Shiver's companion plugin installs under. Matches `SHIVER_PLUGIN_ID` in the rust core. */
+const SHIVER_PLUGIN_ID = 'shiver';
 
 const VOICE_NOTICE_ID = 'shiver-voice-notice';
 let voiceLocked = false;

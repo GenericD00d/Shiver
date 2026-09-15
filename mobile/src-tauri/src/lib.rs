@@ -5,8 +5,11 @@ mod login;
 mod model;
 mod probe;
 mod push;
-mod sharkord;
+// The protocol lives in `shared/sharkord`, because desktop speaks it now too. Re-exported under
+// the old path so every `crate::sharkord::` reference still reads the same.
+pub use shiver_sharkord as sharkord;
 mod store;
+mod update;
 mod webview;
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -25,6 +28,9 @@ pub fn run() {
         .plugin(tauri_plugin_shiver_secrets::init())
         .plugin(tauri_plugin_shiver_push::init())
         .invoke_handler(tauri::generate_handler![
+            update::update_available,
+            update::open_releases,
+            commands::forget_password,
             commands::list_registry,
             commands::probe_server,
             commands::add_server,
@@ -50,6 +56,7 @@ pub fn run() {
             commands::set_folder_expanded,
             commands::list_unread,
             commands::list_dms,
+            commands::server_plugins,
             commands::refresh_server_info,
             commands::mark_server_read,
             commands::log_out_server,
@@ -65,6 +72,7 @@ pub fn run() {
             app.manage(Showing::default());
             app.manage(Inbox::default());
             app.manage(push::Push::default());
+            app.manage(update::Available::default());
 
             // built here rather than declared in the config so the navigation guard and the page
             // load hook can be attached to it, which the config cannot express
@@ -128,6 +136,12 @@ pub fn run() {
                         return;
                     }
 
+                    // Before the bridge, because it decides whether there is a server in play at
+                    // all: arriving at Shiver's own pages is what ends the last one being "shown".
+                    if webview::is_home(&handle, payload.url()) {
+                        webview::landed_home(&handle);
+                    }
+
                     install_bridge_if_server(&handle, payload.url());
                 }
             })
@@ -159,6 +173,8 @@ pub fn run() {
             // the muted channels live in whichever server's page is on screen, and the core needs
             // them before the user leaves it rather than after
             inbox::watch_mutes(&handle);
+
+            update::start(&handle);
 
             backfill_icons(handle);
 
@@ -254,6 +270,9 @@ fn install_bridge_if_server(app: &tauri::AppHandle, url: &tauri::Url) {
     let session = app.state::<Inbox>().token(&entry_id);
     let push_endpoint = app.state::<push::Push>().endpoint(&entry_id);
     let carried = webview::carried_state(app, &entry_id);
+    // the floor this server is measured from, so the page can store it where the user's other
+    // devices will find it. Unchanged by the visit — see `Inbox::baseline`.
+    let read_floor = app.state::<Inbox>().baseline(&entry_id);
 
     webview::install_bridge(
         app,
@@ -266,6 +285,7 @@ fn install_bridge_if_server(app: &tauri::AppHandle, url: &tauri::Url) {
             signed_out: &signed_out,
             session: session.as_deref(),
             carried: carried.as_deref(),
+            read_floor: read_floor.as_ref(),
             folders: &folders,
             push_endpoint: push_endpoint.as_deref(),
         },

@@ -79,6 +79,19 @@ pub struct Settings {
     /// (`"CommandOrControl+Shift+M"`). Absent means no shortcut is registered at all.
     #[serde(default)]
     pub mute_hotkey: Option<String>,
+    /// How many servers keep a live page, rather than being watched over a socket.
+    ///
+    /// The memory dial. A page is a whole browser running a whole Sharkord client — on the order of
+    /// a hundred megabytes — and it buys one thing: that server is instant to switch back to. A
+    /// socket costs almost nothing and reports the same messages, conversations and unread, so every
+    /// server above this number is still fully in the inbox; it just has to start its client when
+    /// you open it.
+    ///
+    /// Three by default. Someone with memory to spare and a habit of jumping between many servers
+    /// can raise it; someone in thirty servers on a small machine can put it to one and pay for
+    /// exactly the server they are looking at. Clamped on the way in — see `pages_kept`.
+    #[serde(default = "default_pages_kept")]
+    pub pages_kept: u8,
 }
 
 /// Sharkord's own dark theme, so Shiver out of the box looks like Sharkord out of the box.
@@ -96,6 +109,19 @@ fn default_sound_volume() -> u16 {
     100
 }
 
+fn default_pages_kept() -> u8 {
+    DEFAULT_PAGES_KEPT
+}
+
+/// The default, and the two ends of what the setting may be.
+///
+/// At least one, because the server on screen always has a page and a zero would be a number Shiver
+/// cannot honour. The ceiling is there because this is a memory setting and the whole point of it
+/// is a bound — someone typing 500 into a box should get a large number, not an unbounded one.
+pub const DEFAULT_PAGES_KEPT: u8 = 3;
+pub const MIN_PAGES_KEPT: u8 = 1;
+pub const MAX_PAGES_KEPT: u8 = 20;
+
 /// Silent, through to loud enough to hear over a call. Clamped rather than trusted: this is a
 /// number a page could put in the settings file, and a gain of 400 is a way to hurt somebody.
 pub const MAX_SOUND_VOLUME: u16 = 250;
@@ -111,11 +137,20 @@ impl Default for Settings {
             minimise_attachments: true,
             last_server_id: None,
             mute_hotkey: None,
+            pages_kept: DEFAULT_PAGES_KEPT,
         }
     }
 }
 
 impl Settings {
+    /// The setting, held to what Shiver can actually honour.
+    ///
+    /// Clamped at the point of use rather than trusted from the file: `settings.json` is a file on
+    /// disk a person can edit, and a zero there would mean closing the page the user is looking at.
+    pub fn pages_kept(&self) -> usize {
+        self.pages_kept.clamp(MIN_PAGES_KEPT, MAX_PAGES_KEPT) as usize
+    }
+
     /// True while the user has not picked their own colours. Shiver injects no css into a server's
     /// page in that case, so a stock server looks exactly as its own client intends.
     pub fn uses_default_colors(&self) -> bool {
@@ -145,6 +180,23 @@ pub struct Registry {
     pub settings: Settings,
     #[serde(default)]
     pub muted: Vec<MutedChannel>,
+    /// entry id -> that server's unread floor, per channel id, as of the last time the user read it.
+    ///
+    /// **What makes a badge survive a restart.** A badge used to count only the notifications Shiver
+    /// had collected in this run, so closing it threw the count away and reopening it started from
+    /// nothing — whatever arrived in between was never mentioned. Sharkord keeps per-channel unread
+    /// of its own and hands it over on connect; measured against this floor, the difference is
+    /// everything that has arrived since the user last opened that server, including while Shiver
+    /// was closed.
+    ///
+    /// A floor rather than a plain "count what the server says", because what the server says
+    /// includes every message in every channel the user has never opened — on a public server, its
+    /// whole history. The floor is taken the first time Shiver connects and re-taken when the user
+    /// opens that server, which is the one moment "you have seen this" is actually true.
+    ///
+    /// In the registry rather than the keychain: it is a count of unread messages, not a secret.
+    #[serde(default)]
+    pub baselines: std::collections::HashMap<String, std::collections::HashMap<i64, u32>>,
 }
 
 /// What GET /info exposes to a client that has not signed in yet.

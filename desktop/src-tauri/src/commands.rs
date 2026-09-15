@@ -38,6 +38,20 @@ use crate::{
 /// not answer in time", and the permissions cleared anyway the moment the main thread was let go.
 ///
 /// `spawn_blocking` rather than a bare `async fn` because the wait really does block its thread,
+/// Takes back the password Shiver is holding for one server.
+///
+/// The counterpart to keeping it by default. Shiver stops asking permission at the add screen, so
+/// it owes the user a way to undo that afterwards — and this is it, on the server's own menu beside
+/// logging out.
+///
+/// The session is left alone: forgetting the password means "stop signing me in again", not "sign
+/// me out now". What follows is simply the old behaviour — the server goes quiet when its week is
+/// up, and asks to be signed in.
+#[tauri::command]
+pub fn forget_password(id: String) -> Result<()> {
+    secrets::forget(Secret::Password, &id)
+}
+
 /// and the async runtime's workers are not there to be sat on.
 #[tauri::command]
 pub async fn reset_media_permissions(app: AppHandle) -> Result<usize> {
@@ -66,13 +80,16 @@ pub async fn probe_server(origin: String) -> Result<ServerInfo> {
 /// `identity` empty keeps the old behaviour, which is the fallback for servers behind an identity
 /// provider where Shiver cannot do the sign-in itself.
 ///
-/// `remember_password` is the user's choice about the password itself, and it is off unless they
+/// Kept unless the user says otherwise, which is the reverse of how this started.
 /// say otherwise — the same opt-in mobile has. The session is kept either way: it is what Shiver
 /// signs in *with*, it dies in a week on its own, and without it there is no seamless open at all.
 /// The password is the thing that outlives everything, and Windows Credential Manager is readable
 /// by anything running as that user, so it is not Shiver's to keep uninvited.
 #[tauri::command]
 pub async fn add_server(
+    // injected by tauri, not sent by the caller: a server added mid-session has to start being
+    // watched, and that needs a handle
+    app: AppHandle,
     store: State<'_, Store>,
     origin: String,
     identity: Option<String>,
@@ -138,10 +155,13 @@ pub async fn add_server(
     if let Some((_, password, token)) = credentials {
         secrets::store(Secret::Session, &entry.id, &token)?;
 
-        if remember_password == Some(true) {
+        if remember_password != Some(false) {
             secrets::store(Secret::Password, &entry.id, &password)?;
         }
     }
+
+    // it reports from launch like every other server does, without waiting to be opened
+    crate::watch::sync(&app);
 
     Ok(entry)
 }
@@ -181,7 +201,12 @@ pub async fn remove_server(
         }
 
         Ok(())
-    })
+    })?;
+
+    // the entry is gone from the registry, so this is what closes the socket that was watching it
+    crate::watch::sync(&app);
+
+    Ok(())
 }
 
 /// Applies a drag in the rail. `ordered_ids` is the full rail in its new order.
@@ -436,6 +461,16 @@ pub async fn select_server(app: AppHandle, store: State<'_, Store>, id: String) 
 
     webviews::show_server(&app, &entry, &settings, token.as_deref(), &muted, locked)?;
 
+    // This server now has a page, which reports for itself — and whatever fell off the end of the
+    // keep-warm list no longer does. `trim_pages` closes those and re-syncs the sockets, so exactly
+    // one thing is reporting for every server either way.
+    webviews::trim_pages(&app);
+
+    // Opening a server does **not** settle its badge — walking in is not reading. What this does
+    // is hand the page this server's floor, so the user's other devices measure from the same
+    // place. The count comes down as channels are actually read.
+    crate::watch::publish_floor(&app, &id);
+
     // deliberately does *not* mark the whole server read. The channel the page lands on clears
     // itself once the drain sees it on screen, and what is left is the point: the badge goes on
     // showing the unread in the channels the user has not looked at. "Mark all as read" in the
@@ -489,6 +524,11 @@ pub async fn prepare_server(app: AppHandle, store: State<'_, Store>, id: String)
         let locked = voice_locked_for(&app, &id);
 
         webviews::preload_server(&app, &entry, &settings, token.as_deref(), &muted, locked)?;
+
+        // this server has a page now, so the socket that was speaking for it stands down. Done
+        // here rather than at `select_server`: between the two, both would be reporting, and the
+        // same message would reach the feed twice.
+        crate::watch::sync(&app);
     }
 
     Ok(app.state::<Readiness>().is_ready(&id))
@@ -567,6 +607,11 @@ pub async fn update_settings(
     // re-registered rather than diffed: the shortcut may be unchanged, but the user may equally
     // have just cleared it or taken it from another application
     hotkey::apply(&app, saved.mute_hotkey.as_deref());
+
+    // A lowered page count is the one setting here that should cost memory the moment it is saved
+    // rather than at the next server switch — somebody turning it down is asking for the memory
+    // back now. It also re-syncs the sockets, so whatever just lost its page keeps reporting.
+    webviews::trim_pages(&app);
 
     // every page repaints in place: the server clients through the bridge, and Shiver's own bell and
     // popup through an event, since each is a separate webview that would otherwise keep the old
@@ -685,6 +730,9 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
     webviews::show_server(&app, &entry, &settings, None, &[], locked)?;
     webviews::preload_dm_view(&app, &entry, &settings, None)?;
 
+    // the entry has no identity any more, which is what stops Shiver watching it from the core
+    crate::watch::sync(&app);
+
     Ok(())
 }
 
@@ -720,7 +768,7 @@ pub async fn sign_in_server(
 
     // unticked drops whatever was kept before, so the box says what is actually stored rather than
     // only what happens from now on
-    if remember_password == Some(true) {
+    if remember_password != Some(false) {
         secrets::store(Secret::Password, &id, &password)?;
     } else {
         secrets::forget(Secret::Password, &id)?;
@@ -749,6 +797,9 @@ pub async fn sign_in_server(
 
     // the user has given Shiver a password that works, so whatever it failed at before is history
     app.state::<Recovery>().forget_entry(&id);
+
+    // Shiver has an account on this server now, which is the thing it could not watch without.
+    crate::watch::sync(&app);
 
     // the shell opens it from here, so the rebuilt page comes up behind Shiver's connecting screen
     // rather than the user watching the client boot
@@ -789,8 +840,25 @@ pub async fn show_server_menu(app: AppHandle, store: State<'_, Store>, id: Strin
         MenuItemBuilder::with_id(format!("refresh:{id}"), "Refresh name and icon").build(&app)?;
     let remove =
         MenuItemBuilder::with_id(format!("remove:{id}"), "Remove from Shiver").build(&app)?;
+    // enabled only when there is one to forget, so the item answers the question by existing
+    let forget = MenuItemBuilder::with_id(format!("forgetpw:{id}"), "Forget my password")
+        .enabled(secrets::read(Secret::Password, &id).ok().flatten().is_some())
+        .build(&app)?;
 
-    let mut builder = MenuBuilder::new(&app).items(&[&open, &mark_read, &refresh]);
+    // What this server can do for Shiver, said where the rest of the per-server answers are.
+    //
+    // Disabled on purpose: it is a statement, not an action. A native menu has no colour to give it
+    // — `MenuItemBuilder` takes text and nothing else — so the tick and the cross carry it, which
+    // is also what survives being read aloud by a screen reader.
+    let plugin = MenuItemBuilder::with_id(
+        format!("plugin:{id}"),
+        plugin_menu_label(app.state::<crate::watch::Plugins>().all().get(&id)),
+    )
+    .enabled(false)
+    .build(&app)?;
+
+    let mut builder =
+        MenuBuilder::new(&app).items(&[&open, &mark_read, &refresh, &forget, &plugin]);
 
     if in_folder {
         let take_out =
@@ -804,6 +872,19 @@ pub async fn show_server_menu(app: AppHandle, store: State<'_, Store>, id: Strin
     menu.popup(window)?;
 
     Ok(())
+}
+
+/// How a server's companion-plugin status reads in the rail menu.
+///
+/// Three answers, not two. A server absent from the map is one Shiver has not connected to yet, and
+/// saying "no plugin" about one of those would be a guess presented as a fact — the answer only
+/// arrives with a join. See `watch::Plugins`.
+fn plugin_menu_label(status: Option<&Option<String>>) -> String {
+    match status {
+        Some(Some(version)) => format!("\u{2713} Shiver plugin {version}"),
+        Some(None) => "\u{2717} No Shiver plugin".to_string(),
+        None => "Shiver plugin: not checked yet".to_string(),
+    }
 }
 
 /// Opens or closes the notification feed under the bell. Returns the new state, so the bell can
@@ -889,6 +970,53 @@ pub async fn open_dm(
     Ok(())
 }
 
+/// Asks the shell to take the user to a message in the feed, and closes the popup behind them.
+///
+/// Callable from the bell popup, which is a webview of Shiver's own and so has IPC. It performs
+/// nothing itself: the shell owns server switching, including the cover it draws over a server that
+/// is still coming up, and a second thing doing it would be a second implementation of that.
+#[tauri::command]
+pub async fn open_message(
+    app: AppHandle,
+    entry_id: String,
+    channel_id: Option<i64>,
+    is_dm: bool,
+    author: String,
+) -> Result<()> {
+    let _ = app.emit_to(
+        webviews::SHELL_WEBVIEW,
+        drain::OPEN_MESSAGE_EVENT,
+        serde_json::json!({
+            "entryId": entry_id,
+            "channelId": channel_id,
+            "isDm": is_dm,
+            "author": author,
+        }),
+    );
+
+    // the user has said where they are going, so the thing they said it from gets out of the way
+    webviews::set_popup_open(&app, false)
+}
+
+/// Puts a server's page on one channel, for a notification the user clicked.
+///
+/// The shell has already opened the server by the time this runs — that is the part with the
+/// connecting cover on it, and it belongs where the rest of the switching does. This is only the
+/// last step, and the page retries on its own side because it may have been built a moment ago.
+#[tauri::command]
+pub fn select_channel(app: AppHandle, entry_id: String, channel_id: i64) -> Result<()> {
+    let Some(webview) = app.get_webview(&webviews::webview_label(&entry_id)) else {
+        // no page for that server, which means the click raced the server being closed
+        return Ok(());
+    };
+
+    webview
+        .eval(format!(
+            "window.__SHIVER_SELECT_CHANNEL__ && window.__SHIVER_SELECT_CHANNEL__({channel_id})"
+        ))
+        .map_err(|error| Error::Webview(error.to_string()))
+}
+
 #[tauri::command]
 pub fn list_notifications(feed: State<'_, Feed>) -> Vec<Notification> {
     feed.notifications()
@@ -901,13 +1029,44 @@ pub fn list_dms(feed: State<'_, Feed>) -> Vec<DmEntry> {
 
 #[tauri::command]
 pub fn unread_count(feed: State<'_, Feed>) -> usize {
+    // The feed alone. This is the number on the bell, and the bell opens a *list* — a count with
+    // nothing behind it to show would be worse than no count. What arrived while Shiver was closed
+    // has no message to show, so it is counted on the rail, where a badge is a claim about a
+    // server rather than a promise of a list.
     feed.unread_count()
+}
+
+/// Which servers have Shiver's companion plugin, and which version.
+///
+/// Only servers Shiver has connected to appear — see `watch::Plugins` for why it cannot be known
+/// before then. A server missing from this map has not been asked, which the caller must show
+/// differently from a server that answered and had no plugin.
+#[tauri::command]
+pub fn server_plugins(app: AppHandle) -> std::collections::HashMap<String, Option<String>> {
+    app.state::<crate::watch::Plugins>().all()
 }
 
 /// Unread per rail entry, for the badges on the server icons.
 #[tauri::command]
-pub fn unread_counts(feed: State<'_, Feed>) -> std::collections::HashMap<String, usize> {
-    feed.unread_by_entry()
+pub fn unread_counts(
+    app: AppHandle,
+    feed: State<'_, Feed>,
+) -> std::collections::HashMap<String, usize> {
+    // Two halves of one number, and they cannot overlap. The feed holds what arrived while Shiver
+    // was running — every one of those left a notification. `Missed` holds what arrived while it
+    // was **closed**, which left none, counted once at the first connection of this run and never
+    // recomputed upward.
+    //
+    // Making this the read states alone was a mistake: the rail then depended on delta events
+    // arriving, on the floor being right and on the plugin's shared floor being sane, where the
+    // feed depended only on a message turning up. The badge disappeared altogether.
+    let mut counts = feed.unread_by_entry();
+
+    for (entry_id, missed) in app.state::<crate::watch::Missed>().counts() {
+        *counts.entry(entry_id).or_default() += missed;
+    }
+
+    counts
 }
 
 /// Marks one whole server read, from the rail's context menu.
@@ -919,6 +1078,9 @@ pub fn unread_counts(feed: State<'_, Feed>) -> std::collections::HashMap<String,
 #[tauri::command]
 pub async fn mark_server_read(app: AppHandle, entry_id: String) -> Result<()> {
     webviews::mark_all_read(&app, &entry_id);
+
+    // and what arrived while Shiver was closed, which the feed knows nothing about
+    crate::watch::mark_read(&app, &entry_id);
 
     if app.state::<Feed>().mark_entry_read(&entry_id) {
         drain::notify_feed_changed(&app);
@@ -980,68 +1142,22 @@ pub fn set_channel_muted(
 
 /// Brings every server in the rail online at launch, whether or not the user opens it.
 ///
-/// Each gets a hidden webview running the real client, so notifications, DMs and mutes flow from
-/// all of them at once rather than only from the one being looked at. Servers are done one at a
-/// time: signing in is a network round trip each, and starting a dozen clients simultaneously would
-/// make the window that much slower to become usable.
-pub(crate) async fn preload_all_servers(app: AppHandle) {
-    let (entries, settings) = {
-        let store = app.state::<Store>();
-        let registry = store.registry();
+/// It used to do that by giving each one a hidden webview running the real client — two, in fact,
+/// counting the preloaded conversation view. That is what made the inbox complete from launch, and
+/// it is also what made Shiver cost a hundred megabytes per server in the rail. Someone in thirty
+/// servers was running sixty Sharkord clients to read one.
+///
+/// Now it opens a socket to each instead (`watch.rs`), which reports the same messages and the same
+/// conversations, and a page is built only for a server the user actually opens — at most
+/// `KEEP_PAGES` of them at a time. The inbox is still complete from launch; it simply is not paying
+/// for a browser per server to be so.
+pub(crate) async fn connect_all_servers(app: AppHandle) {
+    let total = app.state::<Store>().registry().servers.len();
 
-        (registry.servers.clone(), registry.settings.clone())
-    };
-
-    let total = entries.len();
-    let mut online = 0;
-    let mut sessions = Vec::with_capacity(total);
-
-    for entry in entries {
-        let token = ensure_session(&entry).await;
-
-        let muted = {
-            let store = app.state::<Store>();
-            let registry = store.registry();
-
-            registry
-                .muted
-                .iter()
-                .filter(|muted| muted.entry_id == entry.id)
-                .map(|muted| muted.channel_id)
-                .collect::<Vec<_>>()
-        };
-
-        let locked = voice_locked_for(&app, &entry.id);
-
-        match webviews::preload_server(&app, &entry, &settings, token.as_deref(), &muted, locked) {
-            Ok(()) => online += 1,
-            // one unreachable server must not stop the rest from coming up
-            Err(error) => eprintln!("[shiver] could not preload {}: {error}", entry.origin),
-        }
-
-        sessions.push((entry, token));
-    }
+    crate::watch::sync(&app);
 
     if total > 0 {
-        eprintln!("[shiver] {online}/{total} servers online");
-    }
-
-    // the conversation views come second, on the session each server just established. the rail is
-    // what the user is waiting for, so nothing here is allowed to delay a server coming up.
-    let mut conversations = 0;
-
-    for (entry, token) in &sessions {
-        match webviews::preload_dm_view(&app, entry, &settings, token.as_deref()) {
-            Ok(()) => conversations += 1,
-            Err(error) => eprintln!(
-                "[shiver] could not preload the conversation view for {}: {error}",
-                entry.origin
-            ),
-        }
-    }
-
-    if total > 0 {
-        eprintln!("[shiver] {conversations}/{total} conversation views ready");
+        eprintln!("[shiver] {total} server(s) in the rail, connecting from the core");
     }
 }
 

@@ -64,6 +64,13 @@ export type PushServer = {
 };
 
 /** A server Shiver cannot watch, and the reason in words meant for a person. */
+/** What Shiver found out about a server's companion plugin, once it had connected to it. */
+export type PluginStatus = {
+  entryId: string;
+  /** null where Shiver connected and the plugin was not installed */
+  version: string | null;
+};
+
 export type WatchProblem = {
   entryId: string;
   reason: string;

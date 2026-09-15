@@ -17,7 +17,6 @@ export const AddServerPanel = ({ onAdded, onCancel, canCancel }: Props) => {
   // the escape hatch for servers behind an identity provider, where Shiver cannot sign in itself
   const [signInHere, setSignInHere] = useState(true);
   // off by default: Shiver keeps as little as it can, and the session alone opens the server
-  const [rememberPassword, setRememberPassword] = useState(false);
   const [preview, setPreview] = useState<ServerInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -46,7 +45,7 @@ export const AddServerPanel = ({ onAdded, onCancel, canCancel }: Props) => {
         signInHere ? identity.trim() : undefined,
         signInHere ? password : undefined,
         accountLabel.trim() || undefined,
-        signInHere && rememberPassword
+        signInHere
       );
 
       onAdded(entry.id);
@@ -55,7 +54,7 @@ export const AddServerPanel = ({ onAdded, onCancel, canCancel }: Props) => {
     } finally {
       setBusy(false);
     }
-  }, [accountLabel, identity, onAdded, origin, password, rememberPassword, signInHere]);
+  }, [accountLabel, identity, onAdded, origin, password, signInHere]);
 
   const handleSubmit = useCallback(
     (event: React.FormEvent) => {
@@ -100,7 +99,9 @@ export const AddServerPanel = ({ onAdded, onCancel, canCancel }: Props) => {
         <h1>Add a server</h1>
         <p className="hint">
           Shiver signs in for you so the server opens straight into the app. Your password goes only
-          to this server, and Shiver keeps it afterwards only if you ask it to.
+          to this server, and Shiver keeps it in your operating system's credential store so it can
+          sign you in again when the session runs out — Sharkord's last a week and cannot be
+          renewed. Take it back whenever you like from the server's own menu.
         </p>
 
         {error ? <p className="error">{error}</p> : null}
@@ -151,22 +152,6 @@ export const AddServerPanel = ({ onAdded, onCancel, canCancel }: Props) => {
             <label className="field">
               <span>Password</span>
               <input type="password" value={password} onChange={handlePasswordChange} />
-            </label>
-
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={rememberPassword}
-                onChange={(event) => setRememberPassword(event.target.checked)}
-              />
-              <span>
-                Keep my password for this server
-                <small>
-                  Stored in your operating system's credential store, so Shiver can sign in again by
-                  itself when the session expires — which it does every seven days. Left unticked,
-                  Shiver keeps only the session and asks you again when it runs out.
-                </small>
-              </span>
             </label>
           </>
         ) : null}

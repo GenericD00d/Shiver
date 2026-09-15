@@ -3468,13 +3468,15 @@ dependencies = [
 
 [[package]]
 name = "shiver-mobile"
-version = "0.1.0"
+version = "0.1.2-test12"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
  "reqwest 0.12.28",
+ "semver",
  "serde",
  "serde_json",
+ "shiver-sharkord",
  "tauri",
  "tauri-build",
  "tauri-plugin-notification",
@@ -3486,6 +3488,17 @@ dependencies = [
  "tokio-tungstenite",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "shiver-sharkord"
+version = "0.1.2-test12"
+dependencies = [
+ "futures-util",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]

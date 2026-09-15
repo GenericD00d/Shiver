@@ -20,8 +20,17 @@ export const SettingsScreen = ({ settings, onSave }: Props) => {
    */
   const [version, setVersion] = useState('');
 
+  /**
+   * A newer version, when the core has found one.
+   *
+   * Shown here as well as in the Android notification because a notification is swiped away and
+   * then gone — this is the place someone comes back to when they half-remember seeing something.
+   */
+  const [newer, setNewer] = useState<string | null>(null);
+
   useEffect(() => {
     api.appVersion().then(setVersion, () => setVersion(''));
+    api.updateAvailable().then(setNewer, () => setNewer(null));
   }, []);
 
   const update = useCallback(<K extends keyof Settings>(key: K, value: Settings[K]) => {
@@ -76,6 +85,20 @@ export const SettingsScreen = ({ settings, onSave }: Props) => {
           colour and it is used everywhere instead — in Shiver and in every server you open.
         </small>
       </label>
+
+      {newer ? (
+        <div className="field">
+          <span>Update</span>
+          <p className="hint">
+            Shiver {newer} is available. Android apps cannot install themselves without a permission
+            that would let this one install anything, so the download happens in your browser and
+            Android's own installer takes it from there.
+          </p>
+          <button type="button" className="primary wide" onClick={() => void api.openReleases()}>
+            Get Shiver {newer}
+          </button>
+        </div>
+      ) : null}
 
       <label className="checkbox">
         <input

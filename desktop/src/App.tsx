@@ -13,6 +13,7 @@ import { WelcomePanel } from './components/WelcomePanel';
 import { applyTheme } from './theme';
 import {
   DEFAULT_ACCENT_COLOR,
+  DEFAULT_PAGES_KEPT,
   DEFAULT_THEME_COLOR,
   type DmEntry,
   type Registry,
@@ -37,6 +38,7 @@ type Connecting = {
 
 const FEED_EVENT = 'shiver://feed';
 const MENU_EVENT = 'shiver://server-menu';
+const OPEN_MESSAGE_EVENT = 'shiver://open-message';
 const DM_FAILED_EVENT = 'shiver://dm-failed';
 const SERVER_READY_EVENT = 'shiver://server-ready';
 const VOICE_EVENT = 'shiver://voice';
@@ -66,7 +68,8 @@ const EMPTY_REGISTRY: Registry = {
     soundVolume: 100,
     minimiseAttachments: true,
     lastServerId: null,
-    muteHotkey: null
+    muteHotkey: null,
+    pagesKept: DEFAULT_PAGES_KEPT
   }
 };
 
@@ -166,9 +169,11 @@ export const App = () => {
   /**
    * Opens a server, covering it with Shiver's own view until its client is connected.
    *
-   * A server that is already up is shown straight away, which is the common case once Shiver has been
-   * running: every server is connected at launch, so switching between them waits on nothing. The
-   * cover is for the cold start, and for a server still coming up.
+   * A server that is already up is shown straight away. That is the common case for the handful of
+   * servers Shiver keeps a live page for — the one on screen and the last few before it — so going
+   * back to a server you were just in waits on nothing. Every *other* server is connected from the
+   * core over a socket rather than kept in a browser, which is what the cover is for: its client
+   * has to start when you open it.
    */
   const openServer = useCallback(
     async (id: string) => {
@@ -495,6 +500,46 @@ export const App = () => {
     };
   }, [openPanel]);
 
+  // Clicking a message in the bell's feed. The feed is drawn in the popup's own webview, which
+  // cannot switch servers, so it asks and this does it — through the same `openServer` everything
+  // else goes through, so a server that is still coming up gets the same cover it always does.
+  useEffect(() => {
+    const pending = listen<{
+      entryId: string;
+      channelId: number | null;
+      isDm: boolean;
+      author: string;
+    }>(OPEN_MESSAGE_EVENT, async (event) => {
+      const { entryId, channelId, isDm, author } = event.payload;
+
+      try {
+        if (isDm) {
+          // a conversation opens in the inbox beside Shiver's list, which is where DMs live
+          await openPanel('dms');
+          await api.openDm(entryId, author);
+          setActiveId(entryId);
+          setLastDm({ entryId, name: author });
+
+          return;
+        }
+
+        await openServer(entryId);
+
+        // after the server, not with it: the page has to exist before it can be told where to go,
+        // and it retries on its own side for the case where it is still connecting
+        if (channelId !== null) {
+          await api.selectChannel(entryId, channelId);
+        }
+      } catch (cause) {
+        setError(errorMessage(cause));
+      }
+    });
+
+    return () => {
+      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
+    };
+  }, [openPanel, openServer]);
+
   // the rail's context menu is a native os menu, so its result comes back as an event
   useEffect(() => {
     const pending = listen<{ action: string; entryId: string }>(MENU_EVENT, async (event) => {
@@ -522,6 +567,12 @@ export const App = () => {
       if (action === 'signin') {
         setSigningIn(entryId);
         await openPanel('signin');
+
+        return;
+      }
+
+      if (action === 'forgetpw') {
+        await api.forgetPassword(entryId);
 
         return;
       }

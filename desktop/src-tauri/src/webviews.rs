@@ -77,6 +77,19 @@ pub struct ActiveServer {
     popup_dismissed_at: Mutex<Option<Instant>>,
     /// whether a server's own page is the thing on screen, rather than a Shiver panel
     showing_server: Mutex<bool>,
+    /// Which entry's conversation view is **on screen**, if any.
+    ///
+    /// The DM half of `showing_server`, and it exists for the same reason: reading a conversation
+    /// has to clear that conversation's notifications, and the only honest signal for "the user is
+    /// reading it" is that its view is actually up. A conversation view that merely exists is not
+    /// being read — every entry used to keep one preloaded and hidden, and treating those as read
+    /// would have silently eaten the DM badges for every server at once.
+    dm_on_screen: Mutex<Option<String>>,
+    /// the servers that have a page, most recently shown first.
+    ///
+    /// What `trim_pages` closes from the back of. Recency rather than insertion order, because the
+    /// servers a person alternates between are the ones worth keeping warm.
+    recent: Mutex<Vec<String>>,
 }
 
 impl ActiveServer {
@@ -87,7 +100,7 @@ impl ActiveServer {
             .clone()
     }
 
-    fn set(&self, value: Option<String>) {
+    pub(crate) fn set(&self, value: Option<String>) {
         *self
             .current
             .lock()
@@ -107,7 +120,52 @@ impl ActiveServer {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn set_showing_server(&self, value: bool) {
+    /// Which entry's conversation view is on screen.
+    pub fn dm_on_screen(&self) -> Option<String> {
+        self.dm_on_screen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn set_dm_on_screen(&self, value: Option<String>) {
+        *self
+            .dm_on_screen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
+    }
+
+    /// Moves a server to the front of the keep-warm list.
+    fn touch(&self, entry_id: &str) {
+        let mut recent = self
+            .recent
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        recent.retain(|held| held != entry_id);
+        recent.insert(0, entry_id.to_string());
+    }
+
+    /// The pages worth closing, oldest first, once the list is over the cap.
+    fn over_cap(&self, keep: usize) -> Vec<String> {
+        self.recent
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .skip(keep)
+            .rev()
+            .cloned()
+            .collect()
+    }
+
+    fn forget_recent(&self, entry_id: &str) {
+        self.recent
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|held| held != entry_id);
+    }
+
+    pub(crate) fn set_showing_server(&self, value: bool) {
         *self
             .showing_server
             .lock()
@@ -157,7 +215,7 @@ pub fn webview_label(entry_id: &str) -> String {
     format!("server::{entry_id}")
 }
 
-pub fn main_window(app: &AppHandle) -> Result<Window> {
+pub fn main_window<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<tauri::Window<R>> {
     app.get_window(MAIN_WINDOW)
         .ok_or_else(|| Error::Webview("The Shiver window is not open".into()))
 }
@@ -172,6 +230,82 @@ pub const DM_LIST_WIDTH: f64 = 288.0;
 /// the conversation instead of the channel the user had left. Two webviews, two independent states.
 pub fn dm_webview_label(entry_id: &str) -> String {
     format!("dm::{entry_id}")
+}
+
+/// Whether the page currently on screen has something filling the screen.
+///
+/// Held because the page reports it on every drain tick, and moving webviews around 750ms after
+/// nothing changed is both wasted work and a visible flicker. Only a change is acted on.
+#[derive(Default)]
+pub struct PageFullscreen(std::sync::Mutex<bool>);
+
+impl PageFullscreen {
+    /// Records the new value and says whether it differs from what was held.
+    fn changed(&self, next: bool) -> bool {
+        let mut held = self.0.lock().unwrap_or_else(|e| e.into_inner());
+
+        if *held == next {
+            return false;
+        }
+
+        *held = next;
+
+        true
+    }
+}
+
+/// Takes Shiver's own chrome off the screen while the page is filling it, and puts it back after.
+///
+/// The rail and the bell are separate webviews stacked over the server's, so a page going
+/// fullscreen does not move them — they sit on top of the very thing that asked for the whole
+/// screen. Watching a stream meant watching it with Shiver's rail down one side and its bell in the
+/// corner.
+///
+/// The rail needs no hiding of its own: the shell webview is full-window with the rail drawn at its
+/// left edge, and the server webview normally sits on top of it inset by `RAIL_WIDTH`. Widening the
+/// server webview to the whole window covers the rail with the page itself. The bell is above
+/// everything and is hidden outright.
+///
+/// **Driven by the drain, so it lags by up to one poll (750ms).** The page cannot call the core —
+/// that is the rule that keeps a server out of Shiver — so there is no faster signal short of
+/// WebView2's `ContainsFullScreenElementChanged`, which is Windows-only and a lot more machinery.
+pub fn set_page_fullscreen(app: &AppHandle, entry_id: &str, on: bool) -> Result<()> {
+    if !app.state::<PageFullscreen>().changed(on) {
+        return Ok(());
+    }
+
+    let window = main_window(app)?;
+
+    let Some(webview) = find_server_webview(app, entry_id) else {
+        return Ok(());
+    };
+
+    if on {
+        let scale = window.scale_factor()?;
+        let size = window.inner_size()?.to_logical::<f64>(scale);
+
+        webview.set_position(LogicalPosition::new(0.0, 0.0))?;
+        webview.set_size(LogicalSize::new(size.width, size.height))?;
+    } else {
+        let (position, size) = content_rect(&window)?;
+
+        webview.set_position(position)?;
+        webview.set_size(size)?;
+    }
+
+    // The bell, and the feed if it happens to be open. Both float above everything and neither is
+    // the page's to move. The feed is not reopened on the way out — it is shown only when asked
+    // for, and putting it back over a stream somebody just left would be its own surprise.
+    for other in window.webviews() {
+        match other.label() {
+            OVERLAY_WEBVIEW if on => other.hide()?,
+            OVERLAY_WEBVIEW => other.show()?,
+            POPUP_WEBVIEW if on => other.hide()?,
+            _ => continue,
+        }
+    }
+
+    Ok(())
 }
 
 fn is_shiver_chrome(label: &str) -> bool {
@@ -463,6 +597,10 @@ pub fn show_server(
 
     active.set(Some(entry.id.clone()));
     active.set_showing_server(true);
+    active.touch(&entry.id);
+
+    // the loop above hid every other webview, and the conversation views are among them
+    active.set_dm_on_screen(None);
 
     // a page shown while the DM split is up has to be told, even though the layout did not change:
     // it may have been preloaded before the split and would otherwise still draw its own sidebar
@@ -521,6 +659,11 @@ pub fn show_shell_only(app: &AppHandle) -> Result<()> {
 
     app.state::<ActiveServer>().set_showing_server(false);
 
+    // Also hidden by the loop below. The inbox calls this on its way in and *then* shows a
+    // conversation, so clearing here is not a race with that — it is what makes every other panel
+    // stop counting whatever conversation was last up as being read.
+    app.state::<ActiveServer>().set_dm_on_screen(None);
+
     for webview in window.webviews() {
         // the bell belongs to Shiver, not to the server, so it stays up over Shiver's own panels
         if is_shiver_chrome(webview.label()) {
@@ -531,6 +674,44 @@ pub fn show_shell_only(app: &AppHandle) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Closes the server pages past the user's `pages_kept`, oldest first.
+///
+/// This number is what the whole socket change exists to make small. A WebView2 running a Sharkord
+/// client costs on the order of a hundred megabytes, and Shiver used to hold one — two, counting
+/// the preloaded conversation view — for **every** server in the rail. Someone in thirty servers
+/// was paying gigabytes for twenty-nine clients they were not looking at.
+///
+/// It is a setting rather than a constant because the right answer is a trade only the person
+/// making it can price: a kept page switches back instantly, and a closed one has to start its
+/// client again. What a closed page does *not* cost is anything in the inbox — `watch.rs` holds a
+/// socket to every server without one, and a socket reports the same messages, conversations and
+/// unread for a rounding error of the memory.
+///
+/// Never the server on screen, and **never one holding a call** — a closed page is a dropped call,
+/// and a person who joined voice on one server and went to read another expects to still be in it.
+pub fn trim_pages(app: &AppHandle) {
+    let keep = app.state::<crate::store::Store>().registry().settings.pages_kept();
+    let active = app.state::<ActiveServer>();
+    let showing = active.get();
+    let in_call = app.state::<crate::voice::VoiceState>().holder();
+
+    for entry_id in active.over_cap(keep) {
+        if Some(&entry_id) == showing.as_ref() || Some(&entry_id) == in_call.as_ref() {
+            continue;
+        }
+
+        if let Err(error) = close_server(app, &entry_id) {
+            eprintln!("[shiver] could not close the page for {entry_id}: {error}");
+        }
+
+        // the conversation view is a second client for the same server, and costs the same again
+        close_dm_view(app, &entry_id);
+    }
+
+    // and the sockets pick up whatever just lost its page
+    crate::watch::sync(app);
 }
 
 /// Tears a server's webview down. The webview owns the session, so closing it is also what ends
@@ -545,6 +726,9 @@ pub fn close_server(app: &AppHandle, entry_id: &str) -> Result<()> {
     if active.get().as_deref() == Some(entry_id) {
         active.set(None);
     }
+
+    // a server with no page is not one of the pages being kept warm
+    active.forget_recent(entry_id);
 
     Ok(())
 }
@@ -748,6 +932,8 @@ pub fn show_dm_view(
         webview.set_size(size)?;
         webview.show()?;
         webview.set_focus()?;
+
+        active.set_dm_on_screen(Some(entry.id.clone()));
     }
 
     if created {
@@ -817,6 +1003,12 @@ pub fn close_dm_view(app: &AppHandle, entry_id: &str) {
             eprintln!("[shiver] could not close the conversation view for {entry_id}: {error}");
         }
     }
+
+    let active = app.state::<ActiveServer>();
+
+    if active.dm_on_screen().as_deref() == Some(entry_id) {
+        active.set_dm_on_screen(None);
+    }
 }
 
 /// Hides every conversation view, for when the user leaves the inbox.
@@ -833,6 +1025,9 @@ pub fn hide_dm_views(app: &AppHandle) -> Result<()> {
             webview.hide()?;
         }
     }
+
+    // hidden is not being read, so whatever it is still showing stops counting as seen
+    app.state::<ActiveServer>().set_dm_on_screen(None);
 
     Ok(())
 }

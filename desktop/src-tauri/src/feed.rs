@@ -28,6 +28,16 @@ const MAX_ENTRIES: usize = 300;
 const MAX_AUTHOR: usize = 100;
 const MAX_BODY: usize = 500;
 const MAX_CHANNEL_NAME: usize = 100;
+
+/// How close together two identical-looking notifications must be to count as one message.
+///
+/// **Deliberately short.** There is no id in common to match on — the two copies arrive by
+/// different routes, one off the socket and one out of the page, and only one of those carries a
+/// message id at all. So the match is on who said what, and that is also true of a person sending
+/// the same word twice. Thirty seconds covers the race that causes this (a page connecting while
+/// its server's socket is still up, both announcing what arrives in between) and leaves somebody
+/// repeating themselves a minute later with the two lines they deserve.
+const DUPLICATE_WINDOW_MS: u64 = 30 * 1000;
 /// A url is longer than a name but not unbounded; this is past every real one.
 const MAX_URL: usize = 2048;
 
@@ -97,6 +107,12 @@ pub struct Notification {
     pub is_dm: bool,
     pub at: u64,
     pub read: bool,
+    /// The version on offer, when this entry is Shiver rather than a server.
+    ///
+    /// A separate field rather than a magic `entry_id`, because the popup has to draw this one
+    /// differently — with a button — and "is this a message" should not be a guess about a string.
+    #[serde(default)]
+    pub update: Option<String>,
 }
 
 /// A direct message conversation, as reported by one server's page.
@@ -151,6 +167,9 @@ pub struct DrainResult {
     /// the client gave up on the seeded session and is asking for credentials
     #[serde(default)]
     pub signed_out: bool,
+    /// something in the page is filling the screen, so Shiver's own chrome must get out of the way
+    #[serde(default)]
+    pub fullscreen: bool,
     /// the user's voice session on this server, absent when they are not in one
     #[serde(default)]
     pub voice: Option<VoiceSnapshot>,
@@ -220,6 +239,42 @@ impl Feed {
         }
 
         let mut state = self.state();
+
+        let author = clamp(raw.author, MAX_AUTHOR);
+        let body = clamp(raw.body, MAX_BODY);
+
+        // **The same message can be announced twice**, and it was. A server Shiver is watching over
+        // a socket announces what arrives there; opening that server builds a page, and the page
+        // announces what Sharkord's own client raises — which, for something still unread, is the
+        // very same message. The badge went from 1 to 2 by being clicked on.
+        //
+        // Worse than the number: the two copies are not equally clearable. The socket's carries the
+        // channel id, so reading that channel clears it; the page resolves a direct message's
+        // channel by looking the author up in the store, which is empty for the first moments after
+        // it connects, so its copy has no channel and `mark_channel_read` will not touch it. One
+        // unread entry that nothing could ever clear.
+        //
+        // Matched on who said what rather than on an id, because there is no id in common: these
+        // arrive by different routes from different halves of the same server. The window keeps a
+        // person who really does send the same word twice from having the second one swallowed.
+        if let Some(existing) = state.notifications.iter_mut().find(|entry| {
+            !entry.read
+                && entry.entry_id == entry_id
+                && entry.author == author
+                && entry.body == body
+                && now_ms().saturating_sub(entry.at) < DUPLICATE_WINDOW_MS
+        }) {
+            // Keep whichever copy knows its channel, so the survivor is the clearable one. The
+            // socket's copy usually arrives first and has it; this is for when the order is
+            // reversed.
+            if existing.channel_id.is_none() {
+                existing.channel_id = raw.channel_id;
+                existing.channel_name = raw.channel_name.map(|name| clamp(name, MAX_CHANNEL_NAME));
+            }
+
+            return false;
+        }
+
         let id = state.next_id;
 
         state.next_id += 1;
@@ -232,17 +287,49 @@ impl Feed {
             server_name: server_name.to_string(),
             channel_id: raw.channel_id,
             channel_name: raw.channel_name.map(|name| clamp(name, MAX_CHANNEL_NAME)),
-            author: clamp(raw.author, MAX_AUTHOR),
-            body: clamp(raw.body, MAX_BODY),
+            author,
+            body,
             icon_url: raw.icon_url.map(|url| clamp(url, MAX_URL)),
             is_dm: raw.is_dm,
             at: now_ms(),
             read: false,
+            update: None,
         });
 
         state.notifications.truncate(MAX_ENTRIES);
 
         true
+    }
+
+    /// Offers a new version, replacing any offer already in the list.
+    ///
+    /// Replaced rather than added: the check runs every few hours for as long as Shiver is open,
+    /// and a feed that collected one of these per check would bury the messages it exists for.
+    pub fn push_update(&self, version: &str) {
+        let mut state = self.state();
+
+        state.notifications.retain(|entry| entry.update.is_none());
+
+        let id = state.next_id;
+
+        state.next_id += 1;
+
+        state.notifications.push_front(Notification {
+            id,
+            entry_id: String::new(),
+            server_name: "Shiver".into(),
+            channel_id: None,
+            channel_name: None,
+            author: format!("Shiver {version}"),
+            body: "A new version is available.".into(),
+            icon_url: None,
+            is_dm: false,
+            at: now_ms(),
+            read: false,
+            update: Some(clamp(version.to_string(), MAX_AUTHOR)),
+        });
+
+        state.notifications.truncate(MAX_ENTRIES);
     }
 
     /// Replaces everything known about one entry's DM list. Called with that page's full list, so
@@ -293,8 +380,9 @@ impl Feed {
 
     /// Unread per rail entry, for the badges on the server icons.
     ///
-    /// Only servers with something unread appear, so the rail can treat a missing entry as zero
-    /// rather than every server having to be represented on every poll.
+    /// Half of that badge — what arrived while Shiver was *running*, so every one of these has a
+    /// message behind it. The other half is `watch::Missed`, which is what arrived while it was
+    /// closed. Servers with nothing unread are absent rather than zero, so the rail can default.
     pub fn unread_by_entry(&self) -> HashMap<String, usize> {
         let mut counts: HashMap<String, usize> = HashMap::new();
 
@@ -370,20 +458,125 @@ impl Feed {
 mod tests {
     use super::*;
 
-    fn note(feed: &Feed, entry_id: &str) {
+    /// How many of one entry's notifications are still unread, as the feed sees it.
+    ///
+    /// The feed keeps this — it is what the bell's list is drawn from — but it is no longer what
+    /// the rail badge counts: that asks the server what is unread rather than counting what Shiver
+    /// happened to collect. So this lives here, where the feed's own behaviour is what is under
+    /// test, rather than as a method nothing in the app calls.
+    fn unread_for(feed: &Feed, entry_id: &str) -> Option<usize> {
+        let count = feed
+            .notifications()
+            .iter()
+            .filter(|entry| entry.entry_id == entry_id && !entry.read)
+            .count();
+
+        (count > 0).then_some(count)
+    }
+
+    fn dm(
+        feed: &Feed,
+        entry_id: &str,
+        channel_id: Option<i64>,
+        author: &str,
+        body: &str,
+    ) -> bool {
         feed.push(
             entry_id,
             "server",
             RawNotification {
-                channel_id: Some(1),
+                channel_id,
                 channel_name: None,
-                author: "someone".into(),
-                body: "hi".into(),
+                author: author.into(),
+                body: body.into(),
                 icon_url: None,
-                is_dm: false,
+                is_dm: true,
             },
             false,
+        )
+    }
+
+    /// A notification, with a body of its own so it is a distinct message rather than a repeat.
+    fn note(feed: &Feed, entry_id: &str) {
+        note_in(feed, entry_id, None)
+    }
+
+    /// One message announced twice must be one line, not two.
+    ///
+    /// The socket announces what arrives on a server Shiver is watching; opening that server builds
+    /// a page, and the page announces the same still-unread message again. The badge went from 1 to
+    /// 2 by being clicked on, which is how it was reported.
+    #[test]
+    fn the_same_message_announced_twice_is_one_entry() {
+        let feed = Feed::default();
+
+        assert!(dm(&feed, "a", Some(7), "Smiddy", "hello"), "the first is news");
+        assert!(
+            !dm(&feed, "a", Some(7), "Smiddy", "hello"),
+            "the second is the same message by another route"
         );
+
+        assert_eq!(feed.unread_count(), 1);
+    }
+
+    /// And the survivor must be the one that can be cleared.
+    ///
+    /// The page resolves a direct message's channel by looking the author up in a store that is
+    /// empty for the first moments after it connects, so its copy can arrive with no channel at
+    /// all — and `mark_channel_read` will not touch one of those. If that copy is the one kept, the
+    /// badge can never be got rid of.
+    #[test]
+    fn a_duplicate_with_no_channel_does_not_cost_the_one_with_a_channel() {
+        let feed = Feed::default();
+
+        // the page got there first, without a channel
+        assert!(dm(&feed, "a", None, "Smiddy", "hello"));
+        // then the socket, which knows it
+        assert!(!dm(&feed, "a", Some(7), "Smiddy", "hello"));
+
+        assert!(
+            feed.mark_channel_read("a", 7),
+            "reading that conversation must clear it"
+        );
+        assert_eq!(feed.unread_count(), 0);
+    }
+
+    #[test]
+    fn a_different_message_from_the_same_person_is_still_news() {
+        let feed = Feed::default();
+
+        assert!(dm(&feed, "a", Some(7), "Smiddy", "hello"));
+        assert!(dm(&feed, "a", Some(7), "Smiddy", "and another thing"));
+
+        assert_eq!(feed.unread_count(), 2);
+    }
+
+    #[test]
+    fn the_same_words_on_a_different_server_are_not_a_duplicate() {
+        let feed = Feed::default();
+
+        assert!(dm(&feed, "a", Some(7), "Smiddy", "hello"));
+        assert!(dm(&feed, "b", Some(7), "Smiddy", "hello"));
+
+        assert_eq!(feed.unread_count(), 2);
+    }
+
+    /// The rail badge's running half. Losing this is what made every badge vanish: the rail was
+    /// switched to the server's own read states alone, which depend on delta events arriving and on
+    /// the floor being right, where this depends only on a message turning up.
+    #[test]
+    fn the_feed_still_counts_per_server_for_the_rail() {
+        let feed = Feed::default();
+
+        note(&feed, "a");
+        note(&feed, "b");
+        note(&feed, "b");
+
+        let counts = feed.unread_by_entry();
+
+        assert_eq!(counts.get("a"), Some(&1));
+        assert_eq!(counts.get("b"), Some(&2));
+        assert_eq!(counts.get("never-seen"), None, "absent rather than zero");
     }
 
     #[test]
@@ -394,12 +587,10 @@ mod tests {
         note(&feed, "a");
         note(&feed, "b");
 
-        let counts = feed.unread_by_entry();
-
-        assert_eq!(counts.get("a"), Some(&2));
-        assert_eq!(counts.get("b"), Some(&1));
-        // a server with nothing unread is absent rather than zero, so the rail can default it
-        assert_eq!(counts.get("c"), None);
+        assert_eq!(unread_for(&feed, "a"), Some(2));
+        assert_eq!(unread_for(&feed, "b"), Some(1));
+        // a server with nothing unread reads as absent rather than zero
+        assert_eq!(unread_for(&feed, "c"), None);
     }
 
     #[test]
@@ -420,7 +611,7 @@ mod tests {
             true,
         );
 
-        assert!(feed.unread_by_entry().is_empty());
+        assert!(feed.notifications().is_empty());
     }
 
     /// Opening a server is reading it, and must not read anything else.
@@ -433,10 +624,8 @@ mod tests {
 
         assert!(feed.mark_entry_read("a"));
 
-        let counts = feed.unread_by_entry();
-
-        assert_eq!(counts.get("a"), None);
-        assert_eq!(counts.get("b"), Some(&1));
+        assert_eq!(unread_for(&feed, "a"), None);
+        assert_eq!(unread_for(&feed, "b"), Some(1));
         assert_eq!(feed.unread_count(), 1);
     }
 
@@ -452,7 +641,14 @@ mod tests {
         assert!(!feed.mark_entry_read("never-seen"));
     }
 
+    /// Each call is a *different* message, because that is what these tests mean. The feed now
+    /// collapses the same message announced twice, on purpose, so a shared body would quietly turn
+    /// "two notifications arrived" into "one did".
     fn note_in(feed: &Feed, entry_id: &str, channel_id: Option<i64>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+
         feed.push(
             entry_id,
             "server",
@@ -460,7 +656,7 @@ mod tests {
                 channel_id,
                 channel_name: None,
                 author: "someone".into(),
-                body: "hi".into(),
+                body: format!("message {}", NEXT.fetch_add(1, Ordering::Relaxed)),
                 icon_url: None,
                 is_dm: false,
             },
@@ -478,7 +674,7 @@ mod tests {
         note_in(&feed, "a", Some(2));
 
         assert!(feed.mark_channel_read("a", 2));
-        assert_eq!(feed.unread_by_entry().get("a"), Some(&1));
+        assert_eq!(unread_for(&feed, "a"), Some(1));
     }
 
     #[test]
@@ -490,8 +686,8 @@ mod tests {
 
         feed.mark_channel_read("a", 1);
 
-        assert_eq!(feed.unread_by_entry().get("a"), None);
-        assert_eq!(feed.unread_by_entry().get("b"), Some(&1));
+        assert_eq!(unread_for(&feed, "a"), None);
+        assert_eq!(unread_for(&feed, "b"), Some(1));
     }
 
     /// A notification whose channel could not be resolved could be any channel, so reading one
@@ -504,7 +700,7 @@ mod tests {
         note_in(&feed, "a", Some(1));
 
         assert!(feed.mark_channel_read("a", 1));
-        assert_eq!(feed.unread_by_entry().get("a"), Some(&1));
+        assert_eq!(unread_for(&feed, "a"), Some(1));
     }
 
     #[test]
@@ -526,8 +722,8 @@ mod tests {
         note(&feed, "b");
         feed.forget_entry("a");
 
-        assert_eq!(feed.unread_by_entry().get("a"), None);
-        assert_eq!(feed.unread_by_entry().get("b"), Some(&1));
+        assert_eq!(unread_for(&feed, "a"), None);
+        assert_eq!(unread_for(&feed, "b"), Some(1));
     }
 
     /// The shape that actually came back from a webview, exponent and all.

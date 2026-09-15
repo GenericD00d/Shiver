@@ -1,11 +1,13 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 
-import { api } from '../api';
+import { api, errorMessage } from '../api';
 import type { Notification } from '../types';
 
 type Props = {
   notifications: Notification[];
   onChanged: () => void;
+  /** take the user to where the message is. absent where there is nowhere to go from. */
+  onOpen?: (entry: Notification) => void;
 };
 
 export const relativeTime = (at: number) => {
@@ -19,7 +21,7 @@ export const relativeTime = (at: number) => {
 };
 
 /** Shared by the bell popup and anywhere else the feed is listed. */
-export const NotificationList = ({ notifications, onChanged }: Props) => {
+export const NotificationList = ({ notifications, onChanged, onOpen }: Props) => {
   const handleMute = useCallback(
     async (entryId: string, channelId: number) => {
       await api.setChannelMuted(entryId, channelId, true);
@@ -28,6 +30,25 @@ export const NotificationList = ({ notifications, onChanged }: Props) => {
     },
     [onChanged]
   );
+
+  /**
+   * What the install button is doing, so it can say so.
+   *
+   * On success nothing is ever set: the installer takes over and Shiver exits mid-click. Only a
+   * failure comes back, and it is put where the button was rather than swallowed — a button that
+   * does nothing is how this feature would earn its distrust.
+   */
+  const [installing, setInstalling] = useState<string | null>(null);
+
+  const handleInstall = useCallback(async () => {
+    setInstalling('Downloading…');
+
+    try {
+      await api.installUpdate();
+    } catch (error) {
+      setInstalling(errorMessage(error));
+    }
+  }, []);
 
   if (notifications.length === 0) {
     return (
@@ -40,7 +61,16 @@ export const NotificationList = ({ notifications, onChanged }: Props) => {
   return (
     <ul className="feed">
       {notifications.map((entry) => (
-        <li key={entry.id} className={entry.read ? 'feed-item read' : 'feed-item'}>
+        <li
+          key={entry.id}
+          className={`feed-item${entry.read ? ' read' : ''}${entry.update ? ' update' : ''}${
+            onOpen && !entry.update ? ' openable' : ''
+          }`}
+          // The row itself, rather than a wrapping button: it already contains buttons, and a
+          // button inside a button is not something html allows. The mute and install controls stop
+          // the event themselves so clicking one does not also navigate.
+          onClick={onOpen && !entry.update ? () => onOpen(entry) : undefined}
+        >
           {entry.iconUrl ? (
             <img src={entry.iconUrl} alt="" />
           ) : (
@@ -58,12 +88,29 @@ export const NotificationList = ({ notifications, onChanged }: Props) => {
             <p>{entry.body}</p>
           </div>
 
+          {entry.update ? (
+            <button
+              type="button"
+              className="primary small"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleInstall();
+              }}
+              disabled={installing !== null}
+            >
+              {installing ?? 'Install'}
+            </button>
+          ) : null}
+
           {entry.channelId !== null && !entry.isDm ? (
             <button
               type="button"
               className="ghost small"
               title={`Mute #${entry.channelName ?? ''}`}
-              onClick={() => handleMute(entry.entryId, entry.channelId as number)}
+              onClick={(event) => {
+                event.stopPropagation();
+                handleMute(entry.entryId, entry.channelId as number);
+              }}
             >
               Mute
             </button>

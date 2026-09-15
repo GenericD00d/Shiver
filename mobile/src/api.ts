@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   DmEntry,
   Folder,
+  PluginStatus,
   PushStatus,
   WatchProblem,
   Registry,
@@ -70,6 +71,12 @@ export const api = {
   /** which build this is, for the settings screen and for answering "what are you running" */
   appVersion: () => invoke<string>('app_version'),
 
+  /** the newer version, when the core has found one; null otherwise */
+  /** takes back the stored password for one server; the session is left alone */
+  forgetPassword: (id: string) => invoke<void>('forget_password', { id }),
+  updateAvailable: () => invoke<string | null>('update_available'),
+  /** opens the releases page in the browser, which is where the apk actually comes from */
+  openReleases: () => invoke<void>('open_releases'),
   getSettings: () => invoke<Settings>('get_settings'),
 
   updateSettings: (settings: Settings) => invoke<void>('update_settings', { settings }),
@@ -104,6 +111,7 @@ export const api = {
 
   /** distributors installed, and how many servers can be woken through the chosen one */
   watchProblems: () => invoke<WatchProblem[]>('watch_problems'),
+  serverPlugins: () => invoke<PluginStatus[]>('server_plugins'),
   setServerAcceptsAnySize: (entryId: string, accept: boolean) =>
     invoke<void>('set_server_accepts_any_size', { entryId, accept }),
   pushStatus: () => invoke<PushStatus>('push_status'),

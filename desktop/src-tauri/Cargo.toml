@@ -1,6 +1,6 @@
 [package]
 name = "shiver"
-version = "0.1.0"
+version = "0.1.2-test12"
 description = "A multi-server desktop and mobile client for Sharkord"
 authors = ["Shiver"]
 edition = "2021"
@@ -17,8 +17,12 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # `unstable` is what exposes Window::add_child, the multiwebview api Shiver's server rail is built on
 tauri = { version = "2", features = ["unstable"] }
+# checking GitHub for a newer release, and verifying its minisign signature before running it
+tauri-plugin-updater = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
+# the Sharkord protocol itself, shared with mobile so there is one transcription of it
+shiver-sharkord = { path = "../../shared/sharkord" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

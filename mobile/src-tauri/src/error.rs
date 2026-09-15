@@ -21,17 +21,7 @@ pub enum Error {
     #[error("{0} does not look like a Sharkord server")]
     NotSharkord(String),
 
-    /// A server sent more in one message than Shiver accepts.
-    ///
-    /// Its own kind rather than an `Unreachable`, because it is the one connection failure that
-    /// **will not** come right on its own: the next attempt asks the same question and gets the
-    /// same oversized answer. Everything else Shiver retries quietly; this is worth telling someone
-    /// about, because the server simply stops being watched.
-    ///
-    /// Both numbers are kept rather than a message, because they are what anyone reading this
-    /// actually needs — how much the server sent, and what Shiver would have taken.
-    #[error("{size} bytes in one message, and Shiver accepts {max}")]
-    TooLarge { size: usize, max: usize },
+    // `TooLarge` lives in `shiver-sharkord`, which is the only thing that can raise it.
 
     #[error("Could not save your servers: {0}")]
     Storage(String),

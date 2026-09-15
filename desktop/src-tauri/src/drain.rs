@@ -44,6 +44,13 @@ pub const SIGNED_OUT_EVENT: &str = "shiver://signed-out";
 /// Event carrying every server's status, for the badges on the rail.
 pub const STATUS_EVENT: &str = "shiver://status";
 
+/// Event asking the shell to take the user to the message they clicked in the feed.
+///
+/// The feed is drawn in the bell's own webview, which cannot open a server — switching servers is
+/// the shell's job, cover and all. So the popup says where the user wants to go and the shell does
+/// the going.
+pub const OPEN_MESSAGE_EVENT: &str = "shiver://open-message";
+
 /// How long a server may be coming up before Shiver calls it offline.
 ///
 /// Matches the shell's own patience with the server it is waiting on, so the badge and the content
@@ -89,7 +96,11 @@ impl Readiness {
     }
 
     /// Records what a page reported. Returns true when it has just become ready.
-    fn set(&self, entry_id: &str, ready: bool) -> bool {
+    ///
+    /// `pub(crate)` for `watch.rs`, which reports the same thing about a server it holds a
+    /// socket to — a joined connection is that server being reachable just as much as a
+    /// page that finished loading is.
+    pub(crate) fn set(&self, entry_id: &str, ready: bool) -> bool {
         let mut state = self.state();
 
         let presence = state.entry(entry_id.to_string()).or_insert(Presence {
@@ -106,8 +117,11 @@ impl Readiness {
 
     /// What the rail should draw for one server.
     ///
-    /// `has_page` is asked of the caller rather than looked up here: a server with no webview at
-    /// all never had a chance to answer, and is offline however recently Shiver started waiting.
+    /// `has_page` is asked of the caller rather than looked up here: a server with nothing
+    /// reporting for it never had a chance to answer, and is offline however recently Shiver
+    /// started waiting. "Nothing reporting" now means neither a webview nor a socket — a
+    /// server Shiver deliberately gave no page to is not offline, it is being listened to
+    /// another way, and the rail must not claim otherwise.
     fn status(&self, entry_id: &str, has_page: bool) -> ServerStatus {
         let state = self.state();
 
@@ -128,6 +142,33 @@ impl Readiness {
         }
 
         ServerStatus::Offline
+    }
+
+    /// Records that something Shiver was hearing from has stopped, **and restarts the clock**.
+    ///
+    /// The distinction from `set(id, false)` is the clock, and it is the whole point. `since` is
+    /// only ever written when a `Presence` is first inserted, so an entry that has been up for an
+    /// hour has an `since` an hour old — and the moment `ready` goes false, `status` finds
+    /// `elapsed() > CONNECT_GRACE` and calls it **offline instantly**, with no grace at all.
+    ///
+    /// That is fine for a page, which re-reports every 750ms and is back within a tick. It is wrong
+    /// for a socket: `watch.rs` waits `RETRY_AFTER` before trying again, so a single dropped
+    /// connection put "not responding" on the rail for the full thirty seconds, for a server that
+    /// was about to come back and had never stopped being reachable. That is what made the warning
+    /// look like it was about something other than the server's health.
+    ///
+    /// With the clock restarted, a drop reads as connecting for `CONNECT_GRACE` and only becomes
+    /// offline if it is still down when that runs out — which is the question the rail is asking.
+    pub(crate) fn disconnected(&self, entry_id: &str) {
+        let mut state = self.state();
+
+        state.insert(
+            entry_id.to_string(),
+            Presence {
+                ready: false,
+                since: Instant::now(),
+            },
+        );
     }
 
     /// A closed page is not a connected one, so its next open waits for the client again — and
@@ -252,7 +293,8 @@ fn broadcast_statuses(app: &AppHandle, entries: &[crate::model::ServerEntry]) {
         .map(|entry| {
             let has_page = app
                 .get_webview(&webviews::webview_label(&entry.id))
-                .is_some();
+                .is_some()
+                || app.state::<crate::watch::Watcher>().is_watching(&entry.id);
 
             (entry.id.clone(), readiness.status(&entry.id, has_page))
         })
@@ -341,14 +383,20 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
         (entry.name.clone(), label, muted, entry.identity.is_some())
     };
 
-    // the conversation view is a second client for the same server. it answers only about the DM it
-    // was asked to open, so everything an entry reports once is taken from the server page alone.
+    // The conversation view is a second client for the same server. It answers only about the DM it
+    // was asked to open, so everything an entry reports *once* is taken from the server page alone
+    // — with one exception, below: which conversation it is showing is the one thing only it knows.
+    if !is_server_page {
+        mark_read_conversation_read(app, entry_id, result.viewing_channel_id);
+    }
+
     if is_server_page {
         let page = ServerPageReport {
             ready: result.ready,
             signed_out: result.signed_out,
             voice: result.voice.take(),
             viewing_channel_id: result.viewing_channel_id,
+            fullscreen: result.fullscreen,
         };
 
         apply_server_page(
@@ -478,7 +526,7 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
 ///
 /// All three need it and each is a separate page: the shell draws the rail badges and the DM list,
 /// the bell draws the count, and the popup draws the feed itself.
-pub fn notify_feed_changed(app: &AppHandle) {
+pub fn notify_feed_changed<R: tauri::Runtime>(app: &AppHandle<R>) {
     // the taskbar follows the same signal the bell does, so there is one answer to "is anything
     // unread" rather than two that can disagree
     crate::badge::refresh(app);
@@ -494,6 +542,7 @@ struct ServerPageReport {
     signed_out: bool,
     voice: Option<crate::voice::VoiceSnapshot>,
     viewing_channel_id: Option<i64>,
+    fullscreen: bool,
 }
 
 fn apply_server_page(
@@ -508,6 +557,19 @@ fn apply_server_page(
     // promised the user would never meet a login form, and it may be able to keep that promise by
     // signing back in. So the circle stays up while it tries, and comes down either when the
     // rebuilt page connects or when Shiver runs out of ways to avoid the form.
+    // Only the server being *shown* can be filling the screen. A preloaded page in the background
+    // reporting fullscreen would otherwise resize a webview nobody is looking at, and take the bell
+    // away from the server that is.
+    // `showing_server` as well as `get`: `get` keeps naming a server while Shiver has settings or
+    // the DM inbox over the top of it, and hiding the bell for a page nobody can see is not the job.
+    let active = app.state::<crate::webviews::ActiveServer>();
+
+    if active.get().as_deref() == Some(entry_id) && active.showing_server() {
+        if let Err(error) = crate::webviews::set_page_fullscreen(app, entry_id, report.fullscreen) {
+            eprintln!("[shiver] could not follow {entry_id} into fullscreen: {error}");
+        }
+    }
+
     let recovering = report.signed_out && session::recover(app, entry_id);
     let ready = report.ready && !recovering;
 
@@ -547,6 +609,32 @@ fn apply_server_page(
     mark_viewed_channel_read(app, entry_id, report.viewing_channel_id);
 }
 
+/// Treats an open conversation as read.
+///
+/// Reading a direct message did not clear its notification, because the only thing that cleared
+/// anything was `mark_viewed_channel_read` below, and that is fed by the *server page*. A DM opens
+/// in its own view beside the inbox; the server page carries on reporting whatever channel it was
+/// left on, so nothing ever named the conversation the user was actually reading and its entry sat
+/// unread in the bell for good.
+///
+/// Gated on that view being on screen, for the reason spelled out on `dm_on_screen`: a conversation
+/// view can exist without being looked at.
+fn mark_read_conversation_read<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    entry_id: &str,
+    channel_id: Option<i64>,
+) {
+    let Some(channel_id) = channel_id else {
+        return;
+    };
+
+    if app.state::<ActiveServer>().dm_on_screen().as_deref() != Some(entry_id) {
+        return;
+    }
+
+    crate::badges::channel_viewed(app, entry_id, channel_id);
+}
+
 /// Treats the channel on screen as read, so its badge falls away while the rest of the server's
 /// unread stays.
 ///
@@ -554,20 +642,20 @@ fn apply_server_page(
 /// selected channel, and Sharkord raises a notification for the selected channel exactly when its
 /// window is hidden — so acting on the report alone would quietly eat the badges for whatever
 /// channel the user happened to leave open while they were looking at something else.
-fn mark_viewed_channel_read(app: &AppHandle, entry_id: &str, channel_id: Option<i64>) {
+fn mark_viewed_channel_read<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    entry_id: &str,
+    channel_id: Option<i64>,
+) {
     let Some(channel_id) = channel_id else {
         return;
     };
 
-    let active = app.state::<ActiveServer>();
-
-    if active.get().as_deref() != Some(entry_id) || !active.showing_server() {
+    if !crate::badges::is_on_screen(app, entry_id) {
         return;
     }
 
-    if app.state::<Feed>().mark_channel_read(entry_id, channel_id) {
-        notify_feed_changed(app);
-    }
+    crate::badges::channel_viewed(app, entry_id, channel_id);
 }
 
 #[cfg(test)]

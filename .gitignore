@@ -81,3 +81,8 @@ keystore.properties
 # server admin reads when installing the companion plugin (which also ships inside its zip).
 !README.md
 !plugin/README.md
+
+# Screenshots dropped in to report a bug. They are how a fault gets described, not part of the
+# project, and they are named predictably enough to be caught here rather than re-explained.
+example*.png
+screenshot*.png

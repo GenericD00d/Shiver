@@ -75,6 +75,10 @@ export const api = {
   dismissPopup: () => invoke<void>('dismiss_popup'),
 
   openDm: (entryId: string, name: string) => invoke<void>('open_dm', { entryId, name }),
+  selectChannel: (entryId: string, channelId: number) =>
+    invoke<void>('select_channel', { entryId, channelId }),
+  openMessage: (entryId: string, channelId: number | null, isDm: boolean, author: string) =>
+    invoke<void>('open_message', { entryId, channelId, isDm, author }),
 
   exitDmSplit: () => invoke<void>('exit_dm_split'),
 
@@ -117,6 +121,15 @@ export const api = {
   /** which build this is, for the settings screen and for answering "what are you running" */
   /** Forgets the camera and microphone answers WebView2 remembers, for every server. */
   /** forgets the stored camera and microphone answers; resolves with how many there were */
+  /**
+   * Downloads the new version and installs it, which ends this process.
+   *
+   * Never resolves on success: the installer takes over and Shiver exits. A rejection is a real
+   * failure and is worth showing.
+   */
+  installUpdate: () => invoke<void>('install_update'),
+  /** takes back the stored password for one server; the session is left alone */
+  forgetPassword: (id: string) => invoke<void>('forget_password', { id }),
   resetMediaPermissions: () => invoke<number>('reset_media_permissions'),
   appVersion: () => invoke<string>('app_version'),
 

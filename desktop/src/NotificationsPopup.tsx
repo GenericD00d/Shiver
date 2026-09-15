@@ -94,7 +94,15 @@ export const NotificationsPopup = () => {
       </div>
 
       <div className="popup-body">
-        <NotificationList notifications={notifications} onChanged={refresh} />
+        <NotificationList
+          notifications={notifications}
+          onChanged={refresh}
+          onOpen={(entry) =>
+            api
+              .openMessage(entry.entryId, entry.channelId, entry.isDm, entry.author)
+              .catch(() => undefined)
+          }
+        />
       </div>
     </div>
   );

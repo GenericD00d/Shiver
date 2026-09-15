@@ -1,4 +1,5 @@
 mod badge;
+mod badges;
 mod commands;
 mod drain;
 mod error;
@@ -12,14 +13,16 @@ mod probe;
 mod secrets;
 mod session;
 mod store;
+mod update;
 mod voice;
+mod watch;
 mod webviews;
 
 use tauri::{Emitter, Manager};
 
 use crate::{
     drain::Readiness, feed::Feed, session::Recovery, store::Store, voice::VoiceState,
-    webviews::ActiveServer,
+    watch::Watcher, webviews::ActiveServer,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -27,9 +30,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::list_registry,
             commands::reset_media_permissions,
+            commands::forget_password,
+            update::install_update,
             commands::probe_server,
             commands::add_server,
             commands::remove_server,
@@ -54,6 +60,7 @@ pub fn run() {
             commands::list_dms,
             commands::unread_count,
             commands::unread_counts,
+            commands::server_plugins,
             commands::mark_server_read,
             commands::mark_notifications_read,
             commands::clear_notifications,
@@ -63,6 +70,8 @@ pub fn run() {
             commands::close_popup,
             commands::dismiss_popup,
             commands::open_dm,
+            commands::select_channel,
+            commands::open_message,
             commands::exit_dm_split,
             commands::reorder_rail,
             commands::create_folder_with,
@@ -79,6 +88,12 @@ pub fn run() {
             app.manage(Recovery::default());
             app.manage(drain::Broadcast::default());
             app.manage(drain::Openings::default());
+            app.manage(webviews::PageFullscreen::default());
+            app.manage(update::Announced::default());
+            app.manage(Watcher::default());
+            app.manage(watch::Missed::default());
+            app.manage(watch::Plugins::default());
+            app.manage(watch::ReadStates::default());
 
             // registered from the settings Shiver just loaded, so the shortcut works from launch
             // rather than from the first time the settings screen is opened
@@ -93,7 +108,10 @@ pub fn run() {
             // event loop. it also lets the window paint before the servers start connecting.
             let preload = handle.clone();
 
-            tauri::async_runtime::spawn(commands::preload_all_servers(preload));
+            tauri::async_runtime::spawn(commands::connect_all_servers(preload));
+
+            update::start(handle);
+
 
             Ok(())
         })

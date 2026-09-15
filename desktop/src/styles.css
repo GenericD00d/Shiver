@@ -456,8 +456,30 @@ body {
   border-bottom: 1px solid var(--shiver-border);
 }
 
-.feed-item.read {
-  opacity: 0.55;
+/* Read messages are **not** faded. They used to drop to 55% opacity, which on a feed where most
+   things have been seen made the whole list look disabled and the text hard to read — and fading is
+   a poor way to say "read" anyway, because it also says "less important" about a message somebody
+   may be scrolling back to find. The unread mark below carries that distinction instead. */
+.feed-item::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  margin-top: 14px;
+  border-radius: 50%;
+  flex: 0 0 6px;
+  background: var(--shiver-danger, #ff6467);
+}
+
+.feed-item.read::before {
+  background: transparent;
+}
+
+.feed-item.openable {
+  cursor: pointer;
+}
+
+.feed-item.openable:hover {
+  background: var(--shiver-surface-hover, #33333340);
 }
 
 .feed-item img,
@@ -784,6 +806,17 @@ button.small {
   min-width: 46px;
   color: var(--shiver-text-dim);
   font-variant-numeric: tabular-nums;
+}
+
+/* Shiver's own entry in the feed, so it does not read as a message from a server nobody recognises */
+.feed-item.update {
+  border-left: 2px solid var(--shiver-accent);
+  background: color-mix(in srgb, var(--shiver-accent) 8%, transparent);
+}
+
+.feed-item.update .fallback {
+  background: var(--shiver-accent);
+  color: var(--shiver-bg);
 }
 
 .checkbox {
