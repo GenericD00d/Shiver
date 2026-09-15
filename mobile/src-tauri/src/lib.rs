@@ -5,7 +5,7 @@ mod login;
 mod model;
 mod probe;
 mod push;
-// The protocol lives in `shared/sharkord`, because desktop speaks it now too. Re-exported under
+// The protocol lives in `shared/sharkord-client`, because desktop speaks it now too. Re-exported under
 // the old path so every `crate::sharkord::` reference still reads the same.
 pub use shiver_sharkord as sharkord;
 mod store;

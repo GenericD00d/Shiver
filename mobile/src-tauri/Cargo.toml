@@ -19,7 +19,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-shiver-secrets = { path = "../plugins/tauri-plugin-shiver-secrets" }
 # the Sharkord protocol itself, shared with desktop so there is one transcription of it
-shiver-sharkord = { path = "../../shared/sharkord" }
+shiver-sharkord = { path = "../../shared/sharkord-client" }
 tauri-plugin-shiver-push = { path = "../plugins/tauri-plugin-shiver-push" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

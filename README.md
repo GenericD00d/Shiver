@@ -97,7 +97,7 @@ cd mobile && bun install
 | `desktop/` | The desktop client. Self-contained: its own dependencies, build and Rust crate |
 | `mobile/` | The Android client, separate because it cannot share the desktop's shape — Android gives a window one webview |
 | `plugin/` | The optional Sharkord companion plugin. Neither client's, used by both |
-| `shared/` | Rust both clients depend on. Currently the Sharkord protocol itself, so there is one transcription of it rather than two that drift |
+| `shared/sharkord-client/` | Shiver's own client for Sharkord's protocol, depended on by both. One transcription of it rather than two that drift |
 
 Inside each client: `src/` is Shiver's own UI, `bridge/` is the script injected into every Sharkord
 page, and `src-tauri/src/` is the Rust core.
