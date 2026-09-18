@@ -726,8 +726,6 @@ pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
 /// Called whenever anything that decides that changes: a token arrives, a server is opened or
 /// closed, a server is removed. Idempotent, so callers never have to work out what changed.
 pub fn sync(app: &AppHandle) {
-    let showing = app.state::<webview::Showing>().server();
-
     let (wanted, unwanted) = {
         let inbox = app.state::<Inbox>();
         let state = inbox.state();
@@ -739,10 +737,19 @@ pub fn sync(app: &AppHandle) {
 
         for entry_id in state.tokens.keys() {
             let known = registry.servers.iter().any(|server| server.id == *entry_id);
-            // the server on screen reports for itself; Shiver does not shadow it with a second socket
-            let is_showing = showing.as_deref() == Some(entry_id.as_str());
 
-            if !known || is_showing {
+            // **The server on screen keeps its socket too**, which it did not used to.
+            //
+            // It stood down on the reasoning that its own client is right there reporting, and you
+            // do not need a badge for the thing you are looking at. The first half turned out to be
+            // false in the way that matters: reading a channel is published by the server to the
+            // user's *other sessions*, and this socket is one of them. Hanging it up meant hanging
+            // up on the one server whose reads Shiver most needed to hear, so a badge cleared by
+            // reading only came right on the way out.
+            //
+            // What the socket must not do for that server is *announce* — see `announce`, which
+            // stays quiet for it. A notification about a message already on screen is noise.
+            if !known {
                 if state.running.contains_key(entry_id) {
                     unwanted.push(entry_id.clone());
                 }
@@ -785,7 +792,15 @@ pub fn sync(app: &AppHandle) {
 
         drop(state);
 
-        // and so does the notification, because this is the moment the user went to look
+        clear_notification(app, &entry_id);
+    }
+
+    // **Opening a server takes its notification out of the shade**, and this is now the only thing
+    // that does it. It used to fall out of the loop above: the shown server's socket stood down, so
+    // it was "unwanted", so its notification was cleared on the way past. The socket stays up now,
+    // so that no longer happens and the shade would keep a notice about the server on screen.
+    if let Some(entry_id) = app.state::<webview::Showing>().server() {
+        app.state::<Inbox>().silence(&entry_id);
         clear_notification(app, &entry_id);
     }
 
@@ -1058,6 +1073,13 @@ fn announce(
     joined: &sharkord::Joined,
     message: &sharkord::NewMessage,
 ) {
+    // The server on screen keeps a socket now, for the reads it is the only thing that hears — but
+    // it must not also put messages in the shade. The user is looking at this server; its own
+    // client is showing them the message this would be about.
+    if app.state::<webview::Showing>().server().as_deref() == Some(entry_id) {
+        return;
+    }
+
     let (muted, server) = {
         let store = app.state::<Store>();
         let registry = store.registry();

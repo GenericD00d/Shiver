@@ -204,6 +204,8 @@ pub async fn add_server(
             account_label: label,
             folder_id: None,
             position,
+            // off for a server nobody here runs, which is every server on the day it is added
+            accept_any_size: false,
         };
 
         registry.servers.push(entry.clone());
@@ -921,8 +923,43 @@ pub async fn show_server_menu(app: AppHandle, store: State<'_, Store>, id: Strin
     .enabled(false)
     .build(&app)?;
 
+    // Raising a limit is a security decision, so it is offered where it means something rather
+    // than against every server in the list: one that has actually tripped the limit this run, or
+    // one already raised, which needs a way back. Everywhere else the item would be an invitation
+    // to turn a protection off for no reason.
+    let trusted = {
+        let registry = store.registry();
+
+        registry
+            .servers
+            .iter()
+            .any(|server| server.id == id && server.accept_any_size)
+    };
+
+    let tripped = app.state::<crate::watch::Reported>().mentioned(&id);
+
+    // Two ids rather than one action plus the current value, so the frontend needs to know nothing
+    // about which way this server is currently set — same shape as sign in / log out above.
+    let sizes = if trusted {
+        Some(
+            MenuItemBuilder::with_id(format!("normalsize:{id}"), "Back to the normal size limit")
+                .build(&app)?,
+        )
+    } else if tripped {
+        Some(
+            MenuItemBuilder::with_id(format!("anysize:{id}"), "Accept larger messages from this server")
+                .build(&app)?,
+        )
+    } else {
+        None
+    };
+
     let mut builder =
         MenuBuilder::new(&app).items(&[&open, &mark_read, &refresh, &forget, &plugin]);
+
+    if let Some(sizes) = &sizes {
+        builder = builder.item(sizes);
+    }
 
     if in_folder {
         let take_out =
@@ -1098,6 +1135,36 @@ pub fn unread_count(feed: State<'_, Feed>) -> usize {
     // has no message to show, so it is counted on the rail, where a badge is a claim about a
     // server rather than a promise of a list.
     feed.unread_count()
+}
+
+/// Lets one server send larger messages than the default limit allows, or stops it.
+///
+/// Reachable from the rail's menu, and only worth touching for a server that has actually tripped
+/// the limit — Shiver says so in the feed when one does. The connection is dropped so the next
+/// attempt is made with the new ceiling, rather than the change taking effect whenever the socket
+/// happens to reconnect.
+#[tauri::command]
+pub async fn set_accept_any_size(
+    app: AppHandle,
+    store: State<'_, Store>,
+    id: String,
+    accept: bool,
+) -> Result<()> {
+    store.update(|registry| {
+        let server = registry
+            .servers
+            .iter_mut()
+            .find(|server| server.id == id)
+            .ok_or(Error::UnknownServer)?;
+
+        server.accept_any_size = accept;
+
+        Ok(())
+    })?;
+
+    crate::watch::restart(&app, &id);
+
+    Ok(())
 }
 
 /// Which servers have Shiver's companion plugin, and which version.

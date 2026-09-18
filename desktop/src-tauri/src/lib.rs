@@ -66,6 +66,7 @@ pub fn run() {
             commands::unread_count,
             commands::unread_counts,
             commands::server_plugins,
+            commands::set_accept_any_size,
             commands::mark_server_read,
             commands::mark_notifications_read,
             commands::clear_notifications,
@@ -99,6 +100,7 @@ pub fn run() {
             app.manage(Watcher::default());
             app.manage(watch::Missed::default());
             app.manage(watch::Plugins::default());
+            app.manage(watch::Reported::default());
             app.manage(watch::ReadStates::default());
 
             // registered from the settings Shiver just loaded, so the shortcut works from launch

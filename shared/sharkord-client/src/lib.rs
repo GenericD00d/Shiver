@@ -73,10 +73,17 @@ const STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 /// because only the `joinServer` payload is ever large and everything after it is a number.
 ///
 /// A server that still exceeds it fails honestly: that connection dies, is retried, and is reported
-/// (`Error::TooLarge`). Anyone who trusts the server can lift the limit for it entirely —
-/// `accept_any_size` on the entry — which is the right shape for a bound that exists to protect
-/// against servers nobody here controls.
+/// (`Error::TooLarge`). Anyone who trusts the server can give it more room — `accept_any_size` on
+/// the entry, which raises the ceiling to [`MAX_FRAME_TRUSTED`] — which is the right shape for a
+/// bound that exists to protect against servers nobody here controls.
 const MAX_FRAME: usize = 16 * 1024 * 1024;
+
+/// What the limit becomes for a server the user has explicitly trusted.
+///
+/// Eight times the default and fifty times the largest payload anyone has measured, which is room
+/// for a server doing something unusual and nowhere near room to exhaust a phone. The number is
+/// arbitrary in the way a ceiling has to be; what matters is that there is one.
+const MAX_FRAME_TRUSTED: usize = 128 * 1024 * 1024;
 
 const HANDSHAKE_ID: u32 = 1;
 const JOIN_ID: u32 = 2;
@@ -678,6 +685,18 @@ fn oversize_or_unreachable(error: tokio_tungstenite::tungstenite::Error) -> Erro
     }
 }
 
+/// How large a message this socket will accept, in bytes.
+///
+/// A function so the one rule worth stating — trusting a server raises the ceiling and never removes
+/// it — is checked by a test rather than by reading `open`.
+fn frame_cap(accept_any_size: bool) -> Option<usize> {
+    Some(if accept_any_size {
+        MAX_FRAME_TRUSTED
+    } else {
+        MAX_FRAME
+    })
+}
+
 /// A live, joined connection to one server.
 pub struct Session {
     socket: Socket,
@@ -694,14 +713,14 @@ pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Se
     // Bounded rather than default: see `MAX_FRAME`. Both limits are set, because `max_frame_size`
     // alone still allows a message assembled from many frames.
     //
-    // `None` is tungstenite's "no limit", and it is only ever reached because someone said this
-    // server may have it. That is a real choice with a real cost — an unbounded read buffer on a
-    // phone — so it is made per server, by the person who knows whose server it is.
-    let cap = if accept_any_size {
-        None
-    } else {
-        Some(MAX_FRAME)
-    };
+    // **Raised, never removed.** "Trusted" used to mean no limit at all, which is a different and
+    // much worse thing than a generous one: tungstenite buffers whatever arrives until a frame is
+    // complete, so an unbounded socket lets a server grow Shiver's memory by as much as it cares to
+    // transmit. On a phone that is an app kill, and the notifications go with it.
+    //
+    // A bound exists to protect against servers nobody here controls. Trusting one is a reason to
+    // give it more room, not a reason to stop having a ceiling.
+    let cap = frame_cap(accept_any_size);
 
     let limits = tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
         max_message_size: cap,
@@ -911,6 +930,48 @@ async fn await_reply(socket: &mut Socket, id: u32, path: &str) -> Result<Value> 
 
 #[cfg(test)]
 mod tests {
+
+    /// Trusting a server gives it room; it does not hand it the machine. An unbounded socket lets a
+    /// server grow the read buffer as far as it likes, which on a phone is an app kill — so the
+    /// thing this must never become is `None`.
+    #[test]
+    fn trusting_a_server_raises_the_ceiling_rather_than_removing_it() {
+        let normal = frame_cap(false).expect("the default is bounded");
+        let trusted = frame_cap(true).expect("a trusted server is still bounded");
+
+        assert!(trusted > normal, "trusting a server should give it more room");
+        assert!(
+            trusted <= 256 * 1024 * 1024,
+            "even a trusted server has to stay inside a phone's memory"
+        );
+    }
+
+    /// The report the user sees hangs off this: everything else retries quietly and comes right,
+    /// and only this one needs saying out loud, because the next attempt fails identically.
+    #[test]
+    fn only_a_capacity_failure_reads_as_too_large() {
+        use tokio_tungstenite::tungstenite::error::CapacityError;
+        use tokio_tungstenite::tungstenite::Error as Tungstenite;
+
+        let too_big = oversize_or_unreachable(Tungstenite::Capacity(
+            CapacityError::MessageTooLong {
+                size: 40_000_000,
+                max_size: MAX_FRAME,
+            },
+        ));
+
+        assert!(matches!(
+            too_big,
+            Error::TooLarge {
+                size: 40_000_000,
+                max: MAX_FRAME
+            }
+        ));
+
+        let dropped = oversize_or_unreachable(Tungstenite::ConnectionClosed);
+
+        assert!(matches!(dropped, Error::Unreachable(_)));
+    }
     use super::*;
 
     #[test]

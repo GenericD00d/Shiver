@@ -27,6 +27,17 @@ pub struct ServerEntry {
     #[serde(default)]
     pub folder_id: Option<String>,
     pub position: i32,
+    /// Whether this server may send Shiver larger messages than the default limit allows.
+    ///
+    /// Off, and it should stay off for a server the user does not run. The limit is there because a
+    /// socket buffers whatever arrives, so an oversized frame is memory a server gets to spend on
+    /// this machine. Turning this on **raises** the ceiling rather than removing it.
+    ///
+    /// Only worth touching for a server that has actually tripped the limit, which Shiver reports
+    /// in the feed — it is otherwise a silent failure, and silent is how this went unnoticed for a
+    /// release last time the number was wrong.
+    #[serde(default)]
+    pub accept_any_size: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

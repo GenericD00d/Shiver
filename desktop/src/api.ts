@@ -142,6 +142,15 @@ export const api = {
   checkForUpdate: () => invoke<string | null>('check_for_update'),
   /** takes back the stored password for one server; the session is left alone */
   forgetPassword: (id: string) => invoke<void>('forget_password', { id }),
+
+  /**
+   * Lets one server past the default message-size limit, or puts it back.
+   *
+   * Offered in the rail's menu only for a server that has tripped the limit, since that is the only
+   * case where raising it is a considered choice rather than a protection turned off for nothing.
+   */
+  setAcceptAnySize: (id: string, accept: boolean) =>
+    invoke<void>('set_accept_any_size', { id, accept }),
   resetMediaPermissions: () => invoke<number>('reset_media_permissions'),
   appVersion: () => invoke<string>('app_version'),
 

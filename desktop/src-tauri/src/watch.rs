@@ -342,12 +342,23 @@ async fn watch(app: AppHandle, entry: ServerEntry, entry_id: String) {
             return;
         };
 
-        // `false` is the bounded frame limit, and desktop has no way to lift it. Mobile does —
-        // a per-server "Trust" button that appears once a server has actually tripped the limit —
-        // and that pair, the reported problem and the button that answers it, is a piece of UI
-        // this change did not bring across. Until it does, a server that sends more than
-        // `MAX_FRAME` in one message is logged and retried rather than watched.
-        match sharkord::open(&origin, &token, false).await {
+        // Whether this server may send larger messages than the default allows. Off unless the
+        // user has said otherwise for this server, and even then it raises the ceiling rather than
+        // removing it — see `MAX_FRAME_TRUSTED`.
+        //
+        // Read fresh each time round rather than captured, so `set_accept_any_size` takes effect on
+        // the next attempt instead of the next launch.
+        let trusted = {
+            let store = app.state::<Store>();
+            let registry = store.registry();
+
+            registry
+                .servers
+                .iter()
+                .any(|server| server.id == entry_id && server.accept_any_size)
+        };
+
+        match sharkord::open(&origin, &token, trusted).await {
             Ok(mut session) => {
                 eprintln!(
                     "[shiver] watching {origin} from the core, {} channels",
@@ -445,6 +456,8 @@ async fn watch(app: AppHandle, entry: ServerEntry, entry_id: String) {
                 eprintln!(
                     "[shiver] {origin} sent {size} bytes in one message and Shiver accepts {max}, so it is not being watched"
                 );
+
+                report_too_large(&app, &entry_id, size);
             }
             Err(error) => eprintln!("[shiver] could not watch {origin}: {error}"),
         }
@@ -463,6 +476,106 @@ async fn watch(app: AppHandle, entry: ServerEntry, entry_id: String) {
 fn forget(app: &AppHandle, entry_id: &str) {
     app.state::<Watcher>().state().remove(entry_id);
     app.state::<Readiness>().forget_entry(entry_id);
+}
+
+/// Says, once per server per run, that a server is sending more than Shiver will accept.
+///
+/// **The whole point is that it is said at all.** This is the one connection failure that does not
+/// come right on its own — the next attempt asks the same question and gets the same oversized
+/// answer — so without this the server simply stops existing as far as the inbox is concerned, with
+/// nothing anywhere to say why. That is exactly how a wrong limit went unnoticed for a release.
+///
+/// Once per run, because the watch loop comes back every thirty seconds and a notice on every
+/// attempt would be its own kind of broken.
+fn report_too_large<R: Runtime>(app: &AppHandle<R>, entry_id: &str, size: usize) {
+    let name = {
+        let store = app.state::<Store>();
+        let registry = store.registry();
+
+        registry
+            .servers
+            .iter()
+            .find(|server| server.id == entry_id)
+            .map(|server| server.name.clone())
+    };
+
+    let Some(name) = name else {
+        return;
+    };
+
+    if !app.state::<Reported>().first_time(entry_id) {
+        return;
+    }
+
+    app.state::<Feed>().push(
+        entry_id,
+        &name,
+        crate::feed::RawNotification {
+            channel_id: None,
+            channel_name: None,
+            author: "Shiver".into(),
+            body: format!(
+                "{name} sent more in one message than Shiver accepts ({}), so it is not being                  watched. Allow larger messages from it in the rail's menu if you trust it.",
+                megabytes(size)
+            ),
+            icon_url: None,
+            is_dm: false,
+        },
+        false,
+    );
+
+    drain::notify_feed_changed(app);
+}
+
+/// A byte count as a person would say it.
+fn megabytes(bytes: usize) -> String {
+    let mb = bytes as f64 / (1024.0 * 1024.0);
+
+    if mb < 1.0 {
+        format!("{} KB", bytes / 1024)
+    } else {
+        format!("{mb:.1} MB")
+    }
+}
+
+/// Servers already told about, so a retry every thirty seconds is not a notice every thirty seconds.
+#[derive(Default)]
+pub struct Reported(Mutex<std::collections::HashSet<String>>);
+
+impl Reported {
+    /// Whether this server has been reported this run, for the rail menu — which offers the larger
+    /// limit only where it means something, rather than against every server in the list.
+    pub fn mentioned(&self, entry_id: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains(entry_id)
+    }
+
+    fn first_time(&self, entry_id: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(entry_id.to_string())
+    }
+}
+
+/// Drops a server's connection so the next attempt is made with whatever just changed.
+pub fn restart(app: &AppHandle, entry_id: &str) {
+    let task = app.state::<Watcher>().state().remove(entry_id);
+
+    if let Some(task) = task {
+        task.abort();
+    }
+
+    // and it is allowed to complain again, since the limit it complained about has moved
+    app.state::<Reported>()
+        .0
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(entry_id);
+
+    sync(app);
 }
 
 /// Hands a server's page the floor, so this user's other devices measure from the same place.

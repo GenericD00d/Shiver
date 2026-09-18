@@ -578,6 +578,14 @@ export const App = () => {
         return;
       }
 
+      // two actions rather than a toggle, so this does not have to know which way the server is
+      // currently set — the menu knew, and said so by which item it built
+      if (action === 'anysize' || action === 'normalsize') {
+        await api.setAcceptAnySize(entryId, action === 'anysize').catch(() => undefined);
+
+        return;
+      }
+
       if (action === 'logout') {
         await api.logOutServer(entryId).catch(() => undefined);
         await refresh();
