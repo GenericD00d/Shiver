@@ -1,0 +1,82 @@
+# The checks that already existed but only ran when somebody remembered to type them.
+#
+# Shiver's worst bug so far took twelve builds to find: reading a direct message left two badges
+# standing, and every fix was consistent with the source and wrong. What finally caught it was a
+# test. Those tests, the typechecks and the rail guard all live in the repo now — and until this
+# file they fired only by hand, on one Windows machine, when it occurred to me to run them.
+#
+# **Checks only, never builds.** A release needs JDK 17, the Android SDK and signing keys that exist
+# on exactly one machine and cannot be recovered, so releases stay local and deliberate. Nothing
+# here needs a secret, which is also why it is safe to run on a pull request from anyone.
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# a second push to the same branch makes the first run irrelevant
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Windows, because that is what Shiver is developed and shipped on, and because Tauri's crates
+  # need no system packages there — on Linux this job would begin by apt-installing the whole GTK
+  # and WebKit stack, which is a slower way to test the same logic and one more thing to break.
+  rust:
+    name: Rust
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Three crates, each with its own lockfile, so each gets its own cache key.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            desktop/src-tauri
+            mobile/src-tauri
+            shared/sharkord-client
+
+      - name: Protocol crate
+        run: cargo test --manifest-path shared/sharkord-client/Cargo.toml
+
+      - name: Desktop
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+
+      # `check` rather than `test`: the mobile crate's logic is tested through the shared crate and
+      # its own unit tests need an Android runtime to mean anything. This is here to catch the
+      # compile break that a change to the shared crate causes.
+      - name: Mobile
+        run: cargo check --manifest-path mobile/src-tauri/Cargo.toml
+
+  frontend:
+    name: Frontends
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install desktop
+        run: bun install --frozen-lockfile
+        working-directory: desktop
+
+      - name: Typecheck desktop
+        run: bunx tsc --noEmit
+        working-directory: desktop
+
+      - name: Install mobile
+        run: bun install --frozen-lockfile
+        working-directory: mobile
+
+      - name: Typecheck mobile
+        run: bunx tsc --noEmit
+        working-directory: mobile
+
+      # Mobile draws its rail twice — React on Shiver's pages, vanilla dom inside a server's page —
+      # and neither stylesheet can reach the other, so they drift silently. See the script.
+      - name: Mobile's two rails agree
+        run: python3 scripts/check-rails.py
