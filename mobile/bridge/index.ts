@@ -249,6 +249,7 @@ function install(shiver: ShiverConfig) {
     openDirectMessages();
   }
 
+  installReturnMakesALine();
   installSoundVolume(shiver.soundVolume);
   installAttachmentCards(shiver.minimiseAttachments);
   installReactionNames();
@@ -1228,6 +1229,63 @@ const REACTION_PILL = 'button[class~="h-9"][class~="gap-1"]';
  * Tap is not available: tapping a pill toggles your own reaction, which is the one thing that must
  * keep working. Long press is what the rest of this client already uses for "tell me more".
  */
+/**
+ * Makes the phone keyboard's return key start a new line instead of sending the message.
+ *
+ * Sharkord's editor sends on Enter and breaks the line on **Shift+Enter** — a sensible split with a
+ * hardware keyboard, and the wrong way round on a phone, where there is no shift to hold and the
+ * return key sits exactly where a person reaches to start a new line. A message meant to have two
+ * lines gets sent as two messages instead.
+ *
+ * So a plain return is turned into the one the editor already understands. Rather than trying to
+ * insert a break — which would mean reaching into someone else's editor state — the event is
+ * stopped and re-dispatched with `shiftKey` set, and Sharkord does its own thing with it. Nothing
+ * here knows how a line break is represented, which is the point: that stays Sharkord's business.
+ *
+ * Sending is still one tap on the send button, which is where a thumb already is.
+ *
+ * **Capture phase on `window`.** The editor binds its handler on its own element, so this has to
+ * run before the event reaches it, and `stopPropagation` there is what prevents the send.
+ */
+function installReturnMakesALine() {
+  // `install` runs again on every page load in this document, and a second listener would
+  // re-dispatch the re-dispatched event
+  if (document.documentElement.dataset.shiverReturnKey) return;
+
+  document.documentElement.dataset.shiverReturnKey = '1';
+
+  window.addEventListener(
+    'keydown',
+    (event) => {
+      if (event.key !== 'Enter' || event.shiftKey) return;
+
+      // only the message composer. A dialog's text field, the search box and the suggestion list
+      // that opens on `@` all use return to mean "accept", and breaking those would be worse than
+      // the thing being fixed.
+      const target = event.target as HTMLElement | null;
+
+      if (!target?.closest?.('.ProseMirror')) return;
+
+      // the mention and emoji suggestion popovers take return for themselves while they are up
+      if (document.querySelector('.bg-popover')) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+
+      target.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      );
+    },
+    true
+  );
+}
+
 function installReactionNames() {
   // `install` runs again on every page load in this document, and these listeners are on `document`
   // — a second set would dispatch every pointer event twice and swallow the wrong clicks.

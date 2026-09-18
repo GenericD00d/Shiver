@@ -473,6 +473,100 @@ button {
   font-size: 12px;
 }
 
+/* The settings sections as a drawer, which is what Sharkord's own settings do on a phone: the same
+   list it shows beside the content on a wide screen, slid in from the left over a scrim. Off screen
+   rather than hidden, so it slides rather than appears. */
+.settings-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(260px, 78vw);
+  box-sizing: border-box;
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 12px 14px;
+  background: var(--shiver-surface-dim, #1f1f1f);
+  border-right: 1px solid var(--shiver-border);
+  transform: translateX(-100%);
+  transition: transform 220ms ease;
+}
+
+.settings-drawer.open {
+  transform: translateX(0);
+}
+
+.settings-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgb(0 0 0 / 50%);
+}
+
+/* the header's menu button, which is the only way in — so it sits before the title, where a back
+   control would be on a page that had one */
+.settings-menu {
+  margin-right: 4px;
+  padding: 6px 10px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.settings-section {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: var(--shiver-text-dim);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+}
+
+.settings-section.active {
+  background: var(--shiver-surface-hover, #333333);
+  color: var(--shiver-text);
+  font-weight: 600;
+}
+
+/* The "a newer Shiver exists" notice. Stacked rather than in a row: three buttons and a sentence do
+   not fit across a phone, and shrinking them to fit would make them harder to hit. */
+.update-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 12px;
+  background: var(--shiver-surface);
+}
+
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The same verdict on the add screen, where it sits under the server's address. */
+.preview-text .has-plugin {
+  margin-top: 4px;
+  color: #4ade80;
+}
+
+.preview-text .no-plugin {
+  margin-top: 4px;
+  color: #f87171;
+}
+
+.preview-text .plugin-unknown {
+  margin-top: 4px;
+  color: var(--shiver-text-dim);
+}
+
 /* The companion-plugin verdict. Colour is the quick read and the tick or cross is the reliable
    one — roughly one man in twelve cannot separate these two hues, and neither can a screen
    reader, so the glyph is in the text rather than implied by the colour. */

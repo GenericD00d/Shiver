@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 
 import { api, errorMessage } from '../api';
-import type { ServerInfo } from '../types';
+import type { ServerCheck } from '../types';
 
 type Props = {
   onAdded: () => void;
@@ -41,7 +41,7 @@ export const AddServer = ({ onAdded }: Props) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** what the server said about itself, once checked; null until then */
-  const [preview, setPreview] = useState<ServerInfo | null>(null);
+  const [preview, setPreview] = useState<ServerCheck | null>(null);
 
   const check = useCallback(async () => {
     if (!address.trim() || busy) return;
@@ -50,13 +50,21 @@ export const AddServer = ({ onAdded }: Props) => {
     setError(null);
 
     try {
-      setPreview(await api.probeServer(address.trim()));
+      // credentials are handed over when they are there: the plugin cannot be seen without a
+      // session, so a check with an empty password can only answer what `/info` answers
+      setPreview(
+        await api.checkServer(
+          address.trim(),
+          identity.trim() || null,
+          password || null
+        )
+      );
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
       setBusy(false);
     }
-  }, [address, busy]);
+  }, [address, busy, identity, password]);
 
   const add = useCallback(async () => {
     if (!address.trim() || busy) return;
@@ -122,6 +130,18 @@ export const AddServer = ({ onAdded }: Props) => {
           <span className="preview-text">
             <strong>{preview.name}</strong>
             <small>{preview.origin}</small>
+
+            {/* Three answers, and the third is not a failure: without a password Shiver has no way
+                to ask, and saying "no plugin" then would be a guess presented as a fact. */}
+            {preview.plugin === undefined ? (
+              <small className="plugin-unknown">
+                Sign in below to see whether it has the Shiver plugin
+              </small>
+            ) : preview.plugin ? (
+              <small className="has-plugin">{'✓'} Shiver plugin {preview.plugin}</small>
+            ) : (
+              <small className="no-plugin">{'✗'} No Shiver plugin</small>
+            )}
           </span>
         </div>
       ) : null}

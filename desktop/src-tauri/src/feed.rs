@@ -301,6 +301,11 @@ impl Feed {
         true
     }
 
+    /// Drops any offer of a new version, for one the user has turned down.
+    pub fn forget_updates(&self) {
+        self.state().notifications.retain(|entry| entry.update.is_none());
+    }
+
     /// Offers a new version, replacing any offer already in the list.
     ///
     /// Replaced rather than added: the check runs every few hours for as long as Shiver is open,

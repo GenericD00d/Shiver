@@ -886,6 +886,99 @@ button:disabled {
   background: var(--shiver-surface);
 }
 
+/* Settings, laid out the way Sharkord's own server settings are: the sections down one side and the
+   one you picked beside them. A column of eight unrelated controls meant reading all of it to find
+   anything, and the list only grows. */
+.settings-body {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.settings-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 152px;
+  position: sticky;
+  top: 0;
+}
+
+.settings-section {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--shiver-text-dim);
+  font: inherit;
+  text-align: left;
+}
+
+.settings-section:hover {
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+}
+
+.settings-section.active {
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+  font-weight: 600;
+}
+
+/* the content keeps the panel's width steady, so picking a short section does not make the
+   whole dialog jump narrower */
+.settings-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 520px;
+}
+
+/* The "a newer Shiver exists" bar. Across the top of the content area rather than over it: it must
+   be noticed without covering the thing somebody opened Shiver to read. */
+.update-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 10px;
+  background: var(--shiver-surface);
+}
+
+.update-text {
+  display: flex;
+  flex-direction: column;
+  margin-right: auto;
+  min-width: 0;
+}
+
+.update-error {
+  margin-top: 2px;
+  color: #f87171;
+}
+
+/* The companion-plugin verdict under the server's address. The tick and cross carry the meaning as
+   well as the colour does, so it still reads where the two hues are hard to tell apart. */
+.preview .has-plugin {
+  display: block;
+  margin-top: 4px;
+  color: #4ade80;
+}
+
+.preview .no-plugin {
+  display: block;
+  margin-top: 4px;
+  color: #f87171;
+}
+
+.preview .plugin-unknown {
+  display: block;
+  margin-top: 4px;
+  color: var(--shiver-text-dim);
+}
+
 .preview img,
 .preview .fallback {
   width: 40px;

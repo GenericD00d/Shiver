@@ -23,6 +23,7 @@ use tauri_plugin_updater::UpdaterExt;
 
 use crate::error::{Error, Result};
 use crate::feed::Feed;
+use crate::store::Store;
 
 /// How long after launch the first check happens.
 ///
@@ -30,8 +31,35 @@ use crate::feed::Feed;
 /// been available for a week can wait another half minute.
 const FIRST_CHECK: Duration = Duration::from_secs(30);
 
+/// The project itself, for the link in About.
+const REPOSITORY: &str = "https://github.com/GenericD00d/Shiver";
+
 /// How often to look afterwards. Rarely, deliberately — this is a release channel, not a feed.
 const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// The newer version, once one is known and the user has not turned it down.
+///
+/// Read by the shell on launch, which is what puts the prompt in front of somebody rather than
+/// leaving it in the feed for them to find. Kept rather than re-fetched: a window opens far more
+/// often than a release happens.
+#[derive(Default)]
+pub struct Available(Mutex<Option<String>>);
+
+impl Available {
+    pub fn get(&self) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn set(&self, version: Option<String>) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = version;
+    }
+}
 
 /// The version already announced, so a check every six hours does not add an entry every six hours.
 #[derive(Default)]
@@ -81,12 +109,19 @@ async fn look(app: &AppHandle) {
         Ok(Some(update)) => {
             let version = update.version.clone();
 
+            // The user has seen this one and said no. Not "no updates" — a release after it is news
+            // again — just not this one, and not every six hours for as long as Shiver is open.
+            if app.state::<Store>().registry().settings.skipped_update.as_deref() == Some(&version) {
+                return;
+            }
+
             if app.state::<Announced>().already(&version) {
                 return;
             }
 
             eprintln!("[shiver] {version} is available");
 
+            app.state::<Available>().set(Some(version.clone()));
             app.state::<Feed>().push_update(&version);
             crate::drain::notify_feed_changed(app);
         }
@@ -127,4 +162,70 @@ pub async fn install_update(app: AppHandle) -> Result<()> {
     app.exit(0);
 
     Ok(())
+}
+
+/// What the shell asks on launch, to decide whether to say anything.
+#[tauri::command]
+pub fn available_update(app: AppHandle) -> Option<String> {
+    app.state::<Available>().get()
+}
+
+/// Turns one version down.
+///
+/// The prompt does not come back for it — not on the next check, and not on the next launch, which
+/// is the point: being asked twice about the same thing is how a prompt teaches people to dismiss
+/// prompts. The entry in the feed goes too, so nothing is left claiming there is something to do.
+#[tauri::command]
+pub fn skip_update(app: AppHandle, store: tauri::State<'_, Store>, version: String) -> Result<()> {
+    store.update(|registry| {
+        registry.settings.skipped_update = Some(version.clone());
+
+        Ok(())
+    })?;
+
+    app.state::<Available>().set(None);
+    app.state::<Feed>().forget_updates();
+    crate::drain::notify_feed_changed(&app);
+
+    Ok(())
+}
+
+/// Opens the project's page, for somebody who wants to read it rather than install it.
+#[tauri::command]
+pub fn open_repository(app: AppHandle) -> Result<()> {
+    use tauri_plugin_opener::OpenerExt;
+
+    app.opener()
+        .open_url(REPOSITORY, None::<&str>)
+        .map_err(|error| Error::Webview(error.to_string()))
+}
+
+/// Looks now, because somebody asked.
+///
+/// **Deliberately ignores a skipped version.** The background check stays quiet about one the user
+/// turned down; pressing a button marked "check for updates" and being told nothing, while a newer
+/// release sits there, would be the app keeping a secret it was just asked about.
+///
+/// Answers `None` for "nothing newer", which is a real answer and worth saying out loud — a check
+/// that reports only good news leaves you wondering whether it ran.
+#[tauri::command]
+pub async fn check_for_update(app: AppHandle) -> Result<Option<String>> {
+    let updater = app
+        .updater()
+        .map_err(|error| Error::Webview(format!("The updater is unavailable: {error}")))?;
+
+    let found = updater
+        .check()
+        .await
+        .map_err(|error| Error::Webview(format!("Could not reach the update server: {error}")))?;
+
+    let Some(update) = found else {
+        return Ok(None);
+    };
+
+    let version = update.version.clone();
+
+    app.state::<Available>().set(Some(version.clone()));
+
+    Ok(Some(version))
 }

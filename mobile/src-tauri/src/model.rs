@@ -102,6 +102,13 @@ pub struct Settings {
     /// by is the common case with more than one or two. Each entry here is a deliberate answer.
     #[serde(default)]
     pub push_servers: Vec<String>,
+    /// A version the user asked not to be told about again.
+    ///
+    /// One version, not a list: the question is only ever "is the newest one the one I turned
+    /// down", and a release after it is news again. Skipping is not the same as refusing updates —
+    /// there is no setting for that, and this quietly becoming one would be a poor way to get it.
+    #[serde(default)]
+    pub skipped_update: Option<String>,
 }
 
 /// Sharkord's own dark theme, so Shiver out of the box looks like Sharkord out of the box.
@@ -133,6 +140,7 @@ impl Default for Settings {
             minimise_attachments: true,
             last_server_id: None,
             push_servers: Vec::new(),
+            skipped_update: None,
         }
     }
 }

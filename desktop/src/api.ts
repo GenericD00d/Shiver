@@ -5,6 +5,7 @@ import type {
   Folder,
   Notification,
   Registry,
+  ServerCheck,
   ServerEntry,
   ServerInfo,
   Settings,
@@ -19,6 +20,9 @@ export const api = {
   listRegistry: () => invoke<Registry>('list_registry'),
 
   probeServer: (origin: string) => invoke<ServerInfo>('probe_server', { origin }),
+  /** looks a server up and, when credentials are given, says whether it has the Shiver plugin */
+  checkServer: (origin: string, identity: string | null, password: string | null) =>
+    invoke<ServerCheck>('check_server', { origin, identity, password }),
 
   /**
    * `rememberPassword` is the user's choice about the password, and it is off unless they ask.
@@ -128,6 +132,14 @@ export const api = {
    * failure and is worth showing.
    */
   installUpdate: () => invoke<void>('install_update'),
+  /** the newer version Shiver has found, or null when there is none worth mentioning */
+  availableUpdate: () => invoke<string | null>('available_update'),
+  /** turn one version down, so nothing mentions it again — not even on the next launch */
+  skipUpdate: (version: string) => invoke<void>('skip_update', { version }),
+  /** opens the project's page in the browser */
+  openRepository: () => invoke<void>('open_repository'),
+  /** asks now; null means nothing newer. Ignores a skipped version — see `check_for_update` */
+  checkForUpdate: () => invoke<string | null>('check_for_update'),
   /** takes back the stored password for one server; the session is left alone */
   forgetPassword: (id: string) => invoke<void>('forget_password', { id }),
   resetMediaPermissions: () => invoke<number>('reset_media_permissions'),

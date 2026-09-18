@@ -73,6 +73,65 @@ pub async fn probe_server(origin: String) -> Result<ServerInfo> {
     probe::fetch_info(&origin).await
 }
 
+/// What a server says about itself before it is added, plus whether it has the companion plugin.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerCheck {
+    #[serde(flatten)]
+    pub info: ServerInfo,
+    /// The plugin's version, or `None` where the server answered and had none.
+    ///
+    /// Absent entirely when Shiver could not ask — see `check_server`. Three answers, not two: an
+    /// unasked server must not be reported as lacking the plugin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<Option<String>>,
+}
+
+/// Looks a server up, and where it can, says whether the companion plugin is installed.
+///
+/// **The plugin cannot be seen without signing in.** `/info` does not mention plugins at all, and
+/// `plugins.get` needs `MANAGE_PLUGINS`, so it answers an administrator and nobody else. The one
+/// place an ordinary member is told is the `joinServer` payload, which needs a session — so with no
+/// credentials this answers only what `/info` answers, and says so by leaving `plugin` absent
+/// rather than guessing.
+///
+/// With credentials it signs in and opens a connection purely to read that payload, then drops
+/// both. Nothing is stored and the server is not added: this is the check button doing what it
+/// says, and a wrong password is reported here rather than after the user has committed to adding.
+#[tauri::command]
+pub async fn check_server(
+    origin: String,
+    identity: Option<String>,
+    password: Option<String>,
+) -> Result<ServerCheck> {
+    let origin = normalize_origin(&origin)?;
+    let info = probe::fetch_info(&origin).await?;
+
+    let (Some(identity), Some(password)) = (identity, password) else {
+        return Ok(ServerCheck { info, plugin: None });
+    };
+
+    if identity.trim().is_empty() || password.is_empty() {
+        return Ok(ServerCheck { info, plugin: None });
+    }
+
+    let token = login::sign_in(&origin, identity.trim(), &password).await?;
+
+    // Bounded rather than trusting: this server has not been added yet, so nothing has had the
+    // chance to say it is trusted with a larger frame.
+    //
+    // A failure here is reported as the server not being readable rather than as the sign-in
+    // failing, because the sign-in plainly worked — the token above is proof of it.
+    let session = shiver_sharkord::open(&origin, &token, false)
+        .await
+        .map_err(|error| Error::Unreachable(format!("{origin}: {error}")))?;
+
+    Ok(ServerCheck {
+        info,
+        plugin: Some(session.joined.plugin_version.clone()),
+    })
+}
+
 /// Adds a server, signing in first when credentials were given.
 ///
 /// Signing in here rather than in the webview is what makes opening a server seamless: Shiver holds
@@ -593,11 +652,16 @@ pub async fn update_settings(
     settings: Settings,
 ) -> Result<()> {
     let saved = store.update(|registry| {
-        // last_server_id is Shiver's own bookkeeping, not something the settings screen owns
+        // Shiver's own bookkeeping, not anything the settings screen owns — and it does not send
+        // these back, so taking the incoming struct wholesale would quietly clear them. A turned
+        // down version returning the moment somebody changed a colour is exactly the sort of thing
+        // that makes people stop trusting a prompt.
         let last_server_id = registry.settings.last_server_id.clone();
+        let skipped_update = registry.settings.skipped_update.clone();
 
         registry.settings = Settings {
             last_server_id,
+            skipped_update,
             ..settings
         };
 

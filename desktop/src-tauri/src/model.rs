@@ -79,6 +79,13 @@ pub struct Settings {
     /// (`"CommandOrControl+Shift+M"`). Absent means no shortcut is registered at all.
     #[serde(default)]
     pub mute_hotkey: Option<String>,
+    /// A version the user asked not to be told about again.
+    ///
+    /// One version, not a list: the question is only ever "is the newest one the one I turned
+    /// down", and a release after it is news again. Skipping is not the same as refusing updates —
+    /// there is no setting for that, and this quietly becoming one would be a poor way to get it.
+    #[serde(default)]
+    pub skipped_update: Option<String>,
     /// How many servers keep a live page, rather than being watched over a socket.
     ///
     /// The memory dial. A page is a whole browser running a whole Sharkord client — on the order of
@@ -138,6 +145,7 @@ impl Default for Settings {
             last_server_id: None,
             mute_hotkey: None,
             pages_kept: DEFAULT_PAGES_KEPT,
+            skipped_update: None,
         }
     }
 }

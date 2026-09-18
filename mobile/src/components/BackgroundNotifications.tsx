@@ -95,14 +95,12 @@ export const BackgroundNotifications = () => {
     return (
       <>
         <p className="hint">
-          Shiver can only notify you while it is running. To be told about messages after Android has
-          closed it, install a UnifiedPush distributor — <strong>ntfy</strong> is the usual one, and
-          works against your own server if you self-host it. Shiver will use it as soon as it is
-          there.
+          To be told about messages after Android has closed Shiver, install a UnifiedPush
+          distributor — <strong>ntfy</strong> is the usual one.
         </p>
         <p className="hint">
-          This also needs the Shiver plugin installed on the server doing the notifying. Without
-          either, nothing breaks — Shiver just stays quiet while it is closed, as it does now.
+          The server needs the Shiver plugin too. Without either, Shiver simply stays quiet while
+          it is closed.
         </p>
       </>
     );
@@ -111,9 +109,8 @@ export const BackgroundNotifications = () => {
   return (
     <>
       <p className="hint">
-        A distributor holds one connection for every app on your phone, so Shiver can be told about
-        messages without running itself. The server also needs the Shiver plugin; without it that
-        server simply cannot wake you.
+        One connection for every app on your phone, so Shiver can be told about messages without
+        running. The server needs the Shiver plugin to use it.
       </p>
 
       {error ? <p className="error">{error}</p> : null}
@@ -145,9 +142,8 @@ export const BackgroundNotifications = () => {
           <h3 className="section">Which servers may wake you</h3>
 
           <p className="hint">
-            One at a time, because each one is a separate address this phone can be reached on, and
-            a server you turn on can tell when you have unread messages even while Shiver is closed.
-            Nothing is registered until you say so here.
+            One at a time: each is a separate address this phone can be reached on. Nothing is
+            registered until you say so.
           </p>
 
           {status.servers.length === 0 ? (

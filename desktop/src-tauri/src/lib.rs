@@ -36,7 +36,12 @@ pub fn run() {
             commands::reset_media_permissions,
             commands::forget_password,
             update::install_update,
+            update::available_update,
+            update::skip_update,
+            update::open_repository,
+            update::check_for_update,
             commands::probe_server,
+            commands::check_server,
             commands::add_server,
             commands::remove_server,
             commands::reorder_servers,
@@ -90,6 +95,7 @@ pub fn run() {
             app.manage(drain::Openings::default());
             app.manage(webviews::PageFullscreen::default());
             app.manage(update::Announced::default());
+            app.manage(update::Available::default());
             app.manage(Watcher::default());
             app.manage(watch::Missed::default());
             app.manage(watch::Plugins::default());

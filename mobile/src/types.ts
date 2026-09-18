@@ -64,6 +64,16 @@ export type PushServer = {
 };
 
 /** A server Shiver cannot watch, and the reason in words meant for a person. */
+/** A server looked up before it is added, with the companion plugin's verdict where one is possible. */
+export type ServerCheck = ServerInfo & {
+  /**
+   * The plugin's version, null where the server has none — and **absent entirely** when Shiver
+   * could not ask, which is the case without credentials. Nothing reveals a server's plugins
+   * without a session, so an unasked server must not be drawn as lacking it.
+   */
+  plugin?: string | null;
+};
+
 /** What Shiver found out about a server's companion plugin, once it had connected to it. */
 export type PluginStatus = {
   entryId: string;

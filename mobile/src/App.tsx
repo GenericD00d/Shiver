@@ -5,6 +5,8 @@ import { AddServer } from './components/AddServer';
 import { BackgroundNotifications } from './components/BackgroundNotifications';
 import { Boot } from './components/Boot';
 import { DirectMessages } from './components/DirectMessages';
+import { UpdateNotice } from './components/UpdateNotice';
+import type { SettingsSection } from './components/SettingsScreen';
 import { Rail, type RailRef } from './components/Rail';
 import { ServerList } from './components/ServerList';
 import { Sessions } from './components/Sessions';
@@ -27,6 +29,14 @@ import {
  * no home screen — a switcher whose front page is a list of one server was a step in the way.
  */
 type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms';
+
+/** The settings sections, in the order they are listed. */
+const SETTINGS_SECTIONS: { id: SettingsSection | 'servers'; label: string }[] = [
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'servers', label: 'Servers' },
+  { id: 'about', label: 'About' }
+];
 
 const EMPTY: Registry = {
   servers: [],
@@ -107,6 +117,9 @@ type BootState =
 export const App = () => {
   const [registry, setRegistry] = useState<Registry>(EMPTY);
   const [screen, setScreen] = useState<Screen>('boot');
+  /** which group of settings is showing; reset is deliberate, so leaving and coming back starts over */
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | 'servers'>('appearance');
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   /** the server the sign-in screen is for */
   const [signingIn, setSigningIn] = useState<string | null>(null);
   const [boot, setBoot] = useState<BootState>({ kind: 'waiting' });
@@ -463,6 +476,18 @@ export const App = () => {
       <div className="main">
         {screen === 'boot' ? null : (
           <header className="bar">
+            {screen === 'settings' ? (
+              <button
+                type="button"
+                className="ghost settings-menu"
+                aria-label="Settings sections"
+                aria-expanded={settingsDrawerOpen}
+                onClick={() => setSettingsDrawerOpen((open) => !open)}
+              >
+                ☰
+              </button>
+            ) : null}
+
             <h1>{TITLES[screen]}</h1>
 
             <button type="button" className="ghost" onClick={handleBack}>
@@ -474,6 +499,9 @@ export const App = () => {
         {error ? <p className="error">{error}</p> : null}
 
         <main className="content">
+          {/* on Shiver's own screens, which is where a launch lands */}
+          <UpdateNotice />
+
           {screen === 'boot' ? (
             <Boot state={boot} onRetry={connect} onAdd={() => setScreen('add')} />
           ) : null}
@@ -506,11 +534,72 @@ export const App = () => {
 
           {screen === 'settings' ? (
             <>
-              <SettingsScreen settings={registry.settings} onSave={handleSettings} />
+              {/* The sections as a drawer behind the header's menu button, which is what Sharkord's
+                  own settings do on a phone: the same list it shows beside the content on a wide
+                  screen, slid in over a scrim rather than shrunk to fit. */}
+              {settingsDrawerOpen ? (
+                <div
+                  className="settings-scrim"
+                  onClick={() => setSettingsDrawerOpen(false)}
+                  aria-hidden="true"
+                />
+              ) : null}
 
-              {/* server management lives here now that there is no home screen to hold it */}
-              <h2 className="section">Servers</h2>
+              <nav
+                className={settingsDrawerOpen ? 'settings-drawer open' : 'settings-drawer'}
+                aria-label="Settings sections"
+              >
+                {SETTINGS_SECTIONS.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className={
+                      entry.id === settingsSection ? 'settings-section active' : 'settings-section'
+                    }
+                    aria-current={entry.id === settingsSection}
+                    onClick={() => {
+                      setSettingsSection(entry.id);
+                      setSettingsDrawerOpen(false);
+                    }}
+                  >
+                    {entry.label}
+                  </button>
+                ))}
+              </nav>
 
+              {/* which section is showing, since the drawer is closed most of the time */}
+              <h2 className="section">
+                {SETTINGS_SECTIONS.find((entry) => entry.id === settingsSection)?.label}
+              </h2>
+
+              {settingsSection === 'appearance' || settingsSection === 'about' ? (
+                <SettingsScreen
+                  settings={registry.settings}
+                  onSave={handleSettings}
+                  section={settingsSection}
+                />
+              ) : null}
+
+              {settingsSection === 'notifications' ? (
+                <>
+                  <SettingsScreen
+                    settings={registry.settings}
+                    onSave={handleSettings}
+                    section="notifications"
+                  />
+
+                  {/* the other half of being told about messages: not what Shiver holds, but who
+                      tells it when it is not running at all */}
+                  <h2 className="section">While Shiver is closed</h2>
+
+                  <BackgroundNotifications />
+                </>
+              ) : null}
+            </>
+          ) : null}
+
+          {screen === 'settings' && settingsSection === 'servers' ? (
+            <>
               <ServerList
                 servers={servers}
                 onOpen={(id) => {
@@ -536,12 +625,6 @@ export const App = () => {
               <h2 className="section">Background sessions</h2>
 
               <Sessions onCleared={readSessions} />
-
-              {/* the other half of being told about messages: not what Shiver holds, but who tells it
-                  when it is not running at all */}
-              <h2 className="section">Notifications while Shiver is closed</h2>
-
-              <BackgroundNotifications />
             </>
           ) : null}
         </main>

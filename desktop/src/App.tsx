@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, errorMessage } from './api';
 import { AddServerPanel } from './components/AddServerPanel';
+import { UpdateNotice } from './components/UpdateNotice';
 import { ConnectingPanel } from './components/ConnectingPanel';
 import { DirectMessagesPanel } from './components/DirectMessagesPanel';
 import { RenameFolderPanel } from './components/RenameFolderPanel';
@@ -643,6 +644,9 @@ export const App = () => {
 
       <div className="main">
         <div className="content">
+          {/* over the top of whatever is on screen, so it is seen on the launch it was found */}
+          <UpdateNotice />
+
           {error ? (
             <div className="panel">
               <p className="error">{error}</p>

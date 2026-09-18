@@ -42,9 +42,8 @@ export const Sessions = ({ onCleared }: Props) => {
   return (
     <>
       <p className="hint">
-        Shiver keeps a session for each server it watches, encrypted on this device, so unread counts
-        and notifications arrive for servers you are not looking at. Servers where you did not ask
-        to stay signed in are watched only while Shiver is running, and nothing is stored for them.
+        A session per watched server, encrypted on this device, so badges and notifications arrive
+        for servers you are not looking at.
       </p>
 
       {error ? <p className="error">{error}</p> : null}

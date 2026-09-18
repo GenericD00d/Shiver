@@ -117,6 +117,16 @@ export type Registry = {
   muted: MutedChannel[];
 };
 
+/** A server looked up before it is added, with the companion plugin's verdict where one is possible. */
+export type ServerCheck = ServerInfo & {
+  /**
+   * The plugin's version, null where the server has none — and **absent entirely** when Shiver
+   * could not ask, which is the case without credentials. Nothing reveals a server's plugins
+   * without a session, so an unasked server must not be drawn as lacking it.
+   */
+  plugin?: string | null;
+};
+
 export type ServerInfo = {
   origin: string;
   serverId: string;

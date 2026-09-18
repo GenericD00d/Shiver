@@ -6,6 +6,7 @@ import type {
   Folder,
   PluginStatus,
   PushStatus,
+  ServerCheck,
   WatchProblem,
   Registry,
   ServerEntry,
@@ -23,6 +24,9 @@ export const api = {
   listRegistry: () => invoke<Registry>('list_registry'),
 
   probeServer: (origin: string) => invoke<ServerInfo>('probe_server', { origin }),
+  /** looks a server up and, when credentials are given, says whether it has the Shiver plugin */
+  checkServer: (origin: string, identity: string | null, password: string | null) =>
+    invoke<ServerCheck>('check_server', { origin, identity, password }),
 
   /** identity and password are optional: without them the user signs in on the server's own page */
   addServer: (
@@ -75,6 +79,12 @@ export const api = {
   /** takes back the stored password for one server; the session is left alone */
   forgetPassword: (id: string) => invoke<void>('forget_password', { id }),
   updateAvailable: () => invoke<string | null>('update_available'),
+  /** turn one version down, so nothing mentions it again — not even on the next launch */
+  skipUpdate: (version: string) => invoke<void>('skip_update', { version }),
+  /** opens the project's page in the browser */
+  openRepository: () => invoke<void>('open_repository'),
+  /** asks GitHub now; null means nothing newer. Ignores a skipped version — see `check_for_update` */
+  checkForUpdate: () => invoke<string | null>('check_for_update'),
   /** opens the releases page in the browser, which is where the apk actually comes from */
   openReleases: () => invoke<void>('open_releases'),
   getSettings: () => invoke<Settings>('get_settings'),

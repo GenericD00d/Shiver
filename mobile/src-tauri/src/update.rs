@@ -30,6 +30,9 @@ const MANIFEST: &str = "https://github.com/GenericD00d/Shiver/releases/latest/do
 /// newest without Shiver having to construct a url from a version it just learned.
 const RELEASES: &str = "https://github.com/GenericD00d/Shiver/releases/latest";
 
+/// The project itself, for the link in About.
+const REPOSITORY: &str = "https://github.com/GenericD00d/Shiver";
+
 /// Long enough after launch to be out of the way of connecting to every server.
 const FIRST_CHECK: Duration = Duration::from_secs(45);
 
@@ -74,11 +77,48 @@ pub fn update_available(app: AppHandle) -> Result<Option<String>> {
 /// Opens the release page, which is where the actual download lives.
 #[tauri::command]
 pub fn open_releases(app: AppHandle) -> Result<()> {
+    open(&app, RELEASES)
+}
+
+/// Opens the project's page, for somebody who wants to read it rather than install it.
+#[tauri::command]
+pub fn open_repository(app: AppHandle) -> Result<()> {
+    open(&app, REPOSITORY)
+}
+
+fn open(app: &AppHandle, url: &str) -> Result<()> {
     use tauri_plugin_opener::OpenerExt;
 
     app.opener()
-        .open_url(RELEASES, None::<&str>)
+        .open_url(url, None::<&str>)
         .map_err(|error| crate::error::Error::Webview(error.to_string()))
+}
+
+/// Looks now, because somebody asked.
+///
+/// **Deliberately ignores a skipped version.** The automatic check stays quiet about one the user
+/// turned down; pressing a button marked "check for updates" and being told nothing, while a newer
+/// release sits there, would be the app keeping a secret it was just asked about.
+///
+/// Answers `None` for "nothing newer", which is a real answer and worth saying out loud — a check
+/// that reports only good news leaves you wondering whether it ran.
+#[tauri::command]
+pub async fn check_for_update(app: AppHandle) -> Result<Option<String>> {
+    let Some(newest) = fetch().await else {
+        return Err(crate::error::Error::Unreachable(
+            "Could not reach GitHub to check for updates".into(),
+        ));
+    };
+
+    let running = app.package_info().version.to_string();
+
+    if !is_newer(&newest, &running) {
+        return Ok(None);
+    }
+
+    app.state::<Available>().set(Some(newest.clone()));
+
+    Ok(Some(newest))
 }
 
 /// Starts the check.
@@ -104,6 +144,18 @@ async fn look(app: &AppHandle) {
     let running = app.package_info().version.to_string();
 
     if !is_newer(&newest, &running) {
+        return;
+    }
+
+    // The user has seen this one and said no. Not "no updates" — a release after it is news again.
+    if app
+        .state::<crate::store::Store>()
+        .registry()
+        .settings
+        .skipped_update
+        .as_deref()
+        == Some(newest.as_str())
+    {
         return;
     }
 
@@ -196,4 +248,21 @@ mod tests {
         assert!(!is_newer("not a version", "0.1.0"));
         assert!(!is_newer("0.1.1", "also not a version"));
     }
+}
+
+/// Turns one version down, so nothing mentions it again.
+///
+/// Not on the next launch either, which is the point: being asked twice about the same thing is how
+/// a prompt teaches people to dismiss prompts.
+#[tauri::command]
+pub fn skip_update(app: AppHandle, version: String) -> Result<()> {
+    app.state::<crate::store::Store>().update(|registry| {
+        registry.settings.skipped_update = Some(version.clone());
+
+        Ok(())
+    })?;
+
+    app.state::<Available>().set(None);
+
+    Ok(())
 }
