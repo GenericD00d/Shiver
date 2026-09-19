@@ -182,7 +182,7 @@ async fn sign_in_again(app: &AppHandle, entry: &ServerEntry) -> bool {
     // Shiver signs a server back in with the password it was given when the server was added. Signing
     // in on the server's own page never reaches Shiver, so an entry can name a user it cannot
     // authenticate as — and the sign-in item in the rail's menu is how the user fixes that.
-    let Ok(Some(password)) = secrets::read(Secret::Password, &entry.id) else {
+    let Some(password) = secrets::read_off_thread(Secret::Password, &entry.id).await else {
         eprintln!(
             "[shiver] no stored password for {}, so it cannot be signed back in",
             entry.origin
@@ -194,13 +194,16 @@ async fn sign_in_again(app: &AppHandle, entry: &ServerEntry) -> bool {
     let token = match login::sign_in(&entry.origin, identity, &password).await {
         Ok(token) => token,
         Err(error) => {
-            eprintln!("[shiver] signing back in to {} failed: {error}", entry.origin);
+            eprintln!(
+                "[shiver] signing back in to {} failed: {error}",
+                entry.origin
+            );
 
             return false;
         }
     };
 
-    if let Err(error) = secrets::store(Secret::Session, &entry.id, &token) {
+    if let Err(error) = secrets::store_off_thread(Secret::Session, &entry.id, &token).await {
         eprintln!(
             "[shiver] could not keep the new session for {}: {error}",
             entry.origin

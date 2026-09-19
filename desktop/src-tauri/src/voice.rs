@@ -1,6 +1,6 @@
 //! Global voice.
 //!
-//! DESIGN.md asks for two things Shiver's own chrome has to own, because no single server can: the
+//! Two things Shiver's own chrome has to own, because no single server can: the
 //! user's voice status watched across every server, and controls that are reachable whichever
 //! server is on screen.
 //!

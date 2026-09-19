@@ -7,6 +7,7 @@
 use std::time::Duration;
 
 use serde_json::Value;
+use zeroize::Zeroize;
 
 use crate::error::{Error, Result};
 
@@ -20,35 +21,50 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(20);
 pub async fn sign_in(origin: &str, identity: &str, password: &str) -> Result<String> {
     if !origin.starts_with("https://") {
         return Err(Error::SignIn(
-            "Shiver will not send a password over http. Use an https address for this server.".into(),
+            "Shiver will not send a password over http. Use an https address for this server."
+                .into(),
         ));
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(LOGIN_TIMEOUT)
-        // A redirect is never followed on this call, and that is the whole point of saying so.
-        // `reqwest` follows up to ten by default, and a 307 or 308 keeps the method *and the body* —
-        // so a server answering `POST /login` with `Location: https://somewhere-else/` would have
-        // Shiver hand the user's password to a host the user never named. Sharkord answers this
-        // endpoint directly, so refusing to be sent elsewhere costs nothing legitimate.
-        .redirect(reqwest::redirect::Policy::none())
-        .user_agent(concat!("Shiver/", env!("CARGO_PKG_VERSION")))
-        .build()
+    // A redirect is never followed on this call, and that is the whole point of saying so.
+    // `reqwest` follows up to ten by default, and a 307 or 308 keeps the method *and the body* —
+    // so a server answering `POST /login` with `Location: https://somewhere-else/` would have
+    // Shiver hand the user's password to a host the user never named. Sharkord answers this
+    // endpoint directly, so refusing to be sent elsewhere costs nothing legitimate. `http` is
+    // where that policy and the body cap both live now.
+    let client = crate::http::client(LOGIN_TIMEOUT)
         .map_err(|error| Error::Unreachable(error.to_string()))?;
 
-    let response = client
-        .post(format!("{origin}/login"))
-        .json(&serde_json::json!({ "identity": identity, "password": password }))
-        .send()
-        .await
-        .map_err(|_| Error::Unreachable(origin.to_string()))?;
+    // The serialised body is wiped once it has been handed over, rather than dropped with the
+    // password still in it: a freed `String` keeps its bytes until something reuses that memory,
+    // where a core dump or a debugger can read them.
+    //
+    // **This covers the copy Shiver makes, not every copy that exists.** `reqwest` buffers the body
+    // again internally and that buffer is not reachable from here, so this narrows the window
+    // rather than closing it. Worth doing for the one copy this code owns; not worth claiming more
+    // than it does.
+    let response = {
+        let mut payload =
+            serde_json::json!({ "identity": identity, "password": password }).to_string();
+
+        let sending = client
+            .post(format!("{origin}/login"))
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(payload.clone())
+            .send();
+
+        payload.zeroize();
+
+        sending
+            .await
+            .map_err(|_| Error::Unreachable(origin.to_string()))?
+    };
 
     let status = response.status();
 
-    let body: Value = response
-        .json()
+    let body: Value = crate::http::json_within_limit(response)
         .await
-        .map_err(|_| Error::NotSharkord(origin.to_string()))?;
+        .ok_or_else(|| Error::NotSharkord(origin.to_string()))?;
 
     if !status.is_success() {
         return Err(Error::SignIn(login_error_message(&body)));
@@ -65,14 +81,54 @@ pub async fn sign_in(origin: &str, identity: &str, password: &str) -> Result<Str
 fn login_error_message(body: &Value) -> String {
     if let Some(errors) = body.get("errors").and_then(Value::as_object) {
         if let Some(first) = errors.values().find_map(Value::as_str) {
-            return first.to_string();
+            return presentable(first);
         }
     }
 
     body.get("error")
         .and_then(Value::as_str)
-        .unwrap_or("Could not sign in")
-        .to_string()
+        .map(presentable)
+        .unwrap_or_else(|| "Could not sign in".to_string())
+}
+
+/// The longest a server's own refusal may be before Shiver stops quoting it.
+const MAX_SERVER_MESSAGE: usize = 200;
+
+/// A server's words, made safe to put in Shiver's own panel.
+///
+/// These are passed through on the grounds that they are already written for a person to read.
+/// That is true of Sharkord and not of whatever else may be answering on that address: this string
+/// is rendered inside Shiver's own chrome, at a moment the user is already being asked about
+/// credentials, which is a serviceable place to write "Your session expired, reset it at ...".
+///
+/// So: one line, no control characters, bounded, and nothing that reads as a link.
+fn presentable(message: &str) -> String {
+    let flattened: String = message
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+
+    let cleaned = flattened
+        .split_whitespace()
+        .filter(|word| {
+            let word = word.to_ascii_lowercase();
+
+            !word.contains("://") && !word.starts_with("www.")
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if cleaned.is_empty() {
+        return "Could not sign in".to_string();
+    }
+
+    cleaned.chars().take(MAX_SERVER_MESSAGE).collect()
 }
 
 #[cfg(test)]

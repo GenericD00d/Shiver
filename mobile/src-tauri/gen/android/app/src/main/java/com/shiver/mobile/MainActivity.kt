@@ -101,6 +101,16 @@ class MainActivity : TauriActivity() {
             return
           }
 
+          // **Only Shiver's own pages are asked.** `__SHIVER_BACK__` is an ordinary window
+          // property, so a server's page can define it and answer "true" to every press — which
+          // takes away the user's main way of leaving that page. Shiver draws the rail on its own
+          // origin, which is the only place the question means anything.
+          if (!isShiverPage(view.url)) {
+            if (view.canGoBack()) view.goBack() else leave()
+
+            return
+          }
+
           // asynchronous, and deliberately so: the reply arrives on this thread rather than being
           // waited for on it, which is the difference between a back press and a frozen app
           view.evaluateJavascript(
@@ -110,6 +120,21 @@ class MainActivity : TauriActivity() {
 
             if (view.canGoBack()) view.goBack() else leave()
           }
+        }
+
+        /**
+         * Whether the page on screen is one of Shiver's own.
+         *
+         * Shiver's pages are served from the app's asset origin in a bundled build and from the
+         * vite dev server in development, and no server's page is ever either of those.
+         */
+        private fun isShiverPage(url: String?): Boolean {
+          val address = url ?: return false
+
+          return address.startsWith("http://tauri.localhost") ||
+            address.startsWith("https://tauri.localhost") ||
+            address.startsWith("http://localhost:") ||
+            address.startsWith("http://10.0.2.2:")
         }
 
         /** What the system would have done with the press, had Shiver not taken it. */

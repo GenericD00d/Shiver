@@ -1,5 +1,6 @@
 mod commands;
 mod error;
+mod http;
 mod inbox;
 mod login;
 mod model;
@@ -16,9 +17,58 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::{
     inbox::Inbox,
-    store::Store,
+    store::{RegistryStore, Store},
     webview::{Showing, MAIN_WINDOW},
 };
+
+/// Says why Shiver could not start, rather than vanishing.
+///
+/// The release profile is `panic = "abort"` with `strip = true`, and on Windows there is no console
+/// attached — so a failure to create the config directory or the window used to be an app that
+/// disappeared with the reason written nowhere at all. Everything else in this codebase reports its
+/// failures carefully; the one at startup did not.
+fn report_failed_start(error: tauri::Error) -> ! {
+    let message = format!("Shiver could not start: {error}");
+
+    eprintln!("[shiver] {message}");
+
+    // Windows is the case that actually needs this: a bundled app has no console attached, so
+    // stderr goes nowhere a user will ever look. `MessageBoxW` is in `user32`, which every windows
+    // process already has loaded — declared here rather than pulling in a dialog plugin for one
+    // call on a path that by definition has no app to hang a plugin off.
+    #[cfg(windows)]
+    unsafe {
+        #[link(name = "user32")]
+        extern "system" {
+            fn MessageBoxW(
+                window: *mut core::ffi::c_void,
+                text: *const u16,
+                caption: *const u16,
+                kind: u32,
+            ) -> i32;
+        }
+
+        const MB_ICONERROR: u32 = 0x10;
+
+        let wide = |text: &str| {
+            text.encode_utf16()
+                .chain(std::iter::once(0))
+                .collect::<Vec<u16>>()
+        };
+
+        let text = wide(&message);
+        let caption = wide("Shiver");
+
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_ICONERROR,
+        );
+    }
+
+    std::process::exit(1);
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -72,7 +122,8 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            app.manage(Store::load(&handle)?);
+            app.manage(store::load(&handle)?);
+            app.manage(webview::Openings::default());
             app.manage(Showing::default());
             app.manage(Inbox::default());
             app.manage(push::Push::default());
@@ -185,7 +236,7 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("Shiver failed to start");
+        .unwrap_or_else(|error| report_failed_start(error));
 }
 
 /// The origin of the server the webview is on, if it is on one.

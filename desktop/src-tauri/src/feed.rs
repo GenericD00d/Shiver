@@ -93,6 +93,31 @@ where
 }
 
 /// One item in the bell feed.
+/// An icon url a page asked Shiver to draw, if it is one Shiver is willing to fetch.
+///
+/// **A page chooses this string, and Shiver's own chrome is what loads it.** Nothing checked it:
+/// the popup rendered `<img src={entry.iconUrl}>` for whatever arrived, so a server could point it
+/// anywhere and get a request from Shiver's origin every time the bell was opened — a beacon, and
+/// over plain http at that, on a client whose headline rule is https only.
+///
+/// So it has to be https and it has to be on the server that sent it, which is the same rule
+/// `probe.rs`'s `logo_url` already applies to a server's own logo. A notification's icon is that
+/// server's avatar; there is no legitimate reason for it to live anywhere else.
+fn safe_icon_url(url: &str, origin: Option<&str>) -> Option<String> {
+    let origin = origin?;
+    let parsed = url::Url::parse(url).ok()?;
+
+    if parsed.scheme() != "https" {
+        return None;
+    }
+
+    if !crate::model::is_same_origin(origin, &parsed) {
+        return None;
+    }
+
+    Some(clamp(url.to_string(), MAX_URL))
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Notification {
@@ -227,10 +252,14 @@ impl Feed {
     }
 
     /// Adds one notification. Returns false when it was dropped because the channel is muted.
+    ///
+    /// `origin` is the server this notification came from, and it is what any icon url in it has to
+    /// belong to — see `safe_icon_url`. `None` for Shiver's own entries, which carry no icon.
     pub fn push(
         &self,
         entry_id: &str,
         server_name: &str,
+        origin: Option<&str>,
         raw: RawNotification,
         muted: bool,
     ) -> bool {
@@ -289,7 +318,7 @@ impl Feed {
             channel_name: raw.channel_name.map(|name| clamp(name, MAX_CHANNEL_NAME)),
             author,
             body,
-            icon_url: raw.icon_url.map(|url| clamp(url, MAX_URL)),
+            icon_url: raw.icon_url.and_then(|url| safe_icon_url(&url, origin)),
             is_dm: raw.is_dm,
             at: now_ms(),
             read: false,
@@ -303,7 +332,9 @@ impl Feed {
 
     /// Drops any offer of a new version, for one the user has turned down.
     pub fn forget_updates(&self) {
-        self.state().notifications.retain(|entry| entry.update.is_none());
+        self.state()
+            .notifications
+            .retain(|entry| entry.update.is_none());
     }
 
     /// Offers a new version, replacing any offer already in the list.
@@ -344,6 +375,7 @@ impl Feed {
         entry_id: &str,
         server_name: &str,
         account_label: &str,
+        origin: Option<&str>,
         channels: Vec<DmChannel>,
     ) {
         let mut state = self.state();
@@ -360,7 +392,7 @@ impl Feed {
                 account_label: account_label.to_string(),
                 channel: DmChannel {
                     name: clamp(channel.name, MAX_AUTHOR),
-                    icon_url: channel.icon_url.map(|url| clamp(url, MAX_URL)),
+                    icon_url: channel.icon_url.and_then(|url| safe_icon_url(&url, origin)),
                     ..channel
                 },
             });
@@ -479,16 +511,11 @@ mod tests {
         (count > 0).then_some(count)
     }
 
-    fn dm(
-        feed: &Feed,
-        entry_id: &str,
-        channel_id: Option<i64>,
-        author: &str,
-        body: &str,
-    ) -> bool {
+    fn dm(feed: &Feed, entry_id: &str, channel_id: Option<i64>, author: &str, body: &str) -> bool {
         feed.push(
             entry_id,
             "server",
+            None,
             RawNotification {
                 channel_id,
                 channel_name: None,
@@ -515,7 +542,10 @@ mod tests {
     fn the_same_message_announced_twice_is_one_entry() {
         let feed = Feed::default();
 
-        assert!(dm(&feed, "a", Some(7), "Smiddy", "hello"), "the first is news");
+        assert!(
+            dm(&feed, "a", Some(7), "Smiddy", "hello"),
+            "the first is news"
+        );
         assert!(
             !dm(&feed, "a", Some(7), "Smiddy", "hello"),
             "the second is the same message by another route"
@@ -605,6 +635,7 @@ mod tests {
         feed.push(
             "a",
             "server",
+            None,
             RawNotification {
                 channel_id: Some(1),
                 channel_name: None,
@@ -657,6 +688,7 @@ mod tests {
         feed.push(
             entry_id,
             "server",
+            None,
             RawNotification {
                 channel_id,
                 channel_name: None,

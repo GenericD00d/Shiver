@@ -86,6 +86,9 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
     /** Where events go once Rust has asked for them. Null until then, and pushes are dropped. */
     private var events: Channel? = null
 
+    /** Whether the receiver is currently registered, so teardown does not unregister twice. */
+    private var registered = false
+
     private val prefs by lazy { activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
 
     /**
@@ -109,6 +112,12 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
             // else's broadcast. Without this an app could hand Shiver an endpoint of its own choosing
             // and have a server post to it.
             if (!knows(token)) return
+
+            // And the sender has to be the distributor the user actually chose. The token was the
+            // whole barrier, and a uuid is a real one — but any app that learns a token, including
+            // one the user tried as a distributor and switched away from, could otherwise hand
+            // Shiver an endpoint of its own and have the server post to it on every message.
+            if (!fromChosenDistributor(this, intent)) return
 
             when (intent.action) {
                 ACTION_NEW_ENDPOINT -> {
@@ -150,6 +159,38 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
             @Suppress("UnspecifiedRegisterReceiverFlag")
             activity.registerReceiver(receiver, filter)
         }
+
+        registered = true
+    }
+
+    /**
+     * Lets go of the receiver, and of the claim that a core is running.
+     *
+     * Neither used to happen. The receiver was registered against the Activity and never
+     * unregistered, which Android reports as a leak; and `PushState.running` was set on load and
+     * never cleared, so an Activity destroyed while the process stayed warm left it `true` with
+     * nothing behind it. `PushReceiver` then stayed silent because the flag said Shiver was up,
+     * and nothing else was listening — the user got no notification at all, which is the exact
+     * failure the two halves exist to avoid.
+     *
+     * **Cleared on destroy, not on backgrounding.** A backgrounded Shiver still has its core and
+     * its sockets, and is still the half that should be producing the precise notification; a flag
+     * cleared when the user switched apps would give them two notifications for every message.
+     */
+    override fun onDestroy() {
+        if (registered) {
+            try {
+                activity.unregisterReceiver(receiver)
+            } catch (ex: IllegalArgumentException) {
+                // already gone, which is not worth failing a teardown over
+            }
+
+            registered = false
+        }
+
+        PushState.running = false
+
+        super.onDestroy()
     }
 
     /**
@@ -159,6 +200,36 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
      * record of having asked. It is also what the cold-start receiver checks, for the same reason.
      */
     private fun knows(token: String) = prefs.contains("name:$token")
+
+    /**
+     * Whether this broadcast came from the distributor Shiver registered with.
+     *
+     * `sentFromPackage` is the direct answer and exists from API 34. Below that there is no way to
+     * ask, so the token stays the only guard there — stated rather than silently assumed.
+     */
+    private fun fromChosenDistributor(receiver: BroadcastReceiver, intent: Intent): Boolean {
+        val chosen = prefs.getString(KEY_DISTRIBUTOR, null) ?: return false
+
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            return true
+        }
+
+        val sender = try {
+            receiver.sentFromPackage()
+        } catch (ex: Exception) {
+            // only valid while the broadcast is being delivered; if it is not available, fall back
+            // to the token check alone rather than dropping a push the user is waiting for
+            null
+        }
+
+        if (sender != null && sender != chosen) {
+            android.util.Log.w("shiver", "ignoring a push broadcast from $sender")
+
+            return false
+        }
+
+        return true
+    }
 
     private fun emit(kind: String, token: String, endpoint: String?) {
         val payload = JSObject()
@@ -324,7 +395,11 @@ class PushReceiver : BroadcastReceiver() {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE)
             as? android.app.NotificationManager ?: return
 
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        // created once rather than on every push: after the first it is the user's to configure,
+        // and re-creating it each time is work for an answer that cannot change
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+            manager.getNotificationChannel(CHANNEL_ID) == null
+        ) {
             manager.createNotificationChannel(
                 android.app.NotificationChannel(
                     CHANNEL_ID,

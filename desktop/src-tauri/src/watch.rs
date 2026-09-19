@@ -39,13 +39,41 @@ use crate::{
     feed::{DmChannel, Feed, RawNotification},
     model::ServerEntry,
     secrets::{self, Secret},
-    store::Store,
+    store::{RegistryStore, Store},
     webviews,
 };
 
-/// How long to wait before trying a server that just failed. Matches mobile's, for the same reason:
-/// long enough not to hammer a server that is down, short enough to catch up quickly.
+/// How long to wait before the first retry of a server that just failed.
+///
+/// Long enough not to hammer a server that is down, short enough to catch up quickly.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
+
+/// And the longest that wait ever becomes.
+///
+/// The delay used to be a flat thirty seconds forever. Someone in thirty servers who loses
+/// connectivity then gets thirty simultaneous reconnects every thirty seconds until it comes back,
+/// and a server that is genuinely gone is retried at that rate for the life of the process.
+const RETRY_CEILING: Duration = Duration::from_secs(10 * 60);
+
+/// How long to wait after `attempt` consecutive failures, spread so a rail does not reconnect in
+/// lockstep.
+///
+/// The jitter is what stops thirty servers that all failed together from all retrying together —
+/// doubling alone keeps them synchronised, just less often.
+fn retry_delay(attempt: u32, entry_id: &str) -> Duration {
+    let backed_off = RETRY_AFTER
+        .saturating_mul(1u32 << attempt.min(5))
+        .min(RETRY_CEILING);
+
+    // derived from the entry id rather than drawn randomly, so this needs no rng dependency and a
+    // given server's offset is stable across its own retries
+    let spread = entry_id.bytes().fold(0u64, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(u64::from(byte))
+    });
+    let jitter = backed_off.as_millis() as u64 / 4;
+
+    backed_off + Duration::from_millis(if jitter == 0 { 0 } else { spread % jitter })
+}
 
 /// What each server was holding unread **when Shiver was last away**, above the floor.
 ///
@@ -89,6 +117,30 @@ impl ReadStates {
             .insert(entry_id.to_string(), states);
     }
 
+    /// Applies one channel's change in place.
+    ///
+    /// The watch loop used to keep its own copy, mutate that, and hand `set` a `clone()` of the
+    /// whole map — so every arriving message on every watched server allocated and copied a
+    /// `HashMap` with one entry per channel, in the message path. There is one map; this changes it.
+    pub(crate) fn apply(&self, entry_id: &str, change: impl FnOnce(&mut HashMap<i64, u32>)) {
+        let mut held = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        change(held.entry(entry_id.to_string()).or_default());
+    }
+
+    /// A copy of one entry's map, for the counting that has to happen outside the lock.
+    pub(crate) fn snapshot(&self, entry_id: &str) -> HashMap<i64, u32> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(entry_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// The map itself, for the counting that is tested without a runtime. Not `inner`: that is
     /// already a method on tauri's `State`, and the wrong one would be picked silently.
     pub(crate) fn map(&self) -> &Mutex<HashMap<String, HashMap<i64, u32>>> {
@@ -113,13 +165,19 @@ pub fn channel_read<R: Runtime>(app: &AppHandle<R>, entry_id: &str, channel_id: 
         let registry = store.registry();
 
         (
-            registry.baselines.get(entry_id).cloned().unwrap_or_default(),
+            registry
+                .baselines
+                .get(entry_id)
+                .cloned()
+                .unwrap_or_default(),
             registry
                 .muted
                 .iter()
                 .filter(|muted| muted.entry_id == entry_id)
                 .map(|muted| muted.channel_id)
-                .collect::<Vec<_>>(),
+                // a set: `unread_total` checks each channel against this once per channel, and a
+                // slice made that a scan of the whole mute list every time
+                .collect::<std::collections::HashSet<_>>(),
         )
     };
 
@@ -147,7 +205,7 @@ pub(crate) fn recount_without(
     entry_id: &str,
     channel_id: i64,
     floor: &HashMap<i64, u32>,
-    muted: &[i64],
+    muted: &std::collections::HashSet<i64>,
 ) -> bool {
     let states = {
         let mut held = read_states
@@ -190,7 +248,10 @@ impl Missed {
     }
 
     pub(crate) fn set(&self, entry_id: &str, count: usize) {
-        let mut state = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if count == 0 {
             state.remove(entry_id);
@@ -268,6 +329,17 @@ impl Watcher {
 /// Idempotent, so every caller can simply say "something changed" rather than working out what.
 /// Called when a server is opened or closed, added or removed, or signed in.
 pub fn sync(app: &AppHandle) {
+    // **One guard for the whole function.** It used to take and release the `Watcher` lock five
+    // separate times — once to work out what was unwanted, once per removal, once per
+    // `is_watching` check and once per insert — and it is called from six places with nothing
+    // serialising them. Two overlapping calls could both see "not watching", both spawn, and the
+    // second insert would drop the first `JoinHandle` on the floor. Dropping a handle does not
+    // abort the task, so the orphan held a socket for the life of the process and announced every
+    // message into the feed a second time, which is precisely what the page/socket split exists to
+    // prevent.
+    let held = app.state::<Watcher>();
+    let mut watching = held.state();
+
     let entries: Vec<ServerEntry> = app.state::<Store>().registry().servers.clone();
 
     let wanted: Vec<ServerEntry> = entries
@@ -283,21 +355,14 @@ pub fn sync(app: &AppHandle) {
         .filter(|entry| entry.identity.is_some())
         .collect();
 
-    let unwanted: Vec<String> = {
-        let held = app.state::<Watcher>();
-        let state = held.state();
-
-        state
-            .keys()
-            .filter(|entry_id| !wanted.iter().any(|entry| entry.id == **entry_id))
-            .cloned()
-            .collect()
-    };
+    let unwanted: Vec<String> = watching
+        .keys()
+        .filter(|entry_id| !wanted.iter().any(|entry| entry.id == **entry_id))
+        .cloned()
+        .collect();
 
     for entry_id in unwanted {
-        let task = app.state::<Watcher>().state().remove(&entry_id);
-
-        if let Some(task) = task {
+        if let Some(task) = watching.remove(&entry_id) {
             task.abort();
         }
 
@@ -309,7 +374,7 @@ pub fn sync(app: &AppHandle) {
     for entry in wanted {
         let entry_id = entry.id.clone();
 
-        if app.state::<Watcher>().is_watching(&entry_id) {
+        if watching.contains_key(&entry_id) {
             continue;
         }
 
@@ -320,13 +385,19 @@ pub fn sync(app: &AppHandle) {
             watch(handle, entry, id).await;
         });
 
-        app.state::<Watcher>().state().insert(entry_id, task);
+        // Aborted rather than dropped. A handle this replaces is a task still holding a socket, and
+        // letting it fall out of scope leaves it running — the guard above should make this
+        // unreachable, and it costs one line to make sure it stays that way.
+        if let Some(displaced) = watching.insert(entry_id, task) {
+            displaced.abort();
+        }
     }
 }
 
 /// Holds one server's connection open, reconnecting for as long as Shiver still wants it.
 async fn watch(app: AppHandle, entry: ServerEntry, entry_id: String) {
     let origin = entry.origin.clone();
+    let mut failures: u32 = 0;
 
     loop {
         // Asked for every attempt rather than once: this is what refreshes an expiring session from
@@ -386,14 +457,14 @@ async fn watch(app: AppHandle, entry: ServerEntry, entry_id: String) {
                     session.joined.shared_floor.clone(),
                 );
 
+                // connected, so the backoff starts again from the bottom
+                failures = 0;
+
                 app.state::<Plugins>()
                     .set(&entry_id, session.joined.plugin_version.clone());
                 app.state::<ReadStates>()
                     .set(&entry_id, session.joined.read_states.clone());
                 drain::notify_feed_changed(&app);
-
-                // kept live so a read reported by another device can be applied against it
-                let mut read_states = session.joined.read_states.clone();
 
                 while let Some(event) = session.next_event().await {
                     match event {
@@ -404,14 +475,16 @@ async fn watch(app: AppHandle, entry: ServerEntry, entry_id: String) {
                         // but **not** added to `Missed`: Shiver is running, so this message is
                         // already in the feed, and the rail adds the two.
                         sharkord::Event::Unread { channel_id, delta } => {
-                            sharkord::apply_delta(&mut read_states, channel_id, delta);
-                            app.state::<ReadStates>().set(&entry_id, read_states.clone());
+                            app.state::<ReadStates>().apply(&entry_id, |states| {
+                                sharkord::apply_delta(states, channel_id, delta)
+                            });
                         }
                         // The user read that channel somewhere else. This is the one event that
                         // may lower what Shiver is claiming, so the count is worked out again.
                         sharkord::Event::UnreadSet { channel_id, count } => {
-                            sharkord::set_unread(&mut read_states, channel_id, count);
-                            app.state::<ReadStates>().set(&entry_id, read_states.clone());
+                            app.state::<ReadStates>().apply(&entry_id, |states| {
+                                sharkord::set_unread(states, channel_id, count)
+                            });
 
                             // **The server has told Shiver this channel was read**, wherever that
                             // happened — this machine, the phone, or a browser. It is the only
@@ -429,7 +502,7 @@ async fn watch(app: AppHandle, entry: ServerEntry, entry_id: String) {
                             count_missed(
                                 &app,
                                 &entry_id,
-                                &read_states,
+                                &app.state::<ReadStates>().snapshot(&entry_id),
                                 session.joined.shared_floor.clone(),
                             );
 
@@ -446,7 +519,7 @@ async fn watch(app: AppHandle, entry: ServerEntry, entry_id: String) {
             Err(sharkord::Error::Refused(reason)) => {
                 eprintln!("[shiver] {origin} refused Shiver's session ({reason})");
 
-                let _ = secrets::forget(Secret::Session, &entry_id);
+                let _ = secrets::forget_off_thread(Secret::Session, &entry_id).await;
             }
             // The one failure that will not come right by itself: the next attempt asks the same
             // question and gets the same oversized answer. Retried anyway — a server that trims
@@ -468,7 +541,11 @@ async fn watch(app: AppHandle, entry: ServerEntry, entry_id: String) {
         // server that had been up for an hour would be called offline immediately. See its doc.
         app.state::<Readiness>().disconnected(&entry_id);
 
-        tokio::time::sleep(RETRY_AFTER).await;
+        let wait = retry_delay(failures, &entry_id);
+
+        failures = failures.saturating_add(1);
+
+        tokio::time::sleep(wait).await;
     }
 }
 
@@ -510,12 +587,15 @@ fn report_too_large<R: Runtime>(app: &AppHandle<R>, entry_id: &str, size: usize)
     app.state::<Feed>().push(
         entry_id,
         &name,
+        // Shiver's own notice about this server, not the server's: no icon to check
+        None,
         crate::feed::RawNotification {
             channel_id: None,
             channel_name: None,
             author: "Shiver".into(),
             body: format!(
-                "{name} sent more in one message than Shiver accepts ({}), so it is not being                  watched. Allow larger messages from it in the rail's menu if you trust it.",
+                "{name} sent more in one message than Shiver accepts ({}), so it is not being \
+                 watched. Allow larger messages from it in the rail's menu if you trust it.",
                 megabytes(size)
             ),
             icon_url: None,
@@ -674,7 +754,8 @@ fn count_missed<R: Runtime>(
     let (local, muted) = {
         let registry = store.registry();
 
-        let muted: Vec<i64> = registry
+        // a set, for the same reason as everywhere else the mute list meets a per-channel loop
+        let muted: std::collections::HashSet<i64> = registry
             .muted
             .iter()
             .filter(|muted| muted.entry_id == entry_id)
@@ -717,7 +798,7 @@ fn count_missed<R: Runtime>(
 fn missed_since(
     read_states: &HashMap<i64, u32>,
     baseline: &HashMap<i64, u32>,
-    muted: &[i64],
+    muted: &std::collections::HashSet<i64>,
 ) -> usize {
     read_states
         .iter()
@@ -767,7 +848,9 @@ fn publish_dms(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
         .collect();
 
     app.state::<Feed>()
-        .set_dms(entry_id, &server_name, &account_label, channels);
+        // the socket path carries no icons of its own (`icon_url: None` above), so there is
+        // nothing here for an origin to vouch for
+        .set_dms(entry_id, &server_name, &account_label, None, channels);
 }
 
 /// Puts one message into the feed, which is where both the bell and the rail badge read it.
@@ -801,7 +884,8 @@ fn announce(
             return;
         };
 
-        let muted: Vec<i64> = registry
+        // a set, for the same reason as everywhere else the mute list meets a per-channel loop
+        let muted: std::collections::HashSet<i64> = registry
             .muted
             .iter()
             .filter(|muted| muted.entry_id == entry_id)
@@ -842,7 +926,8 @@ fn announce(
 
     if app
         .state::<Feed>()
-        .push(entry_id, &server_name, raw, is_muted)
+        // as above: a socket-borne message has no icon url attached
+        .push(entry_id, &server_name, None, raw, is_muted)
     {
         drain::notify_feed_changed(app);
     }
@@ -850,6 +935,12 @@ fn announce(
 
 #[cfg(test)]
 mod tests {
+    /// The mute list as the counting functions want it — a set, so a per-channel check is a lookup
+    /// rather than a scan of the whole list.
+    fn muted<const N: usize>(channels: [i64; N]) -> std::collections::HashSet<i64> {
+        channels.into_iter().collect()
+    }
+
     use std::collections::HashMap;
     use std::sync::Mutex;
 
@@ -878,7 +969,11 @@ mod tests {
     #[test]
     fn nothing_new_is_nothing_missed() {
         assert_eq!(
-            missed_since(&HashMap::from([(1, 5)]), &HashMap::from([(1, 5)]), &[]),
+            missed_since(
+                &HashMap::from([(1, 5)]),
+                &HashMap::from([(1, 5)]),
+                &muted([])
+            ),
             0
         );
     }
@@ -887,7 +982,11 @@ mod tests {
     fn only_what_arrived_above_the_floor_counts() {
         // the floor is why this is not just the server's own number: five were already there
         assert_eq!(
-            missed_since(&HashMap::from([(1, 8)]), &HashMap::from([(1, 5)]), &[]),
+            missed_since(
+                &HashMap::from([(1, 8)]),
+                &HashMap::from([(1, 5)]),
+                &muted([])
+            ),
             3
         );
     }
@@ -895,7 +994,11 @@ mod tests {
     #[test]
     fn a_channel_with_no_floor_counts_in_full() {
         assert_eq!(
-            missed_since(&HashMap::from([(7, 4)]), &HashMap::from([(1, 5)]), &[]),
+            missed_since(
+                &HashMap::from([(7, 4)]),
+                &HashMap::from([(1, 5)]),
+                &muted([])
+            ),
             4
         );
     }
@@ -905,16 +1008,27 @@ mod tests {
         // read on the phone, so the server now says less than the floor. A plain subtraction on a
         // u32 would wrap and badge the server with four billion unread.
         assert_eq!(
-            missed_since(&HashMap::from([(1, 2)]), &HashMap::from([(1, 5)]), &[]),
+            missed_since(
+                &HashMap::from([(1, 2)]),
+                &HashMap::from([(1, 5)]),
+                &muted([])
+            ),
             0
         );
     }
 
     #[test]
     fn muted_channels_are_not_counted() {
-        assert_eq!(missed_since(&HashMap::from([(1, 9)]), &HashMap::new(), &[1]), 0);
         assert_eq!(
-            missed_since(&HashMap::from([(1, 9), (2, 3)]), &HashMap::new(), &[1]),
+            missed_since(&HashMap::from([(1, 9)]), &HashMap::new(), &muted([1])),
+            0
+        );
+        assert_eq!(
+            missed_since(
+                &HashMap::from([(1, 9), (2, 3)]),
+                &HashMap::new(),
+                &muted([1])
+            ),
             3
         );
     }
@@ -940,7 +1054,7 @@ mod tests {
             "entry-1",
             77,
             &HashMap::new(),
-            &[],
+            &muted([]),
         );
 
         assert!(moved, "reading the one unread channel is a change");
@@ -956,8 +1070,19 @@ mod tests {
         let read_states = states("entry-1", &[(77, 1), (88, 2)]);
         let missed = counts("entry-1", 3);
 
-        assert!(recount_without(&read_states, &missed, "entry-1", 77, &HashMap::new(), &[]));
-        assert_eq!(badge(&missed), Some(2), "the other channel's two are still unread");
+        assert!(recount_without(
+            &read_states,
+            &missed,
+            "entry-1",
+            77,
+            &HashMap::new(),
+            &muted([])
+        ));
+        assert_eq!(
+            badge(&missed),
+            Some(2),
+            "the other channel's two are still unread"
+        );
     }
 
     #[test]
@@ -966,7 +1091,14 @@ mod tests {
         let missed = counts("entry-1", 1);
 
         // opening a channel nobody had written in must not redraw anything
-        assert!(!recount_without(&read_states, &missed, "entry-1", 999, &HashMap::new(), &[]));
+        assert!(!recount_without(
+            &read_states,
+            &missed,
+            "entry-1",
+            999,
+            &HashMap::new(),
+            &muted([])
+        ));
         assert_eq!(badge(&missed), Some(1));
     }
 
@@ -975,7 +1107,14 @@ mod tests {
         let read_states: Mutex<States> = Mutex::new(HashMap::new());
         let missed: Mutex<Counts> = Mutex::new(HashMap::new());
 
-        assert!(!recount_without(&read_states, &missed, "entry-1", 77, &HashMap::new(), &[]));
+        assert!(!recount_without(
+            &read_states,
+            &missed,
+            "entry-1",
+            77,
+            &HashMap::new(),
+            &muted([])
+        ));
         assert!(missed.lock().unwrap().is_empty());
     }
 
@@ -986,7 +1125,14 @@ mod tests {
         let missed = counts("entry-1", 1);
         let floor = HashMap::from([(88i64, 9u32)]);
 
-        assert!(recount_without(&read_states, &missed, "entry-1", 77, &floor, &[]));
+        assert!(recount_without(
+            &read_states,
+            &missed,
+            "entry-1",
+            77,
+            &floor,
+            &muted([]),
+        ));
         assert_eq!(
             badge(&missed),
             None,
@@ -1005,7 +1151,7 @@ mod tests {
         let now = HashMap::from([(77i64, 4u32)]);
 
         // three arrived while Shiver was away
-        assert_eq!(missed_since(&now, &floor, &[]), 3);
+        assert_eq!(missed_since(&now, &floor, &muted([])), 3);
 
         // and while it is running, two more arrive — they go to the feed, and the rail adds the
         // two halves. What must not happen is this figure growing to five on the next reconnect,
@@ -1013,7 +1159,7 @@ mod tests {
         let later = HashMap::from([(77i64, 6u32)]);
 
         assert_eq!(
-            missed_since(&later, &floor, &[]),
+            missed_since(&later, &floor, &muted([])),
             5,
             "the arithmetic itself is unchanged — `count_missed` is what must not run twice"
         );
@@ -1025,7 +1171,18 @@ mod tests {
         let read_states = states("entry-1", &[(77, 1), (88, 4)]);
         let missed = counts("entry-1", 5);
 
-        assert!(recount_without(&read_states, &missed, "entry-1", 77, &HashMap::new(), &[88]));
-        assert_eq!(badge(&missed), None, "the only unmuted unread was the one read");
+        assert!(recount_without(
+            &read_states,
+            &missed,
+            "entry-1",
+            77,
+            &HashMap::new(),
+            &muted([88])
+        ));
+        assert_eq!(
+            badge(&missed),
+            None,
+            "the only unmuted unread was the one read"
+        );
     }
 }

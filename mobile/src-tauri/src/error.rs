@@ -22,7 +22,6 @@ pub enum Error {
     NotSharkord(String),
 
     // `TooLarge` lives in `shiver-sharkord`, which is the only thing that can raise it.
-
     #[error("Could not save your servers: {0}")]
     Storage(String),
 
@@ -38,6 +37,17 @@ pub enum Error {
 impl Serialize for Error {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.to_string())
+    }
+}
+
+/// The shared crate raises only the two kinds it knows about, and each maps straight onto one of
+/// this client's own.
+impl From<shiver_core::Error> for Error {
+    fn from(value: shiver_core::Error) -> Self {
+        match value {
+            shiver_core::Error::InvalidOrigin(message) => Error::InvalidOrigin(message),
+            shiver_core::Error::Storage(message) => Error::Storage(message),
+        }
     }
 }
 

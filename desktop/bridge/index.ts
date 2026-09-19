@@ -220,6 +220,39 @@ declare global {
   }
 }
 
+/**
+ * Defines one of Shiver's hooks so the page cannot replace it.
+ *
+ * These are ordinary `window` properties, and the core acts on whatever they return: the drain
+ * feeds the notification inbox and the mute list, and one of its fields makes Shiver's own panel
+ * ask the user for this server's password. A page that reassigns one is a page writing directly
+ * into Shiver's trusted chrome.
+ *
+ * Non-writable and non-configurable, so a later assignment throws in strict mode and is ignored
+ * otherwise, rather than quietly winning.
+ */
+function defineHook<K extends keyof Window>(name: K, value: Window[K]) {
+  try {
+    // Cleared first. On desktop the bridge is an initialization script and there is never anything
+    // here; on mobile it is evaluated after the page has loaded, so a page's own script may have
+    // got here first and `defineProperty` over a non-configurable property would throw.
+    delete window[name];
+
+    Object.defineProperty(window, name, {
+      value,
+      writable: false,
+      configurable: false,
+      enumerable: false
+    });
+  } catch {
+    // Either this ran twice — in which case the existing definition is ours and is the one to keep
+    // — or a page locked the name before the bridge was evaluated, which only mobile's late
+    // injection makes possible. The core treats what it reads back out of a page as a request
+    // rather than a fact, and rations what it acts on, so the second case costs the hook rather
+    // than the boundary.
+  }
+}
+
 function install(shiver: ShiverConfig) {
   seedAutoLogin(shiver.token);
 
@@ -267,21 +300,21 @@ function install(shiver: ShiverConfig) {
     openDmFailure = name;
   };
 
-  window.__SHIVER_SET_MUTED__ = (next) => {
+  defineHook('__SHIVER_SET_MUTED__', (next) => {
     muted = new Set(next);
     paintMuted(mutedNames());
 
     // keep the server's copy in step with whatever Shiver just decided
     pushMutesToPlugin([...muted]);
-  };
+  });
 
-  window.__SHIVER_SET_VOICE_LOCK__ = (locked) => setVoiceLocked(locked);
-  window.__SHIVER_VOICE__ = (action) => runVoiceAction(action);
-  window.__SHIVER_MARK_ALL_READ__ = () => markAllChannelsRead(state);
+  defineHook('__SHIVER_SET_VOICE_LOCK__', (locked) => setVoiceLocked(locked));
+  defineHook('__SHIVER_VOICE__', (action) => runVoiceAction(action));
+  defineHook('__SHIVER_MARK_ALL_READ__', () => markAllChannelsRead(state));
 
   // the core takes everything queued since the last call and clears it, so nothing is delivered
   // twice and a page that is never drained cannot grow without bound
-  window.__SHIVER_DRAIN__ = () => {
+  defineHook('__SHIVER_DRAIN__', () => {
     const pendingDms = dms;
     const pendingSynced = syncedMutes;
 
@@ -308,13 +341,13 @@ function install(shiver: ShiverConfig) {
         openDmChannelId(state) ??
         (typeof state.selectedChannelId === 'number' ? state.selectedChannelId : null)
     };
-  };
+  });
 
-  window.__SHIVER_OPEN_DM__ = (name) => openDirectMessage(name);
-  window.__SHIVER_SELECT_CHANNEL__ = (channelId) => selectChannelWhenReady(channelId);
-  window.__SHIVER_SET_READ_FLOOR__ = (floor) => void storeReadFloor(floor);
-  window.__SHIVER_SET_DM_MODE__ = (enabled) => setDmMode(enabled);
-  window.__SHIVER_SET_THEME__ = (theme) => setTheme(theme);
+  defineHook('__SHIVER_OPEN_DM__', (name) => openDirectMessage(name));
+  defineHook('__SHIVER_SELECT_CHANNEL__', (channelId) => selectChannelWhenReady(channelId));
+  defineHook('__SHIVER_SET_READ_FLOOR__', (floor) => void storeReadFloor(floor));
+  defineHook('__SHIVER_SET_DM_MODE__', (enabled) => setDmMode(enabled));
+  defineHook('__SHIVER_SET_THEME__', (theme) => setTheme(theme));
 
   captureNotifications(queue, lastSeen, () => state, () => muted);
 
@@ -391,8 +424,8 @@ function installConversationView(shiver: ShiverConfig) {
     openDmFailure = name;
   };
 
-  window.__SHIVER_OPEN_DM__ = (name) => openDirectMessage(name);
-  window.__SHIVER_SET_THEME__ = (theme) => setTheme(theme);
+  defineHook('__SHIVER_OPEN_DM__', (name) => openDirectMessage(name));
+  defineHook('__SHIVER_SET_THEME__', (theme) => setTheme(theme));
 
   // Still drained, for two things. A conversation Shiver could not open is reported rather than
   // silently missed — and **which conversation is on screen**, which is the one fact only this page
@@ -402,7 +435,7 @@ function installConversationView(shiver: ShiverConfig) {
   // for one server would double every notification and fight over the inbox. `viewingChannelId` is
   // not one of those: it is not a notification, and the core reads it from this page alone — see
   // `mark_read_conversation_read` in `drain.rs`.
-  window.__SHIVER_DRAIN__ = () => {
+  defineHook('__SHIVER_DRAIN__', () => {
     const pendingFailure = openDmFailure;
 
     openDmFailure = null;
@@ -426,7 +459,7 @@ function installConversationView(shiver: ShiverConfig) {
           ? (window.__SHARKORD_STORE__?.getState().selectedChannelId as number)
           : null
     };
-  };
+  });
 
   whenDocumentReady(() => {
     if (shiver.theme) applyTheme(shiver.theme);
@@ -689,13 +722,13 @@ function installSoundVolume(percent: number) {
     return connect.call(this, destination as AudioNode, output, input);
   } as AudioNode['connect'];
 
-  window.__SHIVER_SET_SOUND_VOLUME__ = (next: number) => {
+  defineHook('__SHIVER_SET_SOUND_VOLUME__', (next: number) => {
     level = toLevel(next);
 
     for (const gain of masters) {
       gain.gain.value = level;
     }
-  };
+  });
 }
 
 const TOP_BAR_RESERVE_ID = 'shiver-topbar-reserve';
@@ -1558,7 +1591,7 @@ function setVoiceLocked(locked: boolean) {
 /**
  * Refuses a voice join while another server holds the call.
  *
- * DESIGN.md asks that a user in server A cannot join voice in server B. Undoing it afterwards was
+ * A user in a call on server A cannot join voice on server B. Undoing it afterwards was
  * the alternative, and it would mean genuinely joining first: two live mediasoup sessions, both
  * servers seeing the user arrive, and one of them then seeing them vanish. Refusing the click is
  * the only version where the second join never happens.
@@ -2244,39 +2277,77 @@ function applyTheme({ themeColor, accentColor, textColor }: ShiverTheme) {
   const foreground = textColor ?? (isLightColor(themeColor) ? '#171717' : '#fafafa');
   const dim = `color-mix(in srgb, ${foreground} 65%, ${themeColor})`;
 
-  ensureStyle(THEME_STYLE_ID).textContent = `
-:root, .dark {
-  --background: ${themeColor} !important;
-  --foreground: ${foreground} !important;
-  --sidebar: ${lift(90)} !important;
-  --sidebar-foreground: ${foreground} !important;
-  --card: ${lift(90)} !important;
-  --card-foreground: ${foreground} !important;
-  --popover: ${lift(88)} !important;
-  --popover-foreground: ${foreground} !important;
-  --muted-foreground: ${dim} !important;
-  --muted: ${lift(84)} !important;
-  --secondary: ${lift(84)} !important;
-  --accent: ${lift(80)} !important;
-  --accent-foreground: ${foreground} !important;
-  --sidebar-accent: ${lift(80)} !important;
-  --input: ${lift(78)} !important;
-  --border: color-mix(in srgb, ${foreground} 12%, transparent) !important;
-  --sidebar-border: color-mix(in srgb, ${foreground} 12%, transparent) !important;
-  --primary: ${accentColor} !important;
-  --primary-foreground: ${isLightColor(accentColor) ? '#171717' : '#fafafa'} !important;
-  --sidebar-primary: ${accentColor} !important;
-  --ring: ${accentColor} !important;
-  --sidebar-ring: ${accentColor} !important;
-}
-`;
+  const variables: Record<string, string> = {
+    '--background': themeColor,
+    '--foreground': foreground,
+    '--sidebar': lift(90),
+    '--sidebar-foreground': foreground,
+    '--card': lift(90),
+    '--card-foreground': foreground,
+    '--popover': lift(88),
+    '--popover-foreground': foreground,
+    '--muted-foreground': dim,
+    '--muted': lift(84),
+    '--secondary': lift(84),
+    '--accent': lift(80),
+    '--accent-foreground': foreground,
+    '--sidebar-accent': lift(80),
+    '--input': lift(78),
+    '--border': `color-mix(in srgb, ${foreground} 12%, transparent)`,
+    '--sidebar-border': `color-mix(in srgb, ${foreground} 12%, transparent)`,
+    '--primary': accentColor,
+    '--primary-foreground': isLightColor(accentColor) ? '#171717' : '#fafafa',
+    '--sidebar-primary': accentColor,
+    '--ring': accentColor,
+    '--sidebar-ring': accentColor
+  };
+
+  // Set through the CSSOM rather than built as a string. Interpolating these into a `<style>`
+  // element's `textContent` meant a value containing `}` closed the rule block and everything
+  // after it became arbitrary CSS in this page; `setProperty` has no such seam — a malformed value
+  // is rejected by the parser and the property keeps what it had.
+  for (const rule of themeRules()) {
+    for (const [name, value] of Object.entries(variables)) {
+      rule.style.setProperty(name, value, 'important');
+    }
+  }
 }
 
-/** Relative luminance, matching Shiver's own `theme.ts` so both sides pick the same foreground. */
+/**
+ * The two empty rules `applyTheme` writes into, created once.
+ *
+ * `:root` and `.dark`, because Sharkord renders its app under a hard-coded `dark` class and
+ * Shiver's overrides have to win on specificity rather than on order alone.
+ */
+function themeRules(): CSSStyleRule[] {
+  const style = ensureStyle(THEME_STYLE_ID) as HTMLStyleElement;
+  const sheet = style.sheet;
+
+  if (!sheet) return [];
+
+  if (sheet.cssRules.length === 0) {
+    sheet.insertRule(':root {}', 0);
+    sheet.insertRule('.dark {}', 1);
+  }
+
+  return Array.from(sheet.cssRules).filter(
+    (rule): rule is CSSStyleRule => rule instanceof CSSStyleRule
+  );
+}
+
+/**
+ * Relative luminance, matching Shiver's own `theme.ts` so both sides pick the same foreground.
+ *
+ * **Including the fallback**, which is the half that did not match: this returned `false` where
+ * `theme.ts` returns `true`, so anything that is not exactly six hex digits — a `#fff` shorthand,
+ * a value hand-edited into `servers.json` — gave Shiver's chrome the light-background foreground
+ * and the server page the dark one. Opposite text colours in the two halves of one window, under a
+ * comment asserting they agreed.
+ */
 function isLightColor(hex: string) {
   const value = hex.replace('#', '');
 
-  if (value.length !== 6) return false;
+  if (value.length !== 6) return true;
 
   const channel = (offset: number) => {
     const srgb = parseInt(value.slice(offset, offset + 2), 16) / 255;
@@ -2295,7 +2366,11 @@ function setTheme(theme: ShiverTheme | null) {
     return;
   }
 
-  ensureStyle(THEME_STYLE_ID).textContent = '';
+  // back to Sharkord's own colours: the rules stay, emptied, so nothing has to be rebuilt if
+    // the user picks a theme again
+    for (const rule of themeRules()) {
+      while (rule.style.length > 0) rule.style.removeProperty(rule.style.item(0));
+    }
 }
 
 /**
@@ -2675,10 +2750,10 @@ a.${ATTACHMENT_MINIMISED} > [class~="flex-1"] { display: none; }
 
   new MutationObserver(paint).observe(document.body, { childList: true, subtree: true });
 
-  window.__SHIVER_SET_ATTACHMENT_CARDS__ = (next: boolean) => {
+  defineHook('__SHIVER_SET_ATTACHMENT_CARDS__', (next: boolean) => {
     on = next;
     paint();
-  };
+  });
 }
 
 const VOICE_COLORS_ID = 'shiver-voice-colors';
@@ -2805,7 +2880,28 @@ const config = window.__SHIVER__;
 // scripts and nothing of the server's ever sees the global at all.
 delete window.__SHIVER__;
 
-if (config) {
+/**
+ * The bridge runs in the page, and only in the page.
+ *
+ * Whether an initialization script reaches cross-origin subframes is wry's business and differs by
+ * platform — on WebView2 the underlying `AddScriptToExecuteOnDocumentCreated` is an all-frames API
+ * by nature. If it does reach them, `seedAutoLogin` writes this server's session token into the
+ * `localStorage` of every origin the page happens to embed.
+ *
+ * One comparison removes the dependency on someone else's implementation detail entirely, and a
+ * subframe has nothing to do here in any case: the rail, the bell and the drain are all about the
+ * document the user is looking at.
+ */
+const isTopFrame = (() => {
+  try {
+    return window.top === window.self;
+  } catch {
+    // a cross-origin parent makes `window.top` throw, which is itself the answer
+    return false;
+  }
+})();
+
+if (config && isTopFrame) {
   try {
     install(config);
   } catch (error) {

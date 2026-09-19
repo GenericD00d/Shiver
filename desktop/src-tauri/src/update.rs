@@ -23,7 +23,7 @@ use tauri_plugin_updater::UpdaterExt;
 
 use crate::error::{Error, Result};
 use crate::feed::Feed;
-use crate::store::Store;
+use crate::store::{RegistryStore, Store};
 
 /// How long after launch the first check happens.
 ///
@@ -111,7 +111,14 @@ async fn look(app: &AppHandle) {
 
             // The user has seen this one and said no. Not "no updates" — a release after it is news
             // again — just not this one, and not every six hours for as long as Shiver is open.
-            if app.state::<Store>().registry().settings.skipped_update.as_deref() == Some(&version) {
+            if app
+                .state::<Store>()
+                .registry()
+                .settings
+                .skipped_update
+                .as_deref()
+                == Some(&version)
+            {
                 return;
             }
 

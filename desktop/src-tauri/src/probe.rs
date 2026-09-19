@@ -14,14 +14,9 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// This runs in rust rather than in a webview on purpose: it needs no session, it is not subject
 /// to CORS, and it must not run inside another server's page.
 pub async fn fetch_info(origin: &str) -> Result<ServerInfo> {
-    let client = reqwest::Client::builder()
-        .timeout(PROBE_TIMEOUT)
-        // Nowhere but the address the user typed. `reqwest` follows redirects by default, which
-        // would let a server point Shiver's own request at anything — a host on the user's network,
-        // or a third party that would learn the device's address from being contacted.
-        .redirect(reqwest::redirect::Policy::none())
-        .user_agent(concat!("Shiver/", env!("CARGO_PKG_VERSION")))
-        .build()
+    // Nowhere but the address the user typed, and no more of the answer than a `/info` can
+    // honestly be — see `http`.
+    let client = crate::http::client(PROBE_TIMEOUT)
         .map_err(|error| Error::Unreachable(error.to_string()))?;
 
     let response = client
@@ -34,10 +29,9 @@ pub async fn fetch_info(origin: &str) -> Result<ServerInfo> {
         return Err(Error::NotSharkord(origin.to_string()));
     }
 
-    let body: Value = response
-        .json()
+    let body: Value = crate::http::json_within_limit(response)
         .await
-        .map_err(|_| Error::NotSharkord(origin.to_string()))?;
+        .ok_or_else(|| Error::NotSharkord(origin.to_string()))?;
 
     // serverId and name are the two fields every Sharkord /info returns, so their absence is how
     // Shiver tells a Sharkord server from any other host that happens to answer on /info

@@ -4,12 +4,19 @@
 //! Shiver here is a switcher rather than a shell: the webview shows either Shiver's own pages or one
 //! server's client, and opening a server is a navigation.
 //!
-//! That removes the desktop client's central problem and replaces it with a smaller one. On desktop
-//! the bridge *must* run before the page's own scripts, because it seeds the session that stops the
-//! login page appearing. Here there is no session to seed — `keyring` has no Android backend, so
-//! Shiver holds no credentials and Sharkord's own auto-login does that job from the webview's own
-//! storage. So the bridge has nothing timing-critical to do, and is evaluated after the page loads
-//! rather than injected before it. One webview, no recreation, no initialization script.
+//! That removes the desktop client's central problem and replaces it with a smaller one.
+//!
+//! **Mobile does hold credentials**, contrary to what this file used to say. `keyring` has no
+//! Android backend, so Shiver brings its own: `tauri-plugin-shiver-secrets` keeps the session — and
+//! the password, when the user asks it to — in `EncryptedSharedPreferences`, with the master key in
+//! the Android Keystore. `install_bridge` below seeds that session into the page exactly as desktop
+//! does.
+//!
+//! What is different is *when*. Desktop injects the bridge as an initialization script because it
+//! has to beat the page's own scripts to `localStorage`. Here the bridge is evaluated after the
+//! page loads, which means the page's scripts run first and define the environment the bridge then
+//! finds — so nothing the bridge reads back out of a page (`read_mutes`) may be treated as more
+//! than a request. One webview, no recreation, no initialization script.
 
 use std::sync::Mutex;
 
@@ -18,6 +25,7 @@ use tauri::{AppHandle, Manager, Url, WebviewWindow};
 
 use tauri_plugin_shiver_secrets::SecretsExt;
 
+use crate::store::RegistryStore;
 use crate::{
     error::{Error, Result},
     model::{is_same_origin, ServerEntry, Settings},
@@ -26,6 +34,45 @@ use crate::{
 pub const MAIN_WINDOW: &str = "main";
 
 const BRIDGE_SOURCE: &str = include_str!("../generated/bridge.js");
+
+/// How many links one page may have opened in the browser recently.
+///
+/// The bridge leaves addresses for the core to open, because Android's webview refuses to make the
+/// new window Sharkord asks for. Those addresses come from the page, and `read_mutes` polls for
+/// them on a timer — so a page that queues hundreds turns this into a stream of browser tabs, with
+/// no user gesture anywhere in it.
+///
+/// Desktop already ships exactly this guard (`drain.rs`, `Openings`). Mobile polls the same way and
+/// had no limit at all, which is the whole of the difference.
+#[derive(Default)]
+pub struct Openings(Mutex<Vec<std::time::Instant>>);
+
+/// The most links one poll may open. A tap opens one, so this is generous.
+const OPEN_PER_TICK: usize = 5;
+
+/// And the most within `OPEN_WINDOW`, so a page cannot simply queue again at the next poll.
+const OPEN_PER_WINDOW: usize = 10;
+const OPEN_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl Openings {
+    /// How many more may be opened now, forgetting whatever has aged out of the window.
+    fn allowance(&self) -> usize {
+        let mut recent = self.0.lock().unwrap_or_else(|e| e.into_inner());
+
+        recent.retain(|at| at.elapsed() < OPEN_WINDOW);
+
+        OPEN_PER_WINDOW
+            .saturating_sub(recent.len())
+            .min(OPEN_PER_TICK)
+    }
+
+    fn record(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(std::time::Instant::now());
+    }
+}
 
 /// Where Shiver's own pages live, and which server the webview is on.
 ///
@@ -257,8 +304,8 @@ pub fn show_shiver(app: &AppHandle) -> Result<()> {
         ));
     };
 
-    let url =
-        Url::parse(&home).map_err(|_| Error::Webview("Shiver's own address is unreadable".into()))?;
+    let url = Url::parse(&home)
+        .map_err(|_| Error::Webview("Shiver's own address is unreadable".into()))?;
 
     app.state::<Showing>().set_server(None);
 
@@ -474,9 +521,27 @@ pub fn read_mutes(app: &AppHandle, entry_id: &str) {
             // new window, which Android's webview refuses to make, so the bridge catches the click
             // and leaves the address here — the browser is where those belong anyway, and it is
             // where every other link out of Sharkord already goes.
-            for address in open {
+            //
+            // Rationed, because Shiver is doing this on a page's word and this is a poll rather
+            // than a click. See `Openings`.
+            let allowance = inner.state::<Openings>().allowance();
+
+            if open.len() > allowance {
+                // said out loud: dropping what a page asked for reads as a broken link rather than
+                // as a limit being applied
+                eprintln!(
+                    "[shiver] {} asked to open {} addresses, opening {allowance} — the rest dropped",
+                    id,
+                    open.len()
+                );
+            }
+
+            for address in open.into_iter().take(allowance) {
                 match url::Url::parse(&address) {
-                    Ok(url) => crate::open_externally(&inner, &url),
+                    Ok(url) => {
+                        inner.state::<Openings>().record();
+                        crate::open_externally(&inner, &url);
+                    }
                     Err(error) => eprintln!("[shiver] the page asked to open {address}: {error}"),
                 }
             }

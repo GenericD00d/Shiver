@@ -89,6 +89,35 @@ const adoptOldStore = async (ctx) => {
   }
 };
 
+/**
+ * Reads every user's row once and hands each one to whoever wants it.
+ *
+ * The cost is one read per user on a server that has never used either feature, which is the price
+ * of there being no "who has data" query. It is paid at load rather than per message, and a server
+ * with nothing stored ends up doing no per-message work at all.
+ */
+const primeFromUserRows = async (ctx, takers) => {
+  let users;
+
+  try {
+    users = await ctx.users.list();
+  } catch (error) {
+    ctx.logger.debug(`Could not list users to read Shiver's stored settings: ${error?.message}`);
+
+    return;
+  }
+
+  const rows = await Promise.all(
+    users.map(async (user) => [user.id, await ctx.userData.get(user.id).catch(() => null)])
+  );
+
+  for (const [userId, stored] of rows) {
+    for (const take of takers) take(userId, stored);
+  }
+
+  for (const take of takers) take.done?.();
+};
+
 /** Subscriptions to drop on unload, so a reload does not end up with two of everything. */
 let stop = [];
 
@@ -104,8 +133,10 @@ const onLoad = async (ctx) => {
   const push = createPush(ctx);
   const statuses = createStatuses(ctx);
 
-  await push.start();
-  await statuses.start();
+  // **One pass over the rows, not two.** Both of these want the same row of every user, and each
+  // used to walk `ctx.users.list()` and await a read per user on its own — so a server paid for
+  // every row twice at every load, sequentially, for two maps that could be filled together.
+  await primeFromUserRows(ctx, [push.adopt, statuses.adopt]);
 
   /**
    * A line the user writes about themselves, shown beside their name to everyone.

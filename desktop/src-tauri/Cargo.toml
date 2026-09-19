@@ -23,12 +23,19 @@ tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 # the Sharkord protocol itself, shared with mobile so there is one transcription of it
 shiver-sharkord = { path = "../../shared/sharkord-client" }
+# the origin rules and the registry store, shared so there is one copy of each rather than two
+shiver-core = { path = "../../shared/shiver-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# streaming an http body so a bounded amount of it can be read — see `src/http.rs`
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+# the password crosses ipc as a String and is copied on the way to the server; this is what
+# clears those copies rather than leaving them in freed heap for a core dump to pick up
+zeroize = { version = "1", features = ["derive"] }
 thiserror = "2"
 
 # the os credential store has no android/ios backend, so secrets are keychain-backed on desktop only
