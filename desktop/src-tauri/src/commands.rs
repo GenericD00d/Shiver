@@ -16,10 +16,24 @@ use crate::{
     probe,
     secrets::{self, Secret},
     session::Recovery,
-    store::Store,
+    store::{RegistryStore, Store},
     voice::{VoiceState, VoiceStatus},
     webviews,
 };
+
+/// Takes back the password Shiver is holding for one server.
+///
+/// The counterpart to keeping it by default. Shiver stops asking permission at the add screen, so
+/// it owes the user a way to undo that afterwards — and this is it, on the server's own menu beside
+/// logging out.
+///
+/// The session is left alone: forgetting the password means "stop signing me in again", not "sign
+/// me out now". What follows is simply the old behaviour — the server goes quiet when its week is
+/// up, and asks to be signed in.
+#[tauri::command]
+pub async fn forget_password(id: String) -> Result<()> {
+    secrets::forget_off_thread(Secret::Password, &id).await
+}
 
 /// Forgets the camera and microphone answers WebView2 has stored for every server.
 ///
@@ -34,24 +48,10 @@ use crate::{
 /// handler delivered on the main thread's message loop, and the wait for it is a blocking one. A
 /// synchronous `#[tauri::command]` runs on the main thread — so it would be the thing holding up
 /// the very loop that has to deliver the answer, which is the deadlock this project already met
-/// once when creating webviews (item 3). The visible form was a ten-second hang, "the webview did
-/// not answer in time", and the permissions cleared anyway the moment the main thread was let go.
+/// once when creating webviews. The visible form was a ten-second hang, "the webview did not answer
+/// in time", and the permissions cleared anyway the moment the main thread was let go.
 ///
 /// `spawn_blocking` rather than a bare `async fn` because the wait really does block its thread,
-/// Takes back the password Shiver is holding for one server.
-///
-/// The counterpart to keeping it by default. Shiver stops asking permission at the add screen, so
-/// it owes the user a way to undo that afterwards — and this is it, on the server's own menu beside
-/// logging out.
-///
-/// The session is left alone: forgetting the password means "stop signing me in again", not "sign
-/// me out now". What follows is simply the old behaviour — the server goes quiet when its week is
-/// up, and asks to be signed in.
-#[tauri::command]
-pub fn forget_password(id: String) -> Result<()> {
-    secrets::forget(Secret::Password, &id)
-}
-
 /// and the async runtime's workers are not there to be sat on.
 #[tauri::command]
 pub async fn reset_media_permissions(app: AppHandle) -> Result<usize> {
@@ -214,10 +214,10 @@ pub async fn add_server(
     })?;
 
     if let Some((_, password, token)) = credentials {
-        secrets::store(Secret::Session, &entry.id, &token)?;
+        secrets::store_off_thread(Secret::Session, &entry.id, &token).await?;
 
         if remember_password != Some(false) {
-            secrets::store(Secret::Password, &entry.id, &password)?;
+            secrets::store_off_thread(Secret::Password, &entry.id, &password).await?;
         }
     }
 
@@ -225,6 +225,15 @@ pub async fn add_server(
     crate::watch::sync(&app);
 
     Ok(entry)
+}
+
+/// Drops both of a server's secrets, off the async runtime's workers.
+///
+/// `keyring` is synchronous and on Linux talks to the Secret Service over D-Bus, which can block
+/// for a long time and may put a keyring-unlock prompt in front of the user. `reset_media_permissions`
+/// already learned this lesson the expensive way; the credential calls are the same hazard.
+async fn forget_secrets(id: &str) -> Result<()> {
+    secrets::forget_all_off_thread(id).await
 }
 
 /// Removes a server and everything Shiver knows about the user on it.
@@ -237,9 +246,16 @@ pub async fn remove_server(
 ) -> Result<()> {
     webviews::close_server(&app, &id)?;
 
+    // **And the conversation view.** It is a second, independently signed-in client for the same
+    // server, and `close_server` only ever closed the first one — so removing a server left a live
+    // authenticated page holding that session in its own storage, for a server that is no longer in
+    // the rail, with the keychain entry it was built from deleted a few lines below. Nothing would
+    // ever have cleaned it up.
+    webviews::close_dm_view(&app, &id);
+
     // secrets go before the entry does, so a failure here cannot leave a credential behind for a
     // server that is no longer in the rail
-    secrets::forget_all(&id)?;
+    forget_secrets(&id).await?;
     feed.forget_entry(&id);
 
     app.state::<VoiceState>().forget_entry(&id);
@@ -252,6 +268,11 @@ pub async fn remove_server(
 
         registry.servers.retain(|server| server.id != id);
         registry.muted.retain(|muted| muted.entry_id != id);
+
+        // The unread floor for a server that is gone. It has one writer and had no remover at all,
+        // so `servers.json` kept a per-channel record of every server the user had ever added —
+        // growing without bound, and outliving the removal that was supposed to forget it.
+        registry.baselines.remove(&id);
 
         if registry.servers.len() == before {
             return Err(Error::UnknownServer);
@@ -356,7 +377,7 @@ pub fn create_folder_with(
 
         let folder = Folder {
             id: Uuid::new_v4().to_string(),
-            name: name.trim().to_string(),
+            name: clamp_name(&name)?,
             position,
             expanded: true,
         };
@@ -428,13 +449,19 @@ pub fn set_server_folder(
     })
 }
 
+/// Makes an empty folder at the end of the rail.
+///
+/// `next_position` rather than `folders.len()`. Folders and servers share one position space —
+/// that is what lets a folder be dragged above a server — so numbering a new folder by how many
+/// folders exist put it at a position some server already held, and the two sat in an undecided
+/// order until the next drag rewrote both.
 #[tauri::command]
 pub fn create_folder(store: State<'_, Store>, name: String) -> Result<Folder> {
     store.update(|registry| {
         let folder = Folder {
             id: Uuid::new_v4().to_string(),
-            name: name.trim().to_string(),
-            position: registry.folders.len() as i32,
+            name: clamp_name(&name)?,
+            position: next_position(registry),
             expanded: true,
         };
 
@@ -453,7 +480,7 @@ pub fn rename_folder(store: State<'_, Store>, id: String, name: String) -> Resul
             .find(|folder| folder.id == id)
             .ok_or(Error::UnknownFolder)?;
 
-        folder.name = name.trim().to_string();
+        folder.name = clamp_name(&name)?;
 
         Ok(())
     })
@@ -644,7 +671,9 @@ pub fn app_version() -> &'static str {
 
 #[tauri::command]
 pub fn get_settings(store: State<'_, Store>) -> Settings {
-    store.registry().settings.clone()
+    // sanitised on the way out too: `servers.json` is a file, and a value hand-edited into it has
+    // never been past `update_settings`
+    store.registry().settings.clone().sanitised()
 }
 
 #[tauri::command]
@@ -661,10 +690,12 @@ pub async fn update_settings(
         let last_server_id = registry.settings.last_server_id.clone();
         let skipped_update = registry.settings.skipped_update.clone();
 
+        // Sanitised rather than taken as given. The colours end up interpolated into a stylesheet
+        // in every server's page, and this command is the door they come in through.
         registry.settings = Settings {
             last_server_id,
             skipped_update,
-            ..settings
+            ..settings.sanitised()
         };
 
         Ok(registry.settings.clone())
@@ -728,7 +759,7 @@ pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<
 /// Never fails the caller: if Shiver cannot get a session, the server's own login page is a perfectly
 /// good fallback and is what the user would otherwise have seen anyway.
 pub(crate) async fn ensure_session(entry: &ServerEntry) -> Option<String> {
-    let stored = secrets::read(Secret::Session, &entry.id).ok().flatten();
+    let stored = secrets::read_off_thread(Secret::Session, &entry.id).await;
 
     if let Some(token) = &stored {
         if !jwt::needs_refresh(token) {
@@ -737,11 +768,12 @@ pub(crate) async fn ensure_session(entry: &ServerEntry) -> Option<String> {
     }
 
     let identity = entry.identity.as_deref()?;
-    let password = secrets::read(Secret::Password, &entry.id).ok().flatten()?;
+    let password = secrets::read_off_thread(Secret::Password, &entry.id).await?;
 
     match login::sign_in(&entry.origin, identity, &password).await {
         Ok(token) => {
-            let _ = secrets::store(Secret::Session, &entry.id, &token);
+            // the write is a keychain call too
+            let _ = secrets::store_off_thread(Secret::Session, &entry.id, &token).await;
 
             Some(token)
         }
@@ -751,9 +783,13 @@ pub(crate) async fn ensure_session(entry: &ServerEntry) -> Option<String> {
                 entry.origin
             );
 
-            // an expired token is worse than none: the client would try it, fail, and clear its own
-            // auto-login state, so hand back nothing and let the login page do its job
-            stored.filter(|token| !jwt::needs_refresh(token))
+            // Nothing, rather than the token that got us here. Control only reaches this arm when
+            // `needs_refresh` already said that token was spent, so there was never anything to
+            // hand back — this used to re-filter it on the same predicate and return `None` by a
+            // longer route, with a comment describing a fallback that could not happen. An expired
+            // token is worse than none anyway: the client would try it, fail, and clear its own
+            // auto-login state, so the login page is the honest answer.
+            None
         }
     }
 }
@@ -767,7 +803,7 @@ pub(crate) async fn ensure_session(entry: &ServerEntry) -> Option<String> {
 /// rail, still openable, and asking the user who they are.
 #[tauri::command]
 pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
-    secrets::forget_all(&id)?;
+    forget_secrets(&id).await?;
 
     let entry = store.update(|registry| {
         let server = registry
@@ -830,14 +866,14 @@ pub async fn sign_in_server(
 
     let token = login::sign_in(&origin, &identity, &password).await?;
 
-    secrets::store(Secret::Session, &id, &token)?;
+    secrets::store_off_thread(Secret::Session, &id, &token).await?;
 
     // unticked drops whatever was kept before, so the box says what is actually stored rather than
     // only what happens from now on
     if remember_password != Some(false) {
-        secrets::store(Secret::Password, &id, &password)?;
+        secrets::store_off_thread(Secret::Password, &id, &password).await?;
     } else {
-        secrets::forget(Secret::Password, &id)?;
+        secrets::forget_off_thread(Secret::Password, &id).await?;
     }
 
     store.update(|registry| {
@@ -906,9 +942,17 @@ pub async fn show_server_menu(app: AppHandle, store: State<'_, Store>, id: Strin
         MenuItemBuilder::with_id(format!("refresh:{id}"), "Refresh name and icon").build(&app)?;
     let remove =
         MenuItemBuilder::with_id(format!("remove:{id}"), "Remove from Shiver").build(&app)?;
-    // enabled only when there is one to forget, so the item answers the question by existing
+    // Enabled only when there is one to forget, so the item answers the question by existing.
+    //
+    // Read off the runtime's workers: this is a keychain lookup, and on Linux that is a D-Bus round
+    // trip that can block and can prompt — for the sake of one menu item's enabled state, from a
+    // right-click on the rail.
+    let has_password = secrets::read_off_thread(Secret::Password, &id)
+        .await
+        .is_some();
+
     let forget = MenuItemBuilder::with_id(format!("forgetpw:{id}"), "Forget my password")
-        .enabled(secrets::read(Secret::Password, &id).ok().flatten().is_some())
+        .enabled(has_password)
         .build(&app)?;
 
     // What this server can do for Shiver, said where the rest of the per-server answers are.
@@ -947,8 +991,11 @@ pub async fn show_server_menu(app: AppHandle, store: State<'_, Store>, id: Strin
         )
     } else if tripped {
         Some(
-            MenuItemBuilder::with_id(format!("anysize:{id}"), "Accept larger messages from this server")
-                .build(&app)?,
+            MenuItemBuilder::with_id(
+                format!("anysize:{id}"),
+                "Accept larger messages from this server",
+            )
+            .build(&app)?,
         )
     } else {
         None
@@ -1290,6 +1337,23 @@ pub(crate) async fn connect_all_servers(app: AppHandle) {
     if total > 0 {
         eprintln!("[shiver] {total} server(s) in the rail, connecting from the core");
     }
+}
+
+/// The longest a folder name may be.
+///
+/// Bounded because this lands in `servers.json` verbatim and nothing else checked it: an empty
+/// string and a megabyte were both accepted. `feed.rs` clamps everything a *server* sends for
+/// exactly this reason; a name the user types deserves the same floor and ceiling.
+const MAX_FOLDER_NAME: usize = 100;
+
+fn clamp_name(name: &str) -> Result<String> {
+    let trimmed = name.trim();
+
+    if trimmed.is_empty() {
+        return Err(Error::InvalidOrigin("A folder needs a name".into()));
+    }
+
+    Ok(trimmed.chars().take(MAX_FOLDER_NAME).collect())
 }
 
 fn next_position(registry: &Registry) -> i32 {

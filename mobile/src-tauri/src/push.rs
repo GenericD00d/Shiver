@@ -31,7 +31,10 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shiver_push::{PushEvent, PushExt};
 
-use crate::{inbox, store::Store};
+use crate::{
+    inbox,
+    store::{RegistryStore, Store},
+};
 
 /// Tells Shiver's own pages that registration moved, so the settings screen can redraw.
 pub const PUSH_EVENT: &str = "shiver://push";

@@ -230,12 +230,45 @@ const SWIPE_THRESHOLD = 50;
 /** Tailwind's `md`, the width at which Sharkord stops hiding its sidebar. */
 const WIDE_LAYOUT = 768;
 
+/**
+ * Defines one of Shiver's hooks so the page cannot replace it.
+ *
+ * These are ordinary `window` properties, and the core acts on whatever they return: the drain
+ * feeds the notification inbox and the mute list, and one of its fields makes Shiver's own panel
+ * ask the user for this server's password. A page that reassigns one is a page writing directly
+ * into Shiver's trusted chrome.
+ *
+ * Non-writable and non-configurable, so a later assignment throws in strict mode and is ignored
+ * otherwise, rather than quietly winning.
+ */
+function defineHook<K extends keyof Window>(name: K, value: Window[K]) {
+  try {
+    // Cleared first. On desktop the bridge is an initialization script and there is never anything
+    // here; on mobile it is evaluated after the page has loaded, so a page's own script may have
+    // got here first and `defineProperty` over a non-configurable property would throw.
+    delete window[name];
+
+    Object.defineProperty(window, name, {
+      value,
+      writable: false,
+      configurable: false,
+      enumerable: false
+    });
+  } catch {
+    // Either this ran twice — in which case the existing definition is ours and is the one to keep
+    // — or a page locked the name before the bridge was evaluated, which only mobile's late
+    // injection makes possible. The core treats what it reads back out of a page as a request
+    // rather than a fact, and rations what it acts on, so the second case costs the hook rather
+    // than the boundary.
+  }
+}
+
 function install(shiver: ShiverConfig) {
   // evaluated after every page load, so everything below has to tolerate already having run
   applyTheme(shiver.theme);
 
   // the rail is rebuilt on each install, because the servers in it may have changed
-  window.__SHIVER_RAIL__ = mountRail(shiver);
+  defineHook('__SHIVER_RAIL__', mountRail(shiver));
 
   // the core hands the floor over in the page config, because this page is the user opening this
   // server, which is the one event that moves it
@@ -268,9 +301,9 @@ function install(shiver: ShiverConfig) {
 
   const paint = () => paintMuted(new Set(window.__SHIVER_MUTED__?.() ?? []));
 
-  window.__SHIVER_MUTED__ = () => [...muted];
+  defineHook('__SHIVER_MUTED__', () => [...muted]);
 
-  window.__SHIVER_TOGGLE_MUTE__ = (channelId) => {
+  defineHook('__SHIVER_TOGGLE_MUTE__', (channelId) => {
     if (muted.has(channelId)) {
       muted.delete(channelId);
     } else {
@@ -281,7 +314,7 @@ function install(shiver: ShiverConfig) {
 
     // straight to the server, so the mute is on the user's other devices before they get there
     pushMutesToPlugin([...muted]);
-  };
+  });
 
   paint();
 
@@ -315,7 +348,7 @@ function install(shiver: ShiverConfig) {
     // Sharkord re-renders its channel list on scroll, selection and unread changes, each of which
     // drops the dimming, so it is reapplied whenever the sidebar's dom changes
     new MutationObserver(paint).observe(document.body, { childList: true, subtree: true });
-    window.__SHIVER_MOBILE_INSTALLED__ = true;
+    defineHook('__SHIVER_MOBILE_INSTALLED__', true);
   }
 }
 
@@ -412,19 +445,19 @@ function installSoundVolume(percent: number) {
     return connect.call(this, destination as AudioNode, output, input);
   } as AudioNode['connect'];
 
-  window.__SHIVER_SET_SOUND_VOLUME__ = (next: number) => {
+  defineHook('__SHIVER_SET_SOUND_VOLUME__', (next: number) => {
     level = toLevel(next);
 
     for (const gain of masters) {
       gain.gain.value = level;
     }
-  };
+  });
 }
 
 function installExternalLinks() {
   const queued: string[] = [];
 
-  window.__SHIVER_OPEN__ = () => queued.splice(0, queued.length);
+  defineHook('__SHIVER_OPEN__', () => queued.splice(0, queued.length));
 
   document.addEventListener(
     'click',
@@ -707,7 +740,7 @@ function mountRail(shiver: ShiverConfig): Rail {
    * Returns whether Shiver used the press, so the activity can fall back to what it would have done
    * otherwise on a page Shiver is not drawing on.
    */
-  window.__SHIVER_BACK__ = () => {
+  defineHook('__SHIVER_BACK__', () => {
     if (menuHost) {
       closeChannelMenu();
 
@@ -726,7 +759,7 @@ function mountRail(shiver: ShiverConfig): Rail {
     setOpen(!open);
 
     return true;
-  };
+  });
 
   scrim.addEventListener('click', () => setOpen(false));
 
@@ -982,7 +1015,7 @@ function mountRail(shiver: ShiverConfig): Rail {
 
   paintBadges(Object.fromEntries(shiver.rail.map((entry) => [entry.id, entry.unread])));
 
-  window.__SHIVER_UNREAD__ = paintBadges;
+  defineHook('__SHIVER_UNREAD__', paintBadges);
 
   return {
     open: () => setOpen(true),
@@ -1616,7 +1649,7 @@ function installRailDrag(
     creates: pendingCreates.splice(0, pendingCreates.length)
   });
 
-  window.__SHIVER_RAIL_STATE__ = railState;
+  defineHook('__SHIVER_RAIL_STATE__', railState);
 
   const release = () => {
     held?.classList.remove('lifted');
@@ -2953,7 +2986,7 @@ function seedSession(session: string) {
     sessionStorage.setItem('sharkord-token', session);
 
     // remembered so the clean-up only ever removes Shiver's own doing
-    window.__SHIVER_SEEDED__ = true;
+    defineHook('__SHIVER_SEEDED__', true);
   } catch {
     // a page that denies storage signs in the ordinary way
   }
@@ -2986,7 +3019,7 @@ function forgetSession() {
     // nothing to take back out of a page that denied storage in the first place
   }
 
-  window.__SHIVER_SEEDED__ = false;
+  defineHook('__SHIVER_SEEDED__', false);
 }
 
 /**
@@ -2997,9 +3030,9 @@ function forgetSession() {
  * which asks this.
  */
 function installPageActions() {
-  window.__SHIVER_MARK_ALL_READ__ = markAllChannelsRead;
-  window.__SHIVER_SIGN_OUT__ = signOut;
-  window.__SHIVER_FORGET_SESSION__ = forgetSession;
+  defineHook('__SHIVER_MARK_ALL_READ__', markAllChannelsRead);
+  defineHook('__SHIVER_SIGN_OUT__', signOut);
+  defineHook('__SHIVER_FORGET_SESSION__', forgetSession);
 }
 
 /**
@@ -3475,7 +3508,11 @@ function mutedNames(muted: Set<number>) {
  */
 function applyTheme(theme: ShiverTheme | null) {
   if (!theme) {
-    ensureStyle(THEME_STYLE_ID).textContent = '';
+    // back to Sharkord's own colours: the rules stay, emptied, so nothing has to be rebuilt if
+    // the user picks a theme again
+    for (const rule of themeRules()) {
+      while (rule.style.length > 0) rule.style.removeProperty(rule.style.item(0));
+    }
 
     return;
   }
@@ -3489,50 +3526,77 @@ function applyTheme(theme: ShiverTheme | null) {
   const foreground = textColor ?? (isLightColor(themeColor) ? '#171717' : '#fafafa');
   const dim = `color-mix(in srgb, ${foreground} 65%, ${themeColor})`;
 
-  ensureStyle(THEME_STYLE_ID).textContent = `
-:root, .dark {
-  /* Shiver's own rail, drawn in this page. Custom properties inherit through its shadow root, which
-     is the only way to reach it from out here. */
-  --shiver-rail: ${themeColor};
-  --shiver-surface: ${lift(84)};
-  --shiver-surface-hover: ${lift(72)};
-  --shiver-surface-dim: ${lift(92)};
-  --shiver-text: ${foreground};
-  --shiver-text-dim: ${dim};
-  --shiver-accent: ${accentColor};
-  --shiver-border: color-mix(in srgb, ${foreground} 12%, transparent);
+  const variables: Record<string, string> = {
+    '--background': themeColor,
+    '--foreground': foreground,
+    '--sidebar': lift(90),
+    '--sidebar-foreground': foreground,
+    '--card': lift(90),
+    '--card-foreground': foreground,
+    '--popover': lift(88),
+    '--popover-foreground': foreground,
+    '--muted-foreground': dim,
+    '--muted': lift(84),
+    '--secondary': lift(84),
+    '--accent': lift(80),
+    '--accent-foreground': foreground,
+    '--sidebar-accent': lift(80),
+    '--input': lift(78),
+    '--border': `color-mix(in srgb, ${foreground} 12%, transparent)`,
+    '--sidebar-border': `color-mix(in srgb, ${foreground} 12%, transparent)`,
+    '--primary': accentColor,
+    '--primary-foreground': isLightColor(accentColor) ? '#171717' : '#fafafa',
+    '--sidebar-primary': accentColor,
+    '--ring': accentColor,
+    '--sidebar-ring': accentColor
+  };
 
-  --background: ${themeColor} !important;
-  --foreground: ${foreground} !important;
-  --sidebar: ${lift(90)} !important;
-  --sidebar-foreground: ${foreground} !important;
-  --card: ${lift(90)} !important;
-  --card-foreground: ${foreground} !important;
-  --popover: ${lift(88)} !important;
-  --popover-foreground: ${foreground} !important;
-  --muted-foreground: ${dim} !important;
-  --muted: ${lift(84)} !important;
-  --secondary: ${lift(84)} !important;
-  --accent: ${lift(80)} !important;
-  --accent-foreground: ${foreground} !important;
-  --sidebar-accent: ${lift(80)} !important;
-  --input: ${lift(78)} !important;
-  --border: color-mix(in srgb, ${foreground} 12%, transparent) !important;
-  --sidebar-border: color-mix(in srgb, ${foreground} 12%, transparent) !important;
-  --primary: ${accentColor} !important;
-  --primary-foreground: ${isLightColor(accentColor) ? '#171717' : '#fafafa'} !important;
-  --sidebar-primary: ${accentColor} !important;
-  --ring: ${accentColor} !important;
-  --sidebar-ring: ${accentColor} !important;
-}
-`;
+  // Set through the CSSOM rather than built as a string. Interpolating these into a `<style>`
+  // element's `textContent` meant a value containing `}` closed the rule block and everything
+  // after it became arbitrary CSS in this page; `setProperty` has no such seam — a malformed value
+  // is rejected by the parser and the property keeps what it had.
+  for (const rule of themeRules()) {
+    for (const [name, value] of Object.entries(variables)) {
+      rule.style.setProperty(name, value, 'important');
+    }
+  }
 }
 
-/** Relative luminance, matching Shiver's own `theme.ts` so both sides pick the same foreground. */
+/**
+ * The two empty rules `applyTheme` writes into, created once.
+ *
+ * `:root` and `.dark`, because Sharkord renders its app under a hard-coded `dark` class and
+ * Shiver's overrides have to win on specificity rather than on order alone.
+ */
+function themeRules(): CSSStyleRule[] {
+  const style = ensureStyle(THEME_STYLE_ID) as HTMLStyleElement;
+  const sheet = style.sheet;
+
+  if (!sheet) return [];
+
+  if (sheet.cssRules.length === 0) {
+    sheet.insertRule(':root {}', 0);
+    sheet.insertRule('.dark {}', 1);
+  }
+
+  return Array.from(sheet.cssRules).filter(
+    (rule): rule is CSSStyleRule => rule instanceof CSSStyleRule
+  );
+}
+
+/**
+ * Relative luminance, matching Shiver's own `theme.ts` so both sides pick the same foreground.
+ *
+ * **Including the fallback**, which is the half that did not match: this returned `false` where
+ * `theme.ts` returns `true`, so anything that is not exactly six hex digits — a `#fff` shorthand,
+ * a value hand-edited into `servers.json` — gave Shiver's chrome the light-background foreground
+ * and the server page the dark one. Opposite text colours in the two halves of one window, under a
+ * comment asserting they agreed.
+ */
 function isLightColor(hex: string) {
   const value = hex.replace('#', '');
 
-  if (value.length !== 6) return false;
+  if (value.length !== 6) return true;
 
   const channel = (offset: number) => {
     const srgb = parseInt(value.slice(offset, offset + 2), 16) / 255;
@@ -3867,10 +3931,10 @@ a.${ATTACHMENT_MINIMISED} > [class~="flex-1"] { display: none; }
 
   new MutationObserver(paint).observe(document.body, { childList: true, subtree: true });
 
-  window.__SHIVER_SET_ATTACHMENT_CARDS__ = (next: boolean) => {
+  defineHook('__SHIVER_SET_ATTACHMENT_CARDS__', (next: boolean) => {
     on = next;
     paint();
-  };
+  });
 }
 
 const VOICE_COLORS_ID = 'shiver-voice-colors';
@@ -4044,7 +4108,28 @@ delete window.__SHIVER__;
 
 shiverConfig = config ?? null;
 
-if (config) {
+/**
+ * The bridge runs in the page, and only in the page.
+ *
+ * Whether an initialization script reaches cross-origin subframes is wry's business and differs by
+ * platform — on WebView2 the underlying `AddScriptToExecuteOnDocumentCreated` is an all-frames API
+ * by nature. If it does reach them, `seedAutoLogin` writes this server's session token into the
+ * `localStorage` of every origin the page happens to embed.
+ *
+ * One comparison removes the dependency on someone else's implementation detail entirely, and a
+ * subframe has nothing to do here in any case: the rail, the bell and the drain are all about the
+ * document the user is looking at.
+ */
+const isTopFrame = (() => {
+  try {
+    return window.top === window.self;
+  } catch {
+    // a cross-origin parent makes `window.top` throw, which is itself the answer
+    return false;
+  }
+})();
+
+if (config && isTopFrame) {
   try {
     install(config);
   } catch (error) {

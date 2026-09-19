@@ -16,9 +16,12 @@ bug reports, rather than typed by a developer.
 
 What that means in practice:
 
-- **No security audit has been done**, by anyone. It handles your session tokens and, by default,
-  your password. Both go in the OS keychain, never in a file — but read the code before you trust
-  it with either.
+- **No independent security audit has been done.** It handles your session tokens and, by default,
+  your password. Both go in the OS keychain — or `EncryptedSharedPreferences` on Android — never in
+  a file, but read the code before you trust it with either. A full internal review of the source
+  has been done and its findings are fixed in the current tree; that is not the same as an outside
+  audit and is not offered as one. [`SECURITY.md`](SECURITY.md) says how to report anything you
+  find.
 - **The installers are unsigned**, so Windows SmartScreen will warn on first run. Desktop updates
   are checked against a signing key built into the binary and will not install without it, so
   losing control of the GitHub account is not enough to ship code to anyone; Windows still has no
@@ -40,7 +43,10 @@ will serve you perfectly well.
   Sharkord's last seven days and cannot be refreshed. **Forget my password** in a server's menu
   removes it
 - **HTTPS only.** Shiver refuses to add a server, sign in to one, or open a socket over `http://`,
-  with no exemption for localhost or a private address
+  with no exemption for localhost or a private address. Certificates are checked against Mozilla's
+  root set rather than the operating system's, so a server behind a **private or corporate CA will
+  not connect** even on a machine that trusts it — worth knowing, because it presents as the server
+  being unreachable
 - **Unread badges per server**, cleared by opening it, with per-channel mutes excluded
 - **Per-channel mute** — dimmed in the channel list, no notification, no sound
 - **Your colours** applied to Shiver and to each server's client. On the defaults Shiver restyles
@@ -98,6 +104,12 @@ cd mobile && bun install
 | `mobile/` | The Android client, separate because it cannot share the desktop's shape — Android gives a window one webview |
 | `plugin/` | The optional Sharkord companion plugin. Neither client's, used by both |
 | `shared/sharkord-client/` | Shiver's own client for Sharkord's protocol, depended on by both. One transcription of it rather than two that drift |
+| `shared/shiver-core/` | The rest of what both clients must agree on: the origin rules (`normalize_origin`, `is_same_origin`) and the registry store. Same argument as above — these were byte-identical copies in each client, and `is_same_origin` is the whole of Shiver's webview pinning |
 
 Inside each client: `src/` is Shiver's own UI, `bridge/` is the script injected into every Sharkord
 page, and `src-tauri/src/` is the Rust core.
+
+`mobile/src-tauri/gen/android/` is Tauri's generated Android project and is **not** entirely
+generated: `app/src/main/java/com/shiver/mobile/MainActivity.kt` (the window insets and the back
+handling), `AndroidManifest.xml` and the `res/xml/` network and backup rules are all hand-written.
+Re-running `tauri android init` will overwrite them, so treat it as a merge rather than a refresh.

@@ -57,26 +57,34 @@ def declarations(block: str) -> dict:
     return found
 
 
-def react_rule() -> dict:
-    body = io.open(CSS, encoding="utf-8").read()
-    start = body.index(".rail-badge {")
+def rule(path: str, marker: str, what: str) -> dict:
+    """The declarations of the block `marker` starts, or a clean exit saying it is gone.
 
-    return declarations(body[start : body.index("}", start)])
+    `str.index` raises `ValueError`, so a renamed selector used to end the run in a Python
+    traceback rather than in the message below — which was written for exactly this case and was
+    unreachable, because `declarations` is only ever called on a block that was found.
+    """
+    with io.open(path, encoding="utf-8") as handle:
+        body = handle.read()
+
+    start = body.find(marker)
+
+    if start < 0:
+        sys.exit(f"could not find the {what} badge rule ({marker!r}) — has it been renamed?")
+
+    end = body.find("}", start)
+
+    if end < 0:
+        sys.exit(f"the {what} badge rule is not closed — is {path} valid?")
+
+    return declarations(body[start:end])
 
 
-def bridge_rule() -> dict:
-    body = io.open(BRIDGE, encoding="utf-8").read()
-    # the rule is inside a template literal, written on several lines
-    start = body.index(".badge { position: absolute")
-
-    return declarations(body[start : body.index("}", start)])
-
-
-react = react_rule()
-bridge = bridge_rule()
+react = rule(CSS, ".rail-badge {", "react")
+bridge = rule(BRIDGE, ".badge { position: absolute", "bridge")
 
 if not react or not bridge:
-    sys.exit("could not find one of the badge rules — has it been renamed?")
+    sys.exit("neither badge rule declared any of the watched properties — has the guard drifted?")
 
 differences = [
     (name, react.get(name), bridge.get(name))

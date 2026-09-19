@@ -10,7 +10,7 @@ use crate::{
     login,
     model::{normalize_origin, Folder, MutedChannel, Registry, ServerEntry, ServerInfo, Settings},
     probe,
-    store::Store,
+    store::{RegistryStore, Store},
     webview::{self, Showing},
 };
 

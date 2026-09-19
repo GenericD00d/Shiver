@@ -14,6 +14,7 @@
 //! The manifest read here is the same `latest.json` the desktop updater reads. One file describing
 //! what the newest version is, rather than two that can disagree.
 
+use crate::store::RegistryStore;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -202,7 +203,10 @@ async fn fetch() -> Option<String> {
 /// Whether `newest` is actually newer, compared the way versions mean rather than the way strings
 /// sort — "0.1.10" is above "0.1.9", which no string comparison will tell you.
 fn is_newer(newest: &str, running: &str) -> bool {
-    match (semver::Version::parse(newest), semver::Version::parse(running)) {
+    match (
+        semver::Version::parse(newest),
+        semver::Version::parse(running),
+    ) {
         (Ok(newest), Ok(running)) => newest > running,
         // an unparseable version is not grounds for telling somebody to go and download something
         _ => false,

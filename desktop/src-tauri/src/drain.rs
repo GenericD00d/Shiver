@@ -18,7 +18,7 @@ use crate::{
     feed::{DrainResult, Feed},
     model::MutedChannel,
     session,
-    store::Store,
+    store::{RegistryStore, Store},
     voice::VoiceState,
     webviews::{self, ActiveServer, OVERLAY_WEBVIEW, SHELL_WEBVIEW},
 };
@@ -359,7 +359,7 @@ fn drain_webview(
 }
 
 fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_page: bool) {
-    let (server_name, account_label, muted, has_identity) = {
+    let (server_name, account_label, muted, has_identity, origin) = {
         let store = app.state::<Store>();
         let registry = store.registry();
 
@@ -380,7 +380,13 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
             .or_else(|| entry.identity.clone())
             .unwrap_or_default();
 
-        (entry.name.clone(), label, muted, entry.identity.is_some())
+        (
+            entry.name.clone(),
+            label,
+            muted,
+            entry.identity.is_some(),
+            entry.origin.clone(),
+        )
     };
 
     // The conversation view is a second client for the same server. It answers only about the DM it
@@ -447,13 +453,13 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
             .channel_id
             .is_some_and(|channel_id| muted.contains(&channel_id));
 
-        if feed.push(entry_id, &server_name, raw, is_muted) {
+        if feed.push(entry_id, &server_name, Some(&origin), raw, is_muted) {
             changed = true;
         }
     }
 
     if let Some(dms) = result.dms {
-        feed.set_dms(entry_id, &server_name, &account_label, dms);
+        feed.set_dms(entry_id, &server_name, &account_label, Some(&origin), dms);
 
         changed = true;
     }

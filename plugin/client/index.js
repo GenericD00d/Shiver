@@ -203,11 +203,40 @@ const statusStyle = (status) => ({
 
 /** Everyone's status, so drawing a member list costs nothing. Kept in step by the server's push. */
 const statuses = new Map();
-const listeners = new Set();
+
+/**
+ * Listeners keyed by the user each one is drawing.
+ *
+ * One flat set, woken on every change, meant that one person updating their status re-rendered
+ * every row in the member list — and each of those rows then scanned the whole user array to find
+ * itself, so a 500-member server paid 250,000 comparisons on the main thread for one status. The
+ * rows that care about a user are the only ones that need waking.
+ */
+const listeners = new Map();
 let loaded = false;
 
-const announce = () => {
-  for (const listener of listeners) listener();
+const listenFor = (userId, listener) => {
+  const held = listeners.get(userId) ?? new Set();
+
+  held.add(listener);
+  listeners.set(userId, held);
+
+  return () => {
+    held.delete(listener);
+
+    if (!held.size) listeners.delete(userId);
+  };
+};
+
+const announce = (userId) => {
+  for (const listener of listeners.get(userId) ?? []) listener();
+};
+
+/** Every listening row, for the one case that genuinely changes all of them: a bulk load. */
+const announceAll = () => {
+  for (const held of listeners.values()) {
+    for (const listener of held) listener();
+  }
 };
 
 const applyStatus = (userId, status) => {
@@ -219,7 +248,7 @@ const applyStatus = (userId, status) => {
     statuses.delete(userId);
   }
 
-  announce();
+  announce(userId);
 };
 
 /** Asked for once per page, not once per member row. */
@@ -231,7 +260,19 @@ const loadStatuses = async (store) => {
   try {
     const result = await store.actions.executePluginAction(PLUGIN_ID, 'getStatuses');
 
-    for (const entry of result?.statuses ?? []) applyStatus(entry?.userId, entry?.status);
+    for (const entry of result?.statuses ?? []) {
+      if (!Number.isInteger(entry?.userId)) continue;
+
+      if (entry.status) {
+        statuses.set(entry.userId, entry.status);
+      } else {
+        statuses.delete(entry.userId);
+      }
+    }
+
+    // one wake for the whole load rather than one per entry, which on a server with a hundred
+    // statuses was a hundred renders of every row that happened to be mounted
+    announceAll();
   } catch {
     // a server that refuses simply has no statuses to show; the rest of the plugin is unaffected
     loaded = false;
@@ -245,7 +286,7 @@ const loadStatuses = async (store) => {
  * store — the member list can be a hundred rows, and Sharkord's own `subscribe` fires on every state
  * change in the app.
  */
-const useStatuses = (React, store) => {
+const useStatuses = (React, store, userId) => {
   const [, bump] = React.useState(0);
 
   React.useEffect(() => {
@@ -257,11 +298,12 @@ const useStatuses = (React, store) => {
     // only way to be right. Reopening the sidebar costs one query, not one per member.
     if (listeners.size === 0) loaded = false;
 
-    listeners.add(listener);
+    const stop = listenFor(userId, listener);
+
     void loadStatuses(store);
 
-    return () => listeners.delete(listener);
-  }, [store]);
+    return stop;
+  }, [store, userId]);
 
   // stable, so the host is not handed a new handler on every render of every member row
   const onPush = React.useCallback((data) => {
@@ -271,12 +313,33 @@ const useStatuses = (React, store) => {
   store.hooks.usePush(onPush);
 };
 
+/**
+ * One user, by id, without walking the whole list to find them.
+ *
+ * `users.find(...)` per row per render is O(n) inside an O(n) render, so the member list was
+ * quadratic in its own length. The index is rebuilt only when the array identity changes, which is
+ * when Sharkord has actually replaced it.
+ */
+let userIndex = { source: null, byId: new Map() };
+
+const userById = (store, userId) => {
+  const users = store.getState().users;
+
+  if (!users) return undefined;
+
+  if (userIndex.source !== users) {
+    userIndex = { source: users, byId: new Map(users.map((user) => [user.id, user])) };
+  }
+
+  return userIndex.byId.get(userId);
+};
+
 /** What the member list shows beside a name. Nothing at all when there is nothing to say. */
 const MemberStatus = ({ userId }) => {
   const React = window.__SHARKORD_REACT__;
   const store = window.__SHARKORD_STORE__;
 
-  useStatuses(React, store);
+  useStatuses(React, store, userId);
 
   const status = statuses.get(userId);
 
@@ -284,7 +347,7 @@ const MemberStatus = ({ userId }) => {
 
   // Only while they are actually here. A line saying "back in ten" under someone who logged off
   // three days ago is worse than no line, and Sharkord already tracks presence for the sorting.
-  const user = store.getState().users?.find((candidate) => candidate.id === userId);
+  const user = userById(store, userId);
 
   if (user?.status !== 'online') return null;
 
@@ -335,8 +398,12 @@ const ensurePopoverStatusStyle = () => {
 
 /* The row the slot renders into, which is sized by its contents. Without the cap a long status
    makes that row as wide as itself and the card grows past its own edge — measured, not guessed.
-   The cap gives the truncation something to bite on and leaves the "member since" line its half. */
-:has(> .${POPOVER_STATUS_CLASS}) { flex-wrap: wrap; max-width: 65%; }
+   The cap gives the truncation something to bite on and leaves the "member since" line its half.
+
+   Qualified with a tag name. A bare :has(> ...) has no left-hand side at all, so the browser
+   evaluates it against every element in the document on every style recalculation — for the whole
+   Sharkord client, not just the one card this was written for. */
+div:has(> .${POPOVER_STATUS_CLASS}) { flex-wrap: wrap; max-width: 65%; }
 `;
 
   document.head.append(style);
@@ -346,7 +413,7 @@ const PopoverStatus = ({ userId }) => {
   const React = window.__SHARKORD_REACT__;
   const store = window.__SHARKORD_STORE__;
 
-  useStatuses(React, store);
+  useStatuses(React, store, userId);
 
   React.useEffect(ensurePopoverStatusStyle, []);
 
@@ -356,7 +423,7 @@ const PopoverStatus = ({ userId }) => {
 
   // Same rule as the member list: only while they are actually here. A card is opened deliberately
   // about one person, which makes a stale line more misleading here, not less.
-  const user = store.getState().users?.find((candidate) => candidate.id === userId);
+  const user = userById(store, userId);
 
   if (user?.status !== 'online') return null;
 
@@ -385,9 +452,10 @@ const StatusSetting = () => {
   const React = window.__SHARKORD_REACT__;
   const store = window.__SHARKORD_STORE__;
 
-  useStatuses(React, store);
-
   const ownUserId = store.getState().ownUserId;
+
+  useStatuses(React, store, ownUserId);
+
   const [draft, setDraft] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [started, setStarted] = React.useState(false);

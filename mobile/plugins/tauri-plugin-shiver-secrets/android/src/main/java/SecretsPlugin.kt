@@ -35,8 +35,14 @@ class OriginArgs {
  * Encrypted storage for Shiver session tokens.
  *
  * The master key is held by the Android Keystore, so it is hardware-backed on a device with a
- * secure element and never sits in the app own files. Keys are encrypted as well as values, so the
- * file does not even reveal which servers a session exists for.
+ * secure element and never sits in the app's own files. Keys are encrypted as well as values, so
+ * the file does not even reveal which servers a session exists for.
+ *
+ * **`androidx.security:security-crypto` is deprecated**, with no drop-in successor at the time of
+ * writing. It works and it is still the right thing here; it will stop receiving fixes, and this
+ * note is so whoever finds that out does not find it out during an incident. The replacement, when
+ * there is one, is a change to this file and nothing else: the Rust side only ever sees
+ * `setSecret` / `getSecret` / `removeSecret`.
  *
  * Every method answers, including on failure: a device whose Keystore refuses to produce a key
  * would otherwise leave the core waiting on a call that never returns.
@@ -114,7 +120,10 @@ class SecretsPlugin(private val activity: Activity) : Plugin(activity) {
     fun setSecret(invoke: Invoke) = offMainThread(invoke) {
         val args = invoke.parseArgs(SetArgs::class.java)
 
-        store.edit().putString(args.key, args.value).apply()
+        // `commit` rather than `apply`. `apply` updates memory now and the file whenever it gets
+        // round to it, so a process death in between loses the write — and this already runs on a
+        // worker thread, which is the only reason `apply` is usually preferred.
+        store.edit().putString(args.key, args.value).commit()
 
         null
     }
@@ -134,22 +143,38 @@ class SecretsPlugin(private val activity: Activity) : Plugin(activity) {
     fun removeSecret(invoke: Invoke) = offMainThread(invoke) {
         val args = invoke.parseArgs(KeyArgs::class.java)
 
-        store.edit().remove(args.key).apply()
+        // Durably, for the same reason but more so: this is what "log out" and "forget my password"
+        // come down to, and an asynchronous delete that does not survive the process leaves the
+        // credential on disk while the app reports it gone.
+        store.edit().remove(args.key).commit()
 
         null
     }
 
     /**
-     * Deletes everything a server's page kept in web storage.
+     * Deletes everything a server's page kept on this device.
      *
      * The point is the bytes, not the values. Removing a key from `localStorage` writes a deletion
      * into LevelDB and leaves the old record in the log until it happens to be compacted, so a
      * session cleared that way can still be read out of the app's files. This drops the origin's
      * storage outright.
      *
-     * The one command that stays on the main thread, because WebStorage is not safe to call from
-     * anywhere else. It touches no encrypted storage, so there is nothing slow in it, and it is
-     * fire-and-forget: it is called once the page for that origin is already being replaced.
+     * **`WebStorage.deleteOrigin` is only half of it**, which is what this used to do and all it
+     * used to do: it covers Web Storage and IndexedDB and leaves cookies exactly where they were —
+     * and a Sharkord session may perfectly well be in a cookie. So the cookie jar goes too.
+     *
+     * What is still not covered is the HTTP cache, which needs a `WebView` instance rather than a
+     * static, and which holds responses rather than credentials. Said out loud so the gap is a
+     * known one rather than an assumed absence.
+     *
+     * The cookie jar is all-or-nothing: `CookieManager` has no per-origin delete, only
+     * `removeAllCookies`. Taking every origin's cookies to be sure of one is the right trade here,
+     * because the alternative is leaving the one that matters — and what it costs is a signed-out
+     * server having to be signed in again, which is what just happened anyway.
+     *
+     * On the main thread, because none of these are safe to call from anywhere else. Nothing here
+     * touches encrypted storage, so there is nothing slow in it, and it is fire-and-forget: it is
+     * called once the page for that origin is already being replaced.
      */
     @Command
     fun wipeOrigin(invoke: Invoke) {
@@ -158,6 +183,11 @@ class SecretsPlugin(private val activity: Activity) : Plugin(activity) {
 
             activity.runOnUiThread {
                 WebStorage.getInstance().deleteOrigin(args.origin)
+
+                android.webkit.CookieManager.getInstance().apply {
+                    removeAllCookies(null)
+                    flush()
+                }
             }
 
             invoke.resolve()

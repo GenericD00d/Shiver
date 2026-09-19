@@ -40,6 +40,17 @@ impl Serialize for Error {
     }
 }
 
+/// The shared crate raises only the two kinds it knows about, and each maps straight onto one of
+/// this client's own.
+impl From<shiver_core::Error> for Error {
+    fn from(value: shiver_core::Error) -> Self {
+        match value {
+            shiver_core::Error::InvalidOrigin(message) => Error::InvalidOrigin(message),
+            shiver_core::Error::Storage(message) => Error::Storage(message),
+        }
+    }
+}
+
 impl From<tauri::Error> for Error {
     fn from(value: tauri::Error) -> Self {
         Error::Webview(value.to_string())

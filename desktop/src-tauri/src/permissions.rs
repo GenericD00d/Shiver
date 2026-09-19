@@ -20,7 +20,12 @@
 //! for display capture, because Chromium never stores an answer for it. `getDisplayMedia` puts up
 //! its picker every time and a refusal is only a refusal of that one attempt.
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+
+// `Manager` is what `get_webview` hangs off, and only the WebView2 implementation below calls it —
+// so on every other platform importing it is an unused import rather than a missing one.
+#[cfg(windows)]
+use tauri::Manager;
 
 use crate::error::{Error, Result};
 
@@ -60,13 +65,15 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
 
         move |outcome: std::result::Result<usize, String>| {
             if let Some(sender) = sender.lock().ok().and_then(|mut held| held.take()) {
-                let _: std::result::Result<(), std::sync::mpsc::SendError<_>> = sender.send(outcome);
+                let _: std::result::Result<(), std::sync::mpsc::SendError<_>> =
+                    sender.send(outcome);
             }
         }
     };
 
     let media = |kind: COREWEBVIEW2_PERMISSION_KIND| {
-        kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA || kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+        kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA
+            || kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
     };
 
     webview
@@ -145,7 +152,21 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
                                             continue;
                                         }
 
-                                        targets.push((kind, origin.to_string().unwrap_or_default()));
+                                        // **Freed.** `PermissionOrigin` hands back a string
+                                        // WebView2 allocated with `CoTaskMemAlloc`, and releasing
+                                        // it is the caller's job. Reading it and dropping the
+                                        // pointer leaked one string per stored permission per
+                                        // invocation — small, and in the only `unsafe` block in
+                                        // the project, which is the worst place to be casual.
+                                        let text = origin.to_string().unwrap_or_default();
+
+                                        if !origin.is_null() {
+                                            windows_core::CoTaskMemFree(Some(
+                                                origin.0 as *const core::ffi::c_void,
+                                            ));
+                                        }
+
+                                        targets.push((kind, text));
                                     }
                                 }
 
@@ -191,14 +212,13 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
                                     let wide = windows_core::HSTRING::from(origin);
                                     let completed = settle.clone();
 
-                                    let handler =
-                                        SetPermissionStateCompletedHandler::create(Box::new(
-                                            move |result| {
-                                                completed(result.err().map(|e| e.to_string()));
+                                    let handler = SetPermissionStateCompletedHandler::create(
+                                        Box::new(move |result| {
+                                            completed(result.err().map(|e| e.to_string()));
 
-                                                Ok(())
-                                            },
-                                        ));
+                                            Ok(())
+                                        }),
+                                    );
 
                                     let issued = {
                                         reset.SetPermissionState(

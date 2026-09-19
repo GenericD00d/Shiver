@@ -33,7 +33,11 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shiver_secrets::SecretsExt;
 
-use crate::{sharkord, store::Store, webview};
+use crate::{
+    sharkord,
+    store::{RegistryStore, Store},
+    webview,
+};
 
 /// The event Shiver's own pages listen for. The bridge cannot listen — a page on a server's origin
 /// has no IPC — so it is called into instead, see `push_to_page`.
@@ -516,7 +520,9 @@ fn restore_now(app: &AppHandle) {
                         .insert(entry_id.to_string(), baseline);
                 }
                 Err(error) => {
-                    eprintln!("[shiver] could not read the stored baseline for {entry_id}: {error}");
+                    eprintln!(
+                        "[shiver] could not read the stored baseline for {entry_id}: {error}"
+                    );
 
                     let _ = app.shiver_secrets().remove(&key);
                 }
@@ -585,7 +591,10 @@ fn sign_in_missing(app: &AppHandle) {
             return;
         }
 
-        eprintln!("[shiver] signing in to {} server(s) with no session", missing.len());
+        eprintln!(
+            "[shiver] signing in to {} server(s) with no session",
+            missing.len()
+        );
 
         for (entry_id, origin) in missing {
             sign_in_again(&handle, &entry_id, &origin).await;
@@ -1394,7 +1403,9 @@ fn recount(app: &AppHandle, entry_id: &str, read_states: &HashMap<i64, u32>) {
             .iter()
             .filter(|muted| muted.entry_id == entry_id)
             .map(|muted| muted.channel_id)
-            .collect::<Vec<_>>()
+            // a set rather than a list: `unread_total` looks each channel up against this once per
+            // channel, and a slice made that a scan of the whole mute list every time
+            .collect::<std::collections::HashSet<_>>()
     };
 
     let baseline = app

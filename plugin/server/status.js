@@ -33,24 +33,19 @@ export const createStatuses = (ctx) => {
    */
   const statuses = new Map();
 
-  const start = async () => {
-    let users;
+  /**
+   * Takes this user's status out of a row somebody else has already read.
+   *
+   * See `primeFromUserRows` in `index.js`: push wants the same row, and reading it twice at every
+   * load was two sequential passes over every user on the server for no reason.
+   */
+  const adopt = (userId, stored) => {
+    const status = statusFrom(stored?.status);
 
-    try {
-      users = await ctx.users.list();
-    } catch (error) {
-      ctx.logger.debug(`Could not list users to read statuses: ${error?.message}`);
+    if (status) statuses.set(userId, status);
+  };
 
-      return;
-    }
-
-    for (const user of users) {
-      const stored = await ctx.userData.get(user.id).catch(() => null);
-      const status = statusFrom(stored?.status);
-
-      if (status) statuses.set(user.id, status);
-    }
-
+  adopt.done = () => {
     if (statuses.size) ctx.logger.log(`Shiver: ${statuses.size} user(s) have a status set`);
   };
 
@@ -92,5 +87,5 @@ export const createStatuses = (ctx) => {
     }
   };
 
-  return { start, set, all, forget };
+  return { adopt, set, all, forget };
 };

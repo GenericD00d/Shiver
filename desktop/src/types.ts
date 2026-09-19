@@ -69,7 +69,7 @@ export type Folder = {
 /**
  * The call Shiver is showing in the rail.
  *
- * There is at most one across every server, which is the rule DESIGN.md asks for: `entryId` says
+ * There is at most one across every server, which is the rule the README states: `entryId` says
  * which server is holding it, and Shiver's controls act there rather than on whatever is on screen.
  */
 export type VoiceStatus = {

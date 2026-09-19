@@ -27,7 +27,7 @@
 //! is transcribed here was worked out by probing a live server, and a second copy of it would start
 //! drifting the day one client learned something the other did not.
 //!
-//! //! Unread is modelled the way Sharkord's own client models it: the `readStates` map from the join
+//! Unread is modelled the way Sharkord's own client models it: the `readStates` map from the join
 //! is the baseline, and each delta event adds to one channel's count. The server deliberately sends
 //! a delta of 1 rather than a recomputed total — see `db/publishers.ts` — so Shiver must accumulate.
 
@@ -257,7 +257,7 @@ pub enum Reply {
 }
 
 pub fn parse_reply(text: &str) -> Reply {
-    let Ok(value) = serde_json::from_str::<Value>(text) else {
+    let Ok(mut value) = serde_json::from_str::<Value>(text) else {
         return Reply::Other;
     };
 
@@ -275,20 +275,25 @@ pub fn parse_reply(text: &str) -> Reply {
         };
     }
 
-    let Some(result) = value.get("result") else {
+    let Some(result) = value.get_mut("result") else {
         return Reply::Other;
     };
 
-    match result.get("type").and_then(Value::as_str) {
-        Some("started") => Reply::Started { id },
-        // `data` is the type for both a query's answer and a subscription's emission
-        _ => match result.get("data") {
-            Some(data) => Reply::Data {
-                id,
-                data: data.clone(),
-            },
-            None => Reply::Other,
+    if result.get("type").and_then(Value::as_str) == Some("started") {
+        return Reply::Started { id };
+    }
+
+    // `data` is the type for both a query's answer and a subscription's emission.
+    //
+    // Taken out of the parsed value rather than cloned. The `joinServer` payload has been measured
+    // at 2.6 MB and the frame cap is 16 MiB, so a `.clone()` here was a multi-megabyte deep copy
+    // of a tree that was about to be dropped anyway.
+    match result.get_mut("data") {
+        Some(data) => Reply::Data {
+            id,
+            data: data.take(),
         },
+        None => Reply::Other,
     }
 }
 
@@ -312,33 +317,29 @@ pub fn parse_join(data: &Value) -> Joined {
         })
         .unwrap_or_default();
 
-    let dm_channels = data
-        .get("channels")
-        .and_then(Value::as_array)
-        .map(|channels| {
-            channels
-                .iter()
-                .filter(|channel| channel.get("isDm").and_then(Value::as_bool) == Some(true))
-                .filter_map(|channel| channel.get("id").and_then(Value::as_i64))
-                .collect()
-        })
-        .unwrap_or_default();
+    // One walk of the channel array filling both maps, rather than two walks of the same array —
+    // on a large server that list is the biggest thing in the join payload.
+    let mut dm_channels = Vec::new();
+    let mut channel_names = HashMap::new();
 
-    let channel_names = data
+    for channel in data
         .get("channels")
         .and_then(Value::as_array)
-        .map(|channels| {
-            channels
-                .iter()
-                .filter_map(|channel| {
-                    Some((
-                        channel.get("id").and_then(Value::as_i64)?,
-                        channel.get("name").and_then(Value::as_str)?.to_string(),
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let Some(id) = channel.get("id").and_then(Value::as_i64) else {
+            continue;
+        };
+
+        if channel.get("isDm").and_then(Value::as_bool) == Some(true) {
+            dm_channels.push(id);
+        }
+
+        if let Some(name) = channel.get("name").and_then(Value::as_str) {
+            channel_names.insert(id, name.to_string());
+        }
+    }
 
     let user_names = data
         .get("users")
@@ -412,32 +413,86 @@ pub fn parse_message(data: &Value) -> Option<Event> {
 /// sanitiser: nothing here is ever put back into a page, it is text for a notification.
 pub fn plain_text(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
-    let mut inside_tag = false;
+    let mut chars = html.chars().peekable();
+    let mut pending_space = false;
 
-    for character in html.chars() {
-        match character {
-            '<' => inside_tag = true,
-            // a tag is a word boundary: two paragraphs are two words rather than one run-on
-            '>' => {
-                inside_tag = false;
-
+    // Written as one pass rather than a strip followed by six `replace` calls. Each of those
+    // allocated another copy of the whole message, and the cap on a frame is 16 MiB.
+    let push = |character: char, text: &mut String, pending_space: &mut bool| {
+        if *pending_space {
+            if !text.is_empty() {
                 text.push(' ');
             }
-            _ if !inside_tag => text.push(character),
-            _ => {}
+
+            *pending_space = false;
+        }
+
+        text.push(character);
+    };
+
+    while let Some(character) = chars.next() {
+        match character {
+            // **Only when a tag can actually start here.** A bare `<` used to put this into tag
+            // state until the next `>` whatever followed it, so `1 < 2 and 3 > 4` notified as "4"
+            // and an unmatched `<` swallowed the rest of the message. A tag name starts with a
+            // letter, and a closing tag with `/`; anything else is somebody typing a less-than.
+            '<' if chars
+                .peek()
+                .is_some_and(|next| next.is_ascii_alphabetic() || *next == '/' || *next == '!') =>
+            {
+                for inside in chars.by_ref() {
+                    if inside == '>' {
+                        break;
+                    }
+                }
+
+                // a tag is a word boundary: two paragraphs are two words rather than one run-on
+                pending_space = true;
+            }
+            '&' => {
+                let mut entity = String::new();
+
+                // long enough for the entities Sharkord's editor emits, short enough that a bare
+                // ampersand followed by prose does not eat it
+                while let Some(&next) = chars.peek() {
+                    if next == ';' || entity.len() >= 6 {
+                        break;
+                    }
+
+                    entity.push(next);
+                    chars.next();
+                }
+
+                let closed = chars.peek() == Some(&';');
+
+                if closed {
+                    chars.next();
+                }
+
+                match (closed, entity.as_str()) {
+                    (true, "nbsp") => pending_space = true,
+                    (true, "lt") => push('<', &mut text, &mut pending_space),
+                    (true, "gt") => push('>', &mut text, &mut pending_space),
+                    (true, "quot") => push('"', &mut text, &mut pending_space),
+                    (true, "#39" | "apos") => push('\'', &mut text, &mut pending_space),
+                    (true, "amp") => push('&', &mut text, &mut pending_space),
+                    // not an entity Shiver knows, so it is text: put back what was consumed
+                    _ => {
+                        push('&', &mut text, &mut pending_space);
+                        text.push_str(&entity);
+
+                        if closed {
+                            text.push(';');
+                        }
+                    }
+                }
+            }
+            _ if character.is_whitespace() => pending_space = true,
+            _ => push(character, &mut text, &mut pending_space),
         }
     }
 
-    let text = text
-        .replace("&nbsp;", " ")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        // last, so an escaped ampersand cannot revive one of the entities above
-        .replace("&amp;", "&");
-
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    text
 }
 
 /// Reads this user's conversations, and puts a name to each of them.
@@ -467,7 +522,8 @@ async fn fetch_dms(socket: &mut Socket, joined: &Value) -> Result<Vec<DirectMess
     // conversations. The two numbers disagreeing is the whole diagnosis.
     if parsed.len() != conversations.len() {
         eprintln!(
-            "[shiver] dms.get returned {} conversation(s) and {} could be read — the rest are              missing a userId, or a name for it in the join payload",
+            "[shiver] dms.get returned {} conversation(s) and {} could be read — the rest are \
+             missing a userId, or a name for it in the join payload",
             conversations.len(),
             parsed.len()
         );
@@ -643,14 +699,18 @@ pub fn set_unread(read_states: &mut HashMap<i64, u32>, channel_id: i64, count: u
 /// Muting is Shiver's, not the server's — the server keeps counting a muted channel and is right to,
 /// because the mute belongs to this user on this device. So the filter is applied here, at the last
 /// moment, rather than by asking the server for less.
+///
+/// The mute list arrives as a set rather than a slice. It was a `&[i64]`, and `contains` on a slice
+/// is a linear scan — inside an iteration over every channel, on every read-state event, which made
+/// the badge O(channels x mutes) for a number that is recomputed constantly.
 pub fn unread_total(
     read_states: &HashMap<i64, u32>,
     baseline: &HashMap<i64, u32>,
-    muted: &[i64],
+    muted: &std::collections::HashSet<i64>,
 ) -> u32 {
     read_states
         .iter()
-        .filter(|(channel, _)| !muted.contains(channel))
+        .filter(|(channel, _)| !muted.contains(*channel))
         .map(|(channel, count)| count.saturating_sub(baseline.get(channel).copied().unwrap_or(0)))
         .sum()
 }
@@ -808,12 +868,33 @@ pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Se
 }
 
 impl Session {
+    /// The next frame, or `None` once the connection has ended or gone quiet for too long.
+    ///
+    /// See `IDLE_TIMEOUT`. A socket that is open but silent is indistinguishable from a healthy one
+    /// from in here, and the caller retries a closed connection, so the timeout is what turns a
+    /// hung server back into a reconnect.
+    async fn next_frame(
+        &mut self,
+    ) -> Option<std::result::Result<Message, tokio_tungstenite::tungstenite::Error>> {
+        match tokio::time::timeout(IDLE_TIMEOUT, self.socket.next()).await {
+            Ok(frame) => frame,
+            Err(_) => {
+                eprintln!(
+                    "[shiver] a server said nothing for {}s, so the socket is being dropped",
+                    IDLE_TIMEOUT.as_secs()
+                );
+
+                None
+            }
+        }
+    }
+
     /// The next thing the server has to say, or `None` when the connection has ended.
     ///
     /// Frames Shiver does not understand are skipped rather than ending the loop: keepalives and
     /// whatever a later Sharkord adds are not errors.
     pub async fn next_event(&mut self) -> Option<Event> {
-        while let Some(frame) = self.socket.next().await {
+        while let Some(frame) = self.next_frame().await {
             let Ok(Message::Text(text)) = frame else {
                 // a close, a binary frame, or a broken socket all mean this connection is over
                 match frame {
@@ -879,6 +960,17 @@ impl Session {
     }
 }
 
+/// How long a joined socket may say nothing at all before Shiver treats it as dead.
+///
+/// Every step of the handshake is bounded, and then the event loop awaited the next frame forever
+/// — so liveness rested entirely on the server choosing to send its own keepalive. A server that
+/// holds the connection open and goes silent parked that watcher for the life of the process, with
+/// the rail still drawing it as online.
+///
+/// Comfortably longer than the thirty-second tRPC `PING`, so an ordinary quiet server is never cut
+/// off for being quiet.
+const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
 async fn send(socket: &mut Socket, frame: String) -> Result<()> {
     socket
         .send(Message::Text(frame))
@@ -930,6 +1022,13 @@ async fn await_reply(socket: &mut Socket, id: u32, path: &str) -> Result<Value> 
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// The mute list as `unread_total` wants it. A set rather than a slice, so the filter is a
+    /// hash lookup rather than a scan of the whole list per channel.
+    fn muted<const N: usize>(channels: [i64; N]) -> std::collections::HashSet<i64> {
+        channels.into_iter().collect()
+    }
 
     /// Trusting a server gives it room; it does not hand it the machine. An unbounded socket lets a
     /// server grow the read buffer as far as it likes, which on a phone is an app kill — so the
@@ -939,7 +1038,10 @@ mod tests {
         let normal = frame_cap(false).expect("the default is bounded");
         let trusted = frame_cap(true).expect("a trusted server is still bounded");
 
-        assert!(trusted > normal, "trusting a server should give it more room");
+        assert!(
+            trusted > normal,
+            "trusting a server should give it more room"
+        );
         assert!(
             trusted <= 256 * 1024 * 1024,
             "even a trusted server has to stay inside a phone's memory"
@@ -953,12 +1055,11 @@ mod tests {
         use tokio_tungstenite::tungstenite::error::CapacityError;
         use tokio_tungstenite::tungstenite::Error as Tungstenite;
 
-        let too_big = oversize_or_unreachable(Tungstenite::Capacity(
-            CapacityError::MessageTooLong {
+        let too_big =
+            oversize_or_unreachable(Tungstenite::Capacity(CapacityError::MessageTooLong {
                 size: 40_000_000,
                 max_size: MAX_FRAME,
-            },
-        ));
+            }));
 
         assert!(matches!(
             too_big,
@@ -972,7 +1073,6 @@ mod tests {
 
         assert!(matches!(dropped, Error::Unreachable(_)));
     }
-    use super::*;
 
     #[test]
     fn the_websocket_url_keeps_the_connection_params_query() {
@@ -993,6 +1093,44 @@ mod tests {
         assert!(ws_url("http://chat.example.com").is_err());
         assert!(ws_url("http://localhost:4991").is_err());
         assert!(ws_url("ftp://example.com").is_err());
+    }
+
+    /// A bare `<` in a message is a less-than sign, not the start of a tag.
+    ///
+    /// The stripper used to flip into tag state on any `<` and out of it on any `>`, so everything
+    /// between them was discarded: `1 < 2 and 3 > 4` reached the notification as "4", and an
+    /// unmatched `<` ate the rest of the message. Both are silent — the notification simply shows
+    /// the wrong text.
+    #[test]
+    fn a_bare_less_than_is_kept_as_text() {
+        assert_eq!(plain_text("1 < 2 and 3 > 4"), "1 < 2 and 3 > 4");
+        assert_eq!(plain_text("a < b"), "a < b");
+        assert_eq!(plain_text("unclosed < tail"), "unclosed < tail");
+        assert_eq!(plain_text("5<6"), "5<6");
+    }
+
+    /// And a real tag still comes off, with the word boundary it stood for.
+    #[test]
+    fn tags_still_come_off_and_leave_a_boundary() {
+        assert_eq!(plain_text("<p>hello</p><p>there</p>"), "hello there");
+        assert_eq!(plain_text("<b>bold</b>"), "bold");
+        assert_eq!(plain_text("<img src=\"x\">caption"), "caption");
+        assert_eq!(plain_text("<!-- note -->text"), "text");
+        assert_eq!(plain_text("  spaced   out  "), "spaced out");
+    }
+
+    /// The entities Sharkord's editor emits, and the ones it does not.
+    #[test]
+    fn entities_are_decoded_and_unknown_ones_are_left_alone() {
+        assert_eq!(plain_text("&lt;tag&gt;"), "<tag>");
+        assert_eq!(plain_text("a&nbsp;b"), "a b");
+        assert_eq!(plain_text("&quot;quoted&quot;"), "\"quoted\"");
+        assert_eq!(plain_text("it&#39;s"), "it's");
+        // an escaped ampersand must not revive one of the entities above
+        assert_eq!(plain_text("&amp;lt;"), "&lt;");
+        // not an entity, so it is text
+        assert_eq!(plain_text("Tom & Jerry"), "Tom & Jerry");
+        assert_eq!(plain_text("&unknown;"), "&unknown;");
     }
 
     /// The exact frame the server refused to work without.
@@ -1205,9 +1343,9 @@ mod tests {
         let states = HashMap::from([(1, 2), (2, 5), (3, 1)]);
         let none = HashMap::new();
 
-        assert_eq!(unread_total(&states, &none, &[]), 8);
-        assert_eq!(unread_total(&states, &none, &[2]), 3);
-        assert_eq!(unread_total(&states, &none, &[1, 2, 3]), 0);
+        assert_eq!(unread_total(&states, &none, &muted([])), 8);
+        assert_eq!(unread_total(&states, &none, &muted([2])), 3);
+        assert_eq!(unread_total(&states, &none, &muted([1, 2, 3])), 0);
     }
 
     /// The badge is what arrived while Shiver was watching. A public server's backlog is not news,
@@ -1217,12 +1355,12 @@ mod tests {
         let baseline = HashMap::from([(1, 40), (2, 900)]);
 
         // nothing has happened since Shiver connected
-        assert_eq!(unread_total(&baseline, &baseline, &[]), 0);
+        assert_eq!(unread_total(&baseline, &baseline, &muted([])), 0);
 
         // two messages in one channel, none in the other
         let states = HashMap::from([(1, 42), (2, 900)]);
 
-        assert_eq!(unread_total(&states, &baseline, &[]), 2);
+        assert_eq!(unread_total(&states, &baseline, &muted([])), 2);
     }
 
     /// Reading one channel elsewhere must not eat another channel's news, which summing the
@@ -1233,7 +1371,7 @@ mod tests {
         // channel 1 was read somewhere else, channel 2 has three new messages
         let states = HashMap::from([(1, 0), (2, 13)]);
 
-        assert_eq!(unread_total(&states, &baseline, &[]), 3);
+        assert_eq!(unread_total(&states, &baseline, &muted([])), 3);
     }
 
     /// A channel created after Shiver connected has no floor, so all of it is new.
@@ -1242,7 +1380,7 @@ mod tests {
         let baseline = HashMap::from([(1, 5)]);
         let states = HashMap::from([(1, 5), (2, 4)]);
 
-        assert_eq!(unread_total(&states, &baseline, &[]), 4);
+        assert_eq!(unread_total(&states, &baseline, &muted([])), 4);
     }
 
     /// The server sends a delta of 1 per message rather than a total, so this accumulates — and
@@ -1278,7 +1416,10 @@ mod plugin_tests {
 
     #[test]
     fn finds_the_plugin_among_others() {
-        assert_eq!(plugin_version(&payload(), SHIVER_PLUGIN_ID), Some("0.1.0".into()));
+        assert_eq!(
+            plugin_version(&payload(), SHIVER_PLUGIN_ID),
+            Some("0.1.0".into())
+        );
     }
 
     #[test]
@@ -1292,7 +1433,10 @@ mod plugin_tests {
     fn absent_when_the_server_does_not_mention_plugins() {
         // an older Sharkord, or a payload shape that has moved: not installed, as far as Shiver can
         // tell, which is the safe answer — the features behind it degrade rather than misbehave
-        assert_eq!(plugin_version(&serde_json::json!({}), SHIVER_PLUGIN_ID), None);
+        assert_eq!(
+            plugin_version(&serde_json::json!({}), SHIVER_PLUGIN_ID),
+            None
+        );
     }
 }
 
@@ -1345,7 +1489,10 @@ mod read_state_tests {
 
         assert_eq!(
             parse_delta(&frame),
-            Some(Event::Unread { channel_id: 4, delta: 1 })
+            Some(Event::Unread {
+                channel_id: 4,
+                delta: 1
+            })
         );
     }
 
@@ -1356,7 +1503,10 @@ mod read_state_tests {
 
         assert_eq!(
             parse_delta(&frame),
-            Some(Event::UnreadSet { channel_id: 4, count: 0 })
+            Some(Event::UnreadSet {
+                channel_id: 4,
+                count: 0
+            })
         );
     }
 

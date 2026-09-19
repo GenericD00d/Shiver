@@ -52,10 +52,5 @@ pub fn channel_viewed<R: Runtime>(app: &AppHandle<R>, entry_id: &str, channel_id
 /// quietly eat the badges for whatever channel the user left open somewhere else.
 pub fn is_on_screen<R: Runtime>(app: &AppHandle<R>, entry_id: &str) -> bool {
     let active = app.state::<ActiveServer>();
-    let on_screen = active.get().as_deref() == Some(entry_id) && active.showing_server();
-
-    if !on_screen {
-    }
-
-    on_screen
+    active.get().as_deref() == Some(entry_id) && active.showing_server()
 }

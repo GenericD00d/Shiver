@@ -3,13 +3,16 @@
 //! Shiver signs in *for* the user so a server opens straight into the app rather than its login page,
 //! which means Shiver does handle the password: it posts it to the server the user named and keeps it
 //! here so it can sign in again later. Nothing is written to a file, the registry or Shiver's own json
-//! — the keychain is what DESIGN.md's "never in plaintext" rule is satisfied by.
+//! — the keychain is what the "never in plaintext" rule in the README is satisfied by.
 //!
 //! Both are keyed by server entry id, never by origin, so two accounts on the same server stay
 //! separate and neither can be read through the other.
 //!
-//! There is no backend here for Android or iOS. `keyring` has none, which is why the mobile client
-//! keeps no credentials and signs in on the server's own page (`ARCHITECTURE.md` §3).
+//! There is no `keyring` backend for Android or iOS, so this module has none either. That does not
+//! mean the mobile client keeps nothing — it brings its own store rather than going without:
+//! `mobile/plugins/tauri-plugin-shiver-secrets` holds the same two secrets in
+//! `EncryptedSharedPreferences`, keyed by the Android Keystore. This file is the desktop half of
+//! that arrangement, not the whole of it.
 
 use crate::error::Result;
 
@@ -65,9 +68,10 @@ mod backend {
     }
 }
 
-// android and ios have no keyring backend. rather than quietly falling back to a plaintext file,
-// Shiver keeps nothing: the user signs in on the server's own page there until a platform keystore
-// is wired up.
+// No keyring backend here, and no plaintext fallback: a secret that cannot be stored safely is one
+// this module declines to store. The mobile client does not reach this arm — it has its own
+// Keystore-backed plugin — so anything that does land here is a platform Shiver has not been taught
+// about, and losing the secret is the right failure.
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 mod backend {
     use super::Secret;
@@ -110,4 +114,52 @@ pub fn forget(kind: Secret, entry_id: &str) -> Result<()> {
 pub fn forget_all(entry_id: &str) -> Result<()> {
     backend::delete(Secret::Session, entry_id)?;
     backend::delete(Secret::Password, entry_id)
+}
+
+/* ───────────────── off the async runtime's workers ───────────────── */
+
+// Every function above is synchronous, and `keyring` genuinely blocks: on Linux a read is a D-Bus
+// round trip to the Secret Service that can take a while and can put a keyring-unlock prompt in
+// front of the user. Most of Shiver's callers are `async fn`s, and a bare call from one of those
+// parks a runtime worker for the duration — the same hazard `permissions::clear_media_permissions`
+// documents at length, applied to the calls that happen far more often.
+//
+// So the async callers use these instead, and the synchronous ones keep the plain versions.
+
+/// One secret, read without blocking the caller's worker.
+pub async fn read_off_thread(kind: Secret, entry_id: &str) -> Option<String> {
+    let entry_id = entry_id.to_string();
+
+    tauri::async_runtime::spawn_blocking(move || read(kind, &entry_id).ok().flatten())
+        .await
+        .ok()
+        .flatten()
+}
+
+/// One secret, written without blocking the caller's worker.
+pub async fn store_off_thread(kind: Secret, entry_id: &str, value: &str) -> Result<()> {
+    let entry_id = entry_id.to_string();
+    let value = value.to_string();
+
+    tauri::async_runtime::spawn_blocking(move || store(kind, &entry_id, &value))
+        .await
+        .map_err(|error| crate::error::Error::Secrets(error.to_string()))?
+}
+
+/// One secret, dropped without blocking the caller's worker.
+pub async fn forget_off_thread(kind: Secret, entry_id: &str) -> Result<()> {
+    let entry_id = entry_id.to_string();
+
+    tauri::async_runtime::spawn_blocking(move || forget(kind, &entry_id))
+        .await
+        .map_err(|error| crate::error::Error::Secrets(error.to_string()))?
+}
+
+/// Both of a server's secrets, dropped without blocking the caller's worker.
+pub async fn forget_all_off_thread(entry_id: &str) -> Result<()> {
+    let entry_id = entry_id.to_string();
+
+    tauri::async_runtime::spawn_blocking(move || forget_all(&entry_id))
+        .await
+        .map_err(|error| crate::error::Error::Secrets(error.to_string()))?
 }

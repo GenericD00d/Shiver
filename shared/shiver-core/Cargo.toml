@@ -1,0 +1,19 @@
+[package]
+name = "shiver-core"
+version = "0.1.3"
+description = "The pieces of Shiver both clients need to agree on: origin rules and the registry store"
+edition = "2021"
+rust-version = "1.77"
+
+# Shared by both clients on purpose, for the same reason `sharkord-client` is.
+#
+# `normalize_origin` and `is_same_origin` were byte-identical copies in `desktop/` and `mobile/`,
+# each with its own copy of the tests, and `model.rs` calls the second of them "the whole of
+# Shiver's origin pinning" — two copies of that is two things to keep in step and one of them will
+# eventually be the one somebody forgets. `store.rs` was the same file in both crates apart from a
+# test helper.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+url = "2"

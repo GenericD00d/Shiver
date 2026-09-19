@@ -421,29 +421,30 @@ pub fn relayout(app: &AppHandle) -> Result<()> {
     let (bell_position, bell_size) = bell_rect(&window)?;
     let (popup_position, popup_size) = popup_rect(&window)?;
 
+    // One webview failing to move is not a reason to leave every webview after it where it was:
+    // a `?` here meant a resize could half-apply and leave two pages overlapping.
     for webview in window.webviews() {
-        match webview.label() {
-            SHELL_WEBVIEW => {
-                webview.set_position(LogicalPosition::new(0.0, 0.0))?;
-                webview.set_size(LogicalSize::new(size.width, size.height))?;
-            }
-            OVERLAY_WEBVIEW => {
-                webview.set_position(bell_position)?;
-                webview.set_size(bell_size)?;
-            }
-            POPUP_WEBVIEW => {
-                webview.set_position(popup_position)?;
-                webview.set_size(popup_size)?;
-            }
+        let placed = match webview.label() {
+            SHELL_WEBVIEW => webview
+                .set_position(LogicalPosition::new(0.0, 0.0))
+                .and_then(|()| webview.set_size(LogicalSize::new(size.width, size.height))),
+            OVERLAY_WEBVIEW => webview
+                .set_position(bell_position)
+                .and_then(|()| webview.set_size(bell_size)),
+            POPUP_WEBVIEW => webview
+                .set_position(popup_position)
+                .and_then(|()| webview.set_size(popup_size)),
             // a conversation view is inset by Shiver's DM list, a server view is not
-            label if label.starts_with("dm::") => {
-                webview.set_position(dm_position)?;
-                webview.set_size(dm_content)?;
-            }
-            _ => {
-                webview.set_position(position)?;
-                webview.set_size(content)?;
-            }
+            label if label.starts_with("dm::") => webview
+                .set_position(dm_position)
+                .and_then(|()| webview.set_size(dm_content)),
+            _ => webview
+                .set_position(position)
+                .and_then(|()| webview.set_size(content)),
+        };
+
+        if let Err(error) = placed {
+            eprintln!("[shiver] could not lay out {}: {error}", webview.label());
         }
     }
 
@@ -576,15 +577,14 @@ pub fn show_server(
         )?;
     }
 
-    for webview in window.webviews() {
-        if matches!(webview.label(), SHELL_WEBVIEW | OVERLAY_WEBVIEW)
-            || webview.label() == webview_label(&entry.id)
-        {
-            continue;
-        }
-
-        webview.hide()?;
-    }
+    // `is_shiver_chrome` rather than a list spelled out here, which is what this used to be — and
+    // it left `POPUP_WEBVIEW` out. Opening a server with the feed up therefore hid the feed without
+    // anything clearing `overlay_expanded`, so the core went on believing it was open and the next
+    // click on the bell computed "close" for a popup nobody could see. Two clicks to reopen it,
+    // which is the same bug the reopen guard above was written to fix in its other form.
+    hide_all_but(&window, |label| {
+        is_shiver_chrome(label) || label == webview_label(&entry.id)
+    });
 
     if let Some(webview) = find_server_webview(app, &entry.id) {
         let (position, size) = content_rect(&window)?;
@@ -664,16 +664,28 @@ pub fn show_shell_only(app: &AppHandle) -> Result<()> {
     // stop counting whatever conversation was last up as being read.
     app.state::<ActiveServer>().set_dm_on_screen(None);
 
+    // the bell belongs to Shiver, not to the server, so it stays up over Shiver's own panels
+    hide_all_but(&window, is_shiver_chrome);
+
+    Ok(())
+}
+
+/// Hides every webview the predicate does not keep.
+///
+/// A helper rather than three copies of the loop, and it reports failures instead of stopping at
+/// the first. `webview.hide()?` inside the loop meant one webview failing to hide — routine while
+/// something is being torn down — left every webview after it still on screen, which is two server
+/// pages stacked on top of each other.
+fn hide_all_but(window: &Window, keep: impl Fn(&str) -> bool) {
     for webview in window.webviews() {
-        // the bell belongs to Shiver, not to the server, so it stays up over Shiver's own panels
-        if is_shiver_chrome(webview.label()) {
+        if keep(webview.label()) {
             continue;
         }
 
-        webview.hide()?;
+        if let Err(error) = webview.hide() {
+            eprintln!("[shiver] could not hide {}: {error}", webview.label());
+        }
     }
-
-    Ok(())
 }
 
 /// Closes the server pages past the user's `pages_kept`, oldest first.
@@ -692,7 +704,11 @@ pub fn show_shell_only(app: &AppHandle) -> Result<()> {
 /// Never the server on screen, and **never one holding a call** — a closed page is a dropped call,
 /// and a person who joined voice on one server and went to read another expects to still be in it.
 pub fn trim_pages(app: &AppHandle) {
-    let keep = app.state::<crate::store::Store>().registry().settings.pages_kept();
+    let keep = app
+        .state::<crate::store::Store>()
+        .registry()
+        .settings
+        .pages_kept();
     let active = app.state::<ActiveServer>();
     let showing = active.get();
     let in_call = app.state::<crate::voice::VoiceState>().holder();
@@ -917,13 +933,7 @@ pub fn show_dm_view(
     active.set_showing_server(false);
 
     // only ever one conversation view at a time, and no server view visible behind it
-    for webview in window.webviews() {
-        if is_shiver_chrome(webview.label()) || webview.label() == label {
-            continue;
-        }
-
-        webview.hide()?;
-    }
+    hide_all_but(&window, |other| is_shiver_chrome(other) || other == label);
 
     if let Some(webview) = app.get_webview(&label) {
         let (position, size) = dm_content_rect(&window)?;
@@ -1022,7 +1032,9 @@ pub fn hide_dm_views(app: &AppHandle) -> Result<()> {
 
     for webview in window.webviews() {
         if webview.label().starts_with("dm::") {
-            webview.hide()?;
+            if let Err(error) = webview.hide() {
+                eprintln!("[shiver] could not hide {}: {error}", webview.label());
+            }
         }
     }
 
@@ -1088,10 +1100,13 @@ fn theme_payload(settings: &Settings) -> serde_json::Value {
         return serde_json::Value::Null;
     }
 
+    // Checked here as well as at the door. The bridge puts these into a `<style>` element, so the
+    // last thing that touches them before they become CSS is the right place for the guarantee to
+    // be unconditional rather than dependent on which path the settings arrived by.
     json!({
-        "themeColor": settings.theme_color,
-        "accentColor": settings.accent_color,
-        "textColor": settings.text_color,
+        "themeColor": crate::model::sanitised_color(&settings.theme_color, crate::model::DEFAULT_THEME_COLOR),
+        "accentColor": crate::model::sanitised_color(&settings.accent_color, crate::model::DEFAULT_ACCENT_COLOR),
+        "textColor": crate::model::sanitised_optional_color(settings.text_color.as_deref()),
     })
 }
 

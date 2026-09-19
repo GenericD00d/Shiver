@@ -1,7 +1,4 @@
 use serde::{Deserialize, Serialize};
-use url::Url;
-
-use crate::error::{Error, Result};
 
 /// One entry in the server rail. The same `origin` may appear more than once so a user can be
 /// signed in to one server under several accounts; `id` is what identifies the session everywhere
@@ -161,7 +158,63 @@ impl Default for Settings {
     }
 }
 
+/// A colour Shiver is willing to put in a stylesheet, or the default in its place.
+///
+/// **This is the check that was missing.** These are plain strings, they are accepted wholesale by
+/// `update_settings` and they live in a file a person can edit — and the bridge interpolates them
+/// straight into a `<style>` element's `textContent`, which is parsed as CSS. A value containing
+/// `}` closes the rule block, and everything after it is arbitrary CSS injected into every Sharkord
+/// page. The neighbouring `sound_volume` is clamped with a comment making exactly this argument
+/// about exactly this file; the colours never got it.
+///
+/// Six hex digits with a leading `#`, which is all the colour input can produce and all either
+/// side knows how to read.
+pub fn sanitised_color(value: &str, fallback: &str) -> String {
+    if is_hex_color(value) {
+        return value.to_ascii_lowercase();
+    }
+
+    eprintln!("[shiver] '{value}' is not a colour Shiver will use, falling back to {fallback}");
+
+    fallback.to_string()
+}
+
+/// The same rule, for the optional text colour: kept when it is a colour, dropped when it is not.
+pub fn sanitised_optional_color(value: Option<&str>) -> Option<String> {
+    match value {
+        Some(value) if is_hex_color(value) => Some(value.to_ascii_lowercase()),
+        Some(value) => {
+            eprintln!("[shiver] '{value}' is not a colour Shiver will use, so text follows the background");
+
+            None
+        }
+        None => None,
+    }
+}
+
+fn is_hex_color(value: &str) -> bool {
+    let Some(digits) = value.strip_prefix('#') else {
+        return false;
+    };
+
+    digits.len() == 6 && digits.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 impl Settings {
+    /// Every colour in this struct, held to what is safe to put in a stylesheet.
+    ///
+    /// Applied on the way in from the settings screen and on the way out of the file, so a value
+    /// that was already stored by an older build cannot reach the bridge either.
+    pub fn sanitised(mut self) -> Self {
+        self.theme_color = sanitised_color(&self.theme_color, DEFAULT_THEME_COLOR);
+        self.accent_color = sanitised_color(&self.accent_color, DEFAULT_ACCENT_COLOR);
+        self.text_color = sanitised_optional_color(self.text_color.as_deref());
+        self.sound_volume = self.sound_volume.min(MAX_SOUND_VOLUME);
+        self.pages_kept = self.pages_kept.clamp(MIN_PAGES_KEPT, MAX_PAGES_KEPT);
+
+        self
+    }
+
     /// The setting, held to what Shiver can actually honour.
     ///
     /// Clamped at the point of use rather than trusted from the file: `settings.json` is a file on
@@ -231,159 +284,12 @@ pub struct ServerInfo {
     pub icon_url: Option<String>,
 }
 
-/// Reduces a user-typed address to a bare `scheme://host[:port]` origin.
+/// The origin rules, which live in `shared/shiver-core` so there is one copy rather than two.
 ///
-/// Every Shiver security boundary is keyed on this string, so it rejects anything that could make
-/// two different servers compare equal: embedded credentials and paths. It also rejects any scheme
-/// but https, which is a separate rule with its own reason — see below.
-pub fn normalize_origin(input: &str) -> Result<String> {
-    let trimmed = input.trim();
-
-    if trimmed.is_empty() {
-        return Err(Error::InvalidOrigin("Enter a server address".into()));
-    }
-
-    // a bare host is the common case when typing an address, and https is the only scheme Shiver
-    // accepts, so there is nothing to guess
-    let candidate = if trimmed.contains("://") {
-        trimmed.to_string()
-    } else {
-        format!("https://{trimmed}")
-    };
-
-    let url = Url::parse(&candidate)
-        .map_err(|_| Error::InvalidOrigin(format!("'{trimmed}' is not a valid address")))?;
-
-    // https only, and no exception for localhost or a private address. The reason is not only the
-    // wire: Shiver signing a user in over http would make cleartext credentials a supported way to
-    // use it, and that is not a thing this client should teach anyone to accept.
-    if url.scheme() != "https" {
-        return Err(Error::InvalidOrigin(
-            "Shiver only connects over https. An http:// address would put your password and session on the wire in the clear.".into(),
-        ));
-    }
-
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err(Error::InvalidOrigin(
-            "Addresses must not contain a username or password".into(),
-        ));
-    }
-
-    let host = url
-        .host_str()
-        .ok_or_else(|| Error::InvalidOrigin(format!("'{trimmed}' has no host")))?;
-
-    match url.port() {
-        Some(port) => Ok(format!("{}://{}:{}", url.scheme(), host, port)),
-        None => Ok(format!("{}://{}", url.scheme(), host)),
-    }
-}
-
-/// True when `url` belongs to `origin`. This is the whole of Shiver's origin pinning: a webview is
-/// allowed to navigate within the server it was opened for and nowhere else.
-pub fn is_same_origin(origin: &str, url: &Url) -> bool {
-    let host = match url.host_str() {
-        Some(host) => host,
-        None => return false,
-    };
-
-    let candidate = match url.port() {
-        Some(port) => format!("{}://{}:{}", url.scheme(), host, port),
-        None => format!("{}://{}", url.scheme(), host),
-    };
-
-    candidate == origin
-}
+/// These were byte-identical in both clients, tests included, and `is_same_origin` is the whole of
+/// Shiver's webview pinning — the single comparison that decides whether a page may navigate
+/// somewhere. Re-exported rather than moved out of sight, so every existing caller reads the same.
+pub use shiver_core::{is_same_origin, normalize_origin};
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalizes_a_bare_host_to_https() {
-        assert_eq!(
-            normalize_origin("chat.example.com").unwrap(),
-            "https://chat.example.com"
-        );
-    }
-
-    /// The two ways a person actually types an address. Both must land on the same origin, since
-    /// every security boundary in Shiver is keyed on that string.
-    #[test]
-    fn both_ways_of_typing_an_address_agree() {
-        let expected = "https://chat.example.com";
-
-        for typed in [
-            "chat.example.com",
-            "https://chat.example.com",
-            "https://chat.example.com/",
-            "  chat.example.com  ",
-            "HTTPS://chat.example.com",
-            "https://chat.example.com/channels/12",
-        ] {
-            assert_eq!(
-                normalize_origin(typed).unwrap(),
-                expected,
-                "'{typed}' should normalise to {expected}"
-            );
-        }
-    }
-
-    #[test]
-    fn keeps_an_explicit_port_and_drops_the_path() {
-        assert_eq!(
-            normalize_origin("https://localhost:4991/channels/1").unwrap(),
-            "https://localhost:4991"
-        );
-    }
-
-    /// The rule the user asked for, in every shape it can be typed. There is deliberately no
-    /// exemption for localhost or a private address: an http address is refused everywhere.
-    #[test]
-    fn refuses_plain_http_however_it_is_written() {
-        for address in [
-            "http://chat.example.com",
-            "HTTP://chat.example.com",
-            "http://localhost:4991",
-            "http://127.0.0.1:4991",
-            "http://192.168.1.10",
-        ] {
-            let refused = normalize_origin(address);
-
-            assert!(refused.is_err(), "{address} should have been refused");
-            assert!(
-                refused.unwrap_err().to_string().contains("https"),
-                "{address}: the refusal should say what is wanted instead"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_credentials_and_foreign_schemes() {
-        assert!(normalize_origin("https://user:pw@example.com").is_err());
-        assert!(normalize_origin("ftp://example.com").is_err());
-        assert!(normalize_origin("   ").is_err());
-    }
-
-    #[test]
-    fn same_origin_is_exact_on_scheme_host_and_port() {
-        let origin = "https://example.com";
-
-        assert!(is_same_origin(
-            origin,
-            &Url::parse("https://example.com/a/b").unwrap()
-        ));
-        assert!(!is_same_origin(
-            origin,
-            &Url::parse("http://example.com").unwrap()
-        ));
-        assert!(!is_same_origin(
-            origin,
-            &Url::parse("https://example.com:8443").unwrap()
-        ));
-        assert!(!is_same_origin(
-            origin,
-            &Url::parse("https://evil.example.com").unwrap()
-        ));
-    }
-}
+mod tests {}

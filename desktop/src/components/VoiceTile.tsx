@@ -18,7 +18,7 @@ type Props = {
 /**
  * The call, in Shiver's own chrome.
  *
- * DESIGN.md asks for voice controls that are there whichever server is on screen, and the rail is
+ * Voice controls that are there whichever server is on screen, and the rail is
  * the only part of Shiver that is always visible: server webviews start to the right of it, so a
  * control drawn here is never covered by the server the user has navigated to. That is also why it
  * is not a floating overlay like the bell — the bell has to sit over a server's top bar, this does

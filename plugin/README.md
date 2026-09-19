@@ -98,10 +98,14 @@ payload is something a third party reads. Shiver only needs "look again"; it fin
 arrived over its own connection. A leaked endpoint is therefore worth spam, not messages.
 
 **One thing to be aware of as an admin.** The endpoint is a URL supplied by a user that this server
-then fetches, so it is checked before it is ever stored: https only, and the hostname is resolved
-and refused if it lands on a private, loopback or link-local address. Without that, someone could
-point an endpoint at a service on your own network and use the plugin to reach it. DNS rebinding is
-not defeated — the check happens at registration, not at send time.
+then fetches, so it is checked before it is stored *and again immediately before every send*: https
+only, the hostname resolved, and refused if any address it resolves to is private, loopback or
+link-local. Redirects are never followed — a relay answering `307 Location: http://localhost:6379/`
+would otherwise walk the request straight past all of that, with the method and body intact.
+
+DNS rebinding is still not fully defeated: re-checking at send time narrows the window to that one
+request rather than closing it. Closing it means pinning the connection to the address that was
+vetted, which has not been done.
 
 Nothing here is required. A server without this plugin simply cannot wake a closed phone, which is
 exactly how Shiver behaved before.
