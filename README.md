@@ -96,6 +96,11 @@ cd mobile && bun install
 ./node_modules/.bin/tauri android build --apk   # call the binary directly, not through bun
 ```
 
+A release APK needs the signing key, and the build refuses to produce an unsigned one rather than
+handing you an artifact that installs on your own phone and can never update anybody else's. Use
+`--debug` to build without it. [`RELEASING.md`](RELEASING.md) covers both signing keys, what each
+protects, and what is and is not recoverable if one is lost.
+
 ## Layout
 
 | Path | What it is |

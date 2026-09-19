@@ -77,10 +77,25 @@ keystore.properties
 # by default rather than private only if someone remembers to add it here.
 *.md
 
-# The two that are genuinely for other people: the front page of the repo, and the instructions a
-# server admin reads when installing the companion plugin (which also ships inside its zip).
+# The ones that are genuinely for other people. The blanket ignore above is the right default and
+# this is the list of things it is wrong about — which is a list that has to be kept up, because a
+# file missed here is not committed and nothing says so: `git add -A` skips it in silence, and the
+# first sign is a link in the README that 404s for everyone but the person who wrote it.
+#
+# The front page of the repo, and the instructions a server admin reads when installing the
+# companion plugin (which also ships inside its zip).
 !README.md
 !plugin/README.md
+
+# How to report a security problem. This one has to be public to do its job at all — GitHub reads
+# it to put the "Report a vulnerability" button on the repo, and a disclosure route nobody can find
+# is the same as not having one.
+!SECURITY.md
+
+# How a release is built and what the signing keys protect. Public because it explains why releases
+# are local and deliberate rather than automated, which is otherwise a strange thing to find. It
+# names no key, no password and no path to either.
+!RELEASING.md
 
 # Screenshots dropped in to report a bug. They are how a fault gets described, not part of the
 # project, and they are named predictably enough to be caught here rather than re-explained.
