@@ -7,7 +7,7 @@
 //! client in it costs on the order of a hundred megabytes, and people are in dozens of servers.
 //!
 //! Mobile never had the option. Android gives a window one webview, so the servers not on screen
-//! had to be spoken to directly, and `shiver-sharkord` is that conversation. This module is desktop
+//! had to be spoken to directly, and `sharkord-client` is that conversation. This module is desktop
 //! doing the same thing for the opposite reason: not because it cannot open a page, but because it
 //! should not open thirty.
 //!
@@ -31,7 +31,7 @@ use std::{
 
 use tauri::{async_runtime::JoinHandle, AppHandle, Manager, Runtime};
 
-use shiver_sharkord as sharkord;
+use sharkord_client as sharkord;
 
 use crate::{
     commands, drain,

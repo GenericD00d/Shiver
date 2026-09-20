@@ -21,8 +21,10 @@ pub enum Error {
     #[error("{0} does not look like a Sharkord server")]
     NotSharkord(String),
 
+    /// A server answered and said no. The message is the server's own words, already written for
+    /// a person to read, so it is passed through rather than replaced.
     #[error("{0}")]
-    SignIn(String),
+    Refused(String),
 
     #[error("Could not save your servers: {0}")]
     Storage(String),

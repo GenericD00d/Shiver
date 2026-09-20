@@ -48,6 +48,9 @@ will serve you perfectly well.
   not connect** even on a machine that trusts it — worth knowing, because it presents as the server
   being unreachable
 - **Unread badges per server**, cleared by opening it, with per-channel mutes excluded
+- **A direct message inbox across servers**, ordered by when the last message arrived and labelled
+  with the server it is on. It lives on Shiver's own screen rather than inside a server's page,
+  which is what keeps one server from being handed the name of everyone you talk to on the others
 - **Per-channel mute** — dimmed in the channel list, no notification, no sound
 - **Your colours** applied to Shiver and to each server's client. On the defaults Shiver restyles
   nothing, so servers look exactly as they do in a browser
@@ -62,7 +65,6 @@ will serve you perfectly well.
 - **Global voice controls** in the rail, reachable whichever server is on screen. One call at a
   time across all of them
 - **A system-wide shortcut** for muting your microphone
-- A **direct message inbox** across servers, labelled by account
 
 **Android**
 

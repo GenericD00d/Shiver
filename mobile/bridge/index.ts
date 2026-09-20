@@ -3062,10 +3062,14 @@ function markAllChannelsRead() {
 /**
  * Ends the session this page holds.
  *
- * Shiver stores no credentials on Android, so there is nothing of its own to forget — signing out
- * means clearing what *Sharkord* persisted: the auto-login token that would otherwise sign the user
- * straight back in, the live session, and the remembered identity. The reload then lands on the
- * server's own connect form, which is what logging out should look like.
+ * **This clears the page's own storage, not Shiver's.** Shiver does keep credentials on Android —
+ * the session, and the password where the user asked it to, in `EncryptedSharedPreferences` under
+ * the Android Keystore — and forgetting those is `log_out_server` and `forget_password` on the
+ * core, reached from the rail's menu rather than from in here. What this handles is the other
+ * half: what *Sharkord* persisted in the page, which the core cannot reach. The auto-login token
+ * that would otherwise sign the user straight back in, the live session, and the remembered
+ * identity. The reload then lands on the server's own connect form, which is what logging out
+ * should look like.
  */
 function signOut() {
   for (const key of ['sharkord-auto-login', 'sharkord-auto-login-token', 'sharkord-identity']) {

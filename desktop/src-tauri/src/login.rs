@@ -20,7 +20,7 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(20);
 /// before https was required — would otherwise still be signed in to over http.
 pub async fn sign_in(origin: &str, identity: &str, password: &str) -> Result<String> {
     if !origin.starts_with("https://") {
-        return Err(Error::SignIn(
+        return Err(Error::Refused(
             "Shiver will not send a password over http. Use an https address for this server."
                 .into(),
         ));
@@ -32,7 +32,7 @@ pub async fn sign_in(origin: &str, identity: &str, password: &str) -> Result<Str
     // Shiver hand the user's password to a host the user never named. Sharkord answers this
     // endpoint directly, so refusing to be sent elsewhere costs nothing legitimate. `http` is
     // where that policy and the body cap both live now.
-    let client = crate::http::client(LOGIN_TIMEOUT)
+    let client = shiver_core::http::client(LOGIN_TIMEOUT)
         .map_err(|error| Error::Unreachable(error.to_string()))?;
 
     // The serialised body is wiped once it has been handed over, rather than dropped with the
@@ -62,18 +62,18 @@ pub async fn sign_in(origin: &str, identity: &str, password: &str) -> Result<Str
 
     let status = response.status();
 
-    let body: Value = crate::http::json_within_limit(response)
+    let body: Value = shiver_core::http::json_within_limit(response)
         .await
         .ok_or_else(|| Error::NotSharkord(origin.to_string()))?;
 
     if !status.is_success() {
-        return Err(Error::SignIn(login_error_message(&body)));
+        return Err(Error::Refused(login_error_message(&body)));
     }
 
     body.get("token")
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| Error::SignIn("The server did not return a session".into()))
+        .ok_or_else(|| Error::Refused("The server did not return a session".into()))
 }
 
 /// Sharkord reports a bad password as `{ errors: { identity: "Invalid credentials" } }` and other
@@ -141,7 +141,7 @@ mod tests {
     async fn refuses_to_send_a_password_over_http() {
         let refused = sign_in("http://chat.example.com", "someone", "hunter2").await;
 
-        assert!(matches!(refused, Err(Error::SignIn(_))));
+        assert!(matches!(refused, Err(Error::Refused(_))));
         assert!(refused.unwrap_err().to_string().contains("https"));
     }
 }

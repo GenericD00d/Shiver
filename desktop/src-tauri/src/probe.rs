@@ -16,7 +16,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 pub async fn fetch_info(origin: &str) -> Result<ServerInfo> {
     // Nowhere but the address the user typed, and no more of the answer than a `/info` can
     // honestly be — see `http`.
-    let client = crate::http::client(PROBE_TIMEOUT)
+    let client = shiver_core::http::client(PROBE_TIMEOUT)
         .map_err(|error| Error::Unreachable(error.to_string()))?;
 
     let response = client
@@ -29,7 +29,7 @@ pub async fn fetch_info(origin: &str) -> Result<ServerInfo> {
         return Err(Error::NotSharkord(origin.to_string()));
     }
 
-    let body: Value = crate::http::json_within_limit(response)
+    let body: Value = shiver_core::http::json_within_limit(response)
         .await
         .ok_or_else(|| Error::NotSharkord(origin.to_string()))?;
 

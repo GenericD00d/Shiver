@@ -54,11 +54,27 @@ Also back up, because they are needed to *use* the keys and are not secret:
 
 ## Building a release
 
-Bump the version in **three** places — they are not derived from one another:
+Bump the version in **eight** places — none of them is derived from any other:
 
-- `desktop/src-tauri/tauri.conf.json` → `version`
-- `mobile/src-tauri/tauri.conf.json` → `version`
+- `desktop/package.json` and `mobile/package.json` → `version`
+- `desktop/src-tauri/tauri.conf.json` and `mobile/src-tauri/tauri.conf.json` → `version`
 - `desktop/src-tauri/Cargo.toml` and `mobile/src-tauri/Cargo.toml` → `package.version`
+- `shared/shiver-core/Cargo.toml` and `shared/sharkord-client/Cargo.toml` → `package.version`
+
+`scripts/check-versions.py` fails if they disagree and runs on every push, so a missed one is a
+red build rather than a bad release. Run it before you build:
+
+```bash
+python3 scripts/check-versions.py
+```
+
+**Android derives `versionCode` from its `tauri.conf.json`**, so a copy left behind there produces
+an APK that installs on a clean phone and cannot upgrade one that already has Shiver — the failure
+`RELEASING.md` exists to prevent, arriving by a different door.
+
+The companion plugin is deliberately outside this list. It installs separately and its
+`plugin/manifest.json` version is its own, bumped when the plugin changes rather than to match an
+app release.
 
 ### Desktop
 

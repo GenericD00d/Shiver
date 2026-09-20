@@ -12,7 +12,7 @@ pub enum Error {
     #[error("That server is not in your list")]
     UnknownServer,
 
-    #[error("That folder is not in your rail")]
+    #[error("That folder is not in your list")]
     UnknownFolder,
 
     #[error("Could not reach {0}. Check the address and that the server is running.")]
@@ -21,7 +21,7 @@ pub enum Error {
     #[error("{0} does not look like a Sharkord server")]
     NotSharkord(String),
 
-    // `TooLarge` lives in `shiver-sharkord`, which is the only thing that can raise it.
+    // `TooLarge` lives in `sharkord-client`, which is the only thing that can raise it.
     #[error("Could not save your servers: {0}")]
     Storage(String),
 

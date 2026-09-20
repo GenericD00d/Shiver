@@ -36,7 +36,7 @@ pub async fn sign_in(origin: &str, identity: &str, password: &str) -> Result<Str
     // Shiver hand the user's password to a host the user never named. Sharkord answers this
     // endpoint directly, so refusing to be sent elsewhere costs nothing legitimate. `http` is
     // where that policy and the body cap both live now.
-    let client = crate::http::client(LOGIN_TIMEOUT)
+    let client = shiver_core::http::client(LOGIN_TIMEOUT)
         .map_err(|error| Error::Unreachable(error.to_string()))?;
 
     // The serialised body is wiped once it has been handed over, rather than dropped with the
@@ -66,7 +66,7 @@ pub async fn sign_in(origin: &str, identity: &str, password: &str) -> Result<Str
 
     let status = response.status();
 
-    let body: Value = crate::http::json_within_limit(response)
+    let body: Value = shiver_core::http::json_within_limit(response)
         .await
         .ok_or_else(|| Error::NotSharkord(origin.to_string()))?;
 

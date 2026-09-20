@@ -65,8 +65,8 @@ export const api = {
   deleteFolder: (id: string) => invoke<void>('delete_folder', { id }),
   setFolderExpanded: (id: string, expanded: boolean) =>
     invoke<void>('set_folder_expanded', { id, expanded }),
-  openServer: (id: string, dms = false, dmUser?: string) =>
-    invoke<void>('open_server', { id, dms, dmUser }),
+  selectServer: (id: string, dms = false, dmUser?: string) =>
+    invoke<void>('select_server', { id, dms, dmUser }),
 
   showShiver: () => invoke<void>('show_shiver'),
 
@@ -108,7 +108,7 @@ export const api = {
   forgetSessions: () => invoke<void>('forget_sessions'),
 
   /** unread per server, counted by the core over its own connections */
-  listUnread: () => invoke<Record<string, number>>('list_unread'),
+  unreadCounts: () => invoke<Record<string, number>>('unread_counts'),
 
   /**
    * Every server's conversations, gathered in one list.
@@ -122,8 +122,8 @@ export const api = {
   /** distributors installed, and how many servers can be woken through the chosen one */
   watchProblems: () => invoke<WatchProblem[]>('watch_problems'),
   serverPlugins: () => invoke<PluginStatus[]>('server_plugins'),
-  setServerAcceptsAnySize: (entryId: string, accept: boolean) =>
-    invoke<void>('set_server_accepts_any_size', { entryId, accept }),
+  setAcceptAnySize: (id: string, accept: boolean) =>
+    invoke<void>('set_accept_any_size', { id, accept }),
   pushStatus: () => invoke<PushStatus>('push_status'),
   setPushServer: (entryId: string, wanted: boolean) =>
     invoke<void>('set_push_server', { entryId, wanted }),

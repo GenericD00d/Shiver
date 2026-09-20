@@ -46,6 +46,7 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
     use webview2_com::{
         GetNonDefaultPermissionSettingsCompletedHandler, SetPermissionStateCompletedHandler,
     };
+    use windows::Win32::System::Com::CoTaskMemFree;
     use windows_core::Interface;
 
     // Any webview will do: they share one profile, which is the thing holding the answers. Shiver
@@ -161,7 +162,7 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
                                         let text = origin.to_string().unwrap_or_default();
 
                                         if !origin.is_null() {
-                                            windows_core::CoTaskMemFree(Some(
+                                            CoTaskMemFree(Some(
                                                 origin.0 as *const core::ffi::c_void,
                                             ));
                                         }

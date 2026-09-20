@@ -33,7 +33,7 @@ pub struct ServerEntry {
     ///
     /// **It raises the ceiling; it does not remove it.** This used to say "no limit, and the memory
     /// is theirs to spend", which has not been true since `MAX_FRAME_TRUSTED` — trusting a server
-    /// gives it eight times the room and still bounds it, and `shiver-sharkord` has a test asserting
+    /// gives it eight times the room and still bounds it, and `sharkord-client` has a test asserting
     /// that it can never become unbounded. An unbounded socket lets a server grow the read buffer as
     /// far as it cares to transmit, which on a phone is an app kill that takes the notifications
     /// with it.
@@ -149,6 +149,47 @@ impl Default for Settings {
     }
 }
 
+/// A colour Shiver is willing to put in a stylesheet, or the default in its place.
+///
+/// These are plain strings, they arrive from `update_settings`, and they live in a file a person
+/// can edit. The bridge sets them through the CSSOM rather than building a stylesheet as a string,
+/// so a value containing `}` is rejected by the parser rather than closing a rule block — but that
+/// is one mechanism holding the line on its own, in the half of the app that cannot be tested on a
+/// desktop. Desktop checks the value as well as setting it safely; so does this now.
+///
+/// Six hex digits with a leading `#`, which is all the colour input can produce and all either
+/// side knows how to read.
+pub fn sanitised_color(value: &str, fallback: &str) -> String {
+    if is_hex_color(value) {
+        return value.to_ascii_lowercase();
+    }
+
+    eprintln!("[shiver] '{value}' is not a colour Shiver will use, falling back to {fallback}");
+
+    fallback.to_string()
+}
+
+/// The same rule, for the optional text colour: kept when it is a colour, dropped when it is not.
+pub fn sanitised_optional_color(value: Option<&str>) -> Option<String> {
+    match value {
+        Some(value) if is_hex_color(value) => Some(value.to_ascii_lowercase()),
+        Some(value) => {
+            eprintln!("[shiver] '{value}' is not a colour Shiver will use, so text follows the background");
+
+            None
+        }
+        None => None,
+    }
+}
+
+fn is_hex_color(value: &str) -> bool {
+    let Some(digits) = value.strip_prefix('#') else {
+        return false;
+    };
+
+    digits.len() == 6 && digits.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 impl Settings {
     /// True while the user has not picked their own colours. Shiver injects no css into a server's
     /// page in that case, so a stock server looks exactly as its own client intends.
@@ -156,6 +197,55 @@ impl Settings {
         self.theme_color.eq_ignore_ascii_case(DEFAULT_THEME_COLOR)
             && self.accent_color.eq_ignore_ascii_case(DEFAULT_ACCENT_COLOR)
             && self.text_color.is_none()
+    }
+
+    /// Every colour in this struct, held to what is safe to put in a stylesheet, and the volume
+    /// held to what Shiver will actually play.
+    ///
+    /// Applied on the way in from the settings screen and on the way out of the file, so a value
+    /// that was already stored by an older build cannot reach the bridge either.
+    pub fn sanitised(mut self) -> Self {
+        self.theme_color = sanitised_color(&self.theme_color, DEFAULT_THEME_COLOR);
+        self.accent_color = sanitised_color(&self.accent_color, DEFAULT_ACCENT_COLOR);
+        self.text_color = sanitised_optional_color(self.text_color.as_deref());
+        self.sound_volume = self.sound_volume.min(MAX_SOUND_VOLUME);
+
+        self
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn a_colour_that_could_close_a_rule_block_is_refused() {
+        let settings = Settings {
+            theme_color: "#0a0a0a} html { display: none } .x {".into(),
+            accent_color: "red".into(),
+            text_color: Some("#ff0000; content: 'x'".into()),
+            sound_volume: 9999,
+            ..Settings::default()
+        }
+        .sanitised();
+
+        assert_eq!(settings.theme_color, DEFAULT_THEME_COLOR);
+        assert_eq!(settings.accent_color, DEFAULT_ACCENT_COLOR);
+        assert_eq!(settings.text_color, None);
+        assert_eq!(settings.sound_volume, MAX_SOUND_VOLUME);
+    }
+
+    #[test]
+    fn a_real_colour_survives_and_is_lowercased() {
+        let settings = Settings {
+            theme_color: "#AABBCC".into(),
+            text_color: Some("#FFFFFF".into()),
+            ..Settings::default()
+        }
+        .sanitised();
+
+        assert_eq!(settings.theme_color, "#aabbcc");
+        assert_eq!(settings.text_color.as_deref(), Some("#ffffff"));
     }
 }
 

@@ -1,6 +1,5 @@
 mod commands;
 mod error;
-mod http;
 mod inbox;
 mod login;
 mod model;
@@ -8,7 +7,7 @@ mod probe;
 mod push;
 // The protocol lives in `shared/sharkord-client`, because desktop speaks it now too. Re-exported under
 // the old path so every `crate::sharkord::` reference still reads the same.
-pub use shiver_sharkord as sharkord;
+pub use sharkord_client as sharkord;
 mod store;
 mod update;
 mod webview;
@@ -89,18 +88,17 @@ pub fn run() {
             update::check_for_update,
             commands::add_server,
             commands::remove_server,
-            commands::open_server,
+            commands::select_server,
             commands::show_shiver,
             commands::showing_server,
             commands::sign_in_server,
             commands::signed_out_servers,
             commands::watch_problems,
-            commands::set_server_accepts_any_size,
+            commands::set_accept_any_size,
             commands::remembered_servers,
             commands::app_version,
             commands::get_settings,
             commands::update_settings,
-            commands::set_channel_muted,
             commands::reorder_servers,
             commands::reorder_rail,
             commands::create_folder_with,
@@ -108,7 +106,7 @@ pub fn run() {
             commands::rename_folder,
             commands::delete_folder,
             commands::set_folder_expanded,
-            commands::list_unread,
+            commands::unread_counts,
             commands::list_dms,
             commands::server_plugins,
             commands::refresh_server_info,

@@ -1,9 +1,9 @@
 [package]
-name = "shiver-sharkord"
+name = "sharkord-client"
 version = "0.1.3"
 description = "Shiver's read-only client for Sharkord's tRPC-over-WebSocket protocol"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.77.2"
 
 # Shared by both clients on purpose. This is a transcription of another project's wire protocol,
 # worked out by probing a live server rather than from documentation, and a second copy of it would

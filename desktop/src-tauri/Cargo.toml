@@ -1,10 +1,10 @@
 [package]
 name = "shiver"
 version = "0.1.3"
-description = "A multi-server desktop and mobile client for Sharkord"
+description = "A multi-server desktop client for Sharkord"
 authors = ["Shiver"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.77.2"
 
 [lib]
 # the _lib suffix keeps the library name from colliding with the binary name on windows
@@ -22,7 +22,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 # the Sharkord protocol itself, shared with mobile so there is one transcription of it
-shiver-sharkord = { path = "../../shared/sharkord-client" }
+sharkord-client = { path = "../../shared/sharkord-client" }
 # the origin rules and the registry store, shared so there is one copy of each rather than two
 shiver-core = { path = "../../shared/shiver-core" }
 serde = { version = "1", features = ["derive"] }
@@ -56,3 +56,8 @@ strip = true
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
 windows-core = "0.61"
+# `CoTaskMemFree`, to release the origin string `PermissionOrigin` hands back. It is not in
+# `windows-core` — only in that crate's private `imp` module — and reaching for it there is how
+# this failed to compile once already. Already in the tree via `webview2-com`, so this pins no new
+# version; the feature is the one module it is needed from.
+windows = { version = "0.61", features = ["Win32_System_Com"] }

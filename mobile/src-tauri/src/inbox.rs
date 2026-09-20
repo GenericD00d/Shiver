@@ -228,7 +228,7 @@ struct State {
     /// **A key is only present once Shiver has connected**, and that distinction is the point: a
     /// missing key means "not asked yet", a `None` means "asked, and it is not installed". The two
     /// must not look the same, or a server Shiver has never reached would be reported as missing
-    /// the plugin. It cannot be asked any earlier — see `plugin_version` in `shiver-sharkord`.
+    /// the plugin. It cannot be asked any earlier — see `plugin_version` in `sharkord-client`.
     plugins: HashMap<String, Option<String>>,
 }
 

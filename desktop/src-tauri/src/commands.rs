@@ -122,7 +122,7 @@ pub async fn check_server(
     //
     // A failure here is reported as the server not being readable rather than as the sign-in
     // failing, because the sign-in plainly worked — the token above is proof of it.
-    let session = shiver_sharkord::open(&origin, &token, false)
+    let session = sharkord_client::open(&origin, &token, false)
         .await
         .map_err(|error| Error::Unreachable(format!("{origin}: {error}")))?;
 
@@ -1212,16 +1212,6 @@ pub async fn set_accept_any_size(
     crate::watch::restart(&app, &id);
 
     Ok(())
-}
-
-/// Which servers have Shiver's companion plugin, and which version.
-///
-/// Only servers Shiver has connected to appear — see `watch::Plugins` for why it cannot be known
-/// before then. A server missing from this map has not been asked, which the caller must show
-/// differently from a server that answered and had no plugin.
-#[tauri::command]
-pub fn server_plugins(app: AppHandle) -> std::collections::HashMap<String, Option<String>> {
-    app.state::<crate::watch::Plugins>().all()
 }
 
 /// Unread per rail entry, for the badges on the server icons.

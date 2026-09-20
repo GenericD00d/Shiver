@@ -97,15 +97,41 @@ jobs:
   # Known-vulnerable dependencies, which is the one kind of security problem a project can find
   # without anybody reading anything. The README says plainly that no audit has been done; this is
   # the part of that which a machine can do every time.
+  #
+  # **`cargo audit` directly, rather than `rustsec/audit-check`.** That action looks for a single
+  # `Cargo.lock` in the directory it is run from, and this repository has no root lockfile — there
+  # are four crates, each with its own. So it failed every run from the day it was added with
+  # `not found: Couldn't load ./Cargo.lock`, which reads like an infrastructure hiccup rather than
+  # a check that never ran once. Naming each lockfile is longer and cannot fail that way.
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: rustsec/audit-check@v2
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          key: cargo-audit
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Every lockfile in the tree, found rather than listed: a crate added later brings its own
+      # lockfile and would otherwise be audited by nobody, silently. The loop runs them all before
+      # failing, so one advisory does not hide the next.
+      - name: Audit every lockfile
+        run: |
+          status=0
+
+          for lock in $(find . -name Cargo.lock -not -path '*/node_modules/*' -not -path '*/target/*' | sort); do
+            echo "::group::cargo audit $lock"
+            cargo audit --file "$lock" || status=1
+            echo "::endgroup::"
+          done
+
+          exit $status
 
   frontend:
     name: Frontends
@@ -144,3 +170,14 @@ jobs:
       # and neither stylesheet can reach the other, so they drift silently. See the script.
       - name: Mobile's two rails agree
         run: python3 scripts/check-rails.py
+
+      # The same argument, for the one function that decides whether text on the user's chosen
+      # background is drawn dark or light. Four copies across two packages and two bridges, none
+      # able to import from another, and they have already drifted apart once.
+      - name: The four luminance tests agree
+        run: python3 scripts/check-luminance.py
+
+      # Eight files carry the version and nothing derives one from another. A missed one ships an
+      # APK that cannot upgrade an installed Shiver.
+      - name: The version is the same everywhere
+        run: python3 scripts/check-versions.py

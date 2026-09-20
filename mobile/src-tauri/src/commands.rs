@@ -8,7 +8,7 @@ use crate::{
     error::{Error, Result},
     inbox::{self, Inbox},
     login,
-    model::{normalize_origin, Folder, MutedChannel, Registry, ServerEntry, ServerInfo, Settings},
+    model::{normalize_origin, Folder, Registry, ServerEntry, ServerInfo, Settings},
     probe,
     store::{RegistryStore, Store},
     webview::{self, Showing},
@@ -430,7 +430,7 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
 /// The counts come from the core's own connections, so they cover servers with no page on screen —
 /// which on mobile is every server but one.
 #[tauri::command]
-pub fn list_unread(inbox: State<'_, Inbox>) -> std::collections::HashMap<String, u32> {
+pub fn unread_counts(inbox: State<'_, Inbox>) -> std::collections::HashMap<String, u32> {
     inbox.unread()
 }
 
@@ -454,7 +454,7 @@ pub fn list_dms(store: State<'_, Store>, inbox: State<'_, Inbox>) -> Vec<inbox::
 /// list is per server and lives in its own sidebar, so Shiver cannot show it itself — it asks the
 /// bridge to open it once the server's client is up.
 #[tauri::command]
-pub async fn open_server(
+pub async fn select_server(
     app: AppHandle,
     store: State<'_, Store>,
     id: String,
@@ -563,17 +563,9 @@ pub fn signed_out_servers(app: AppHandle) -> Vec<String> {
 /// for one that somebody does. It takes effect on that server's next connection attempt, which is
 /// at most thirty seconds away, so there is nothing to restart.
 #[tauri::command]
-pub fn set_server_accepts_any_size(
-    store: State<'_, Store>,
-    entry_id: String,
-    accept: bool,
-) -> Result<()> {
+pub fn set_accept_any_size(store: State<'_, Store>, id: String, accept: bool) -> Result<()> {
     store.update(|registry| {
-        if let Some(server) = registry
-            .servers
-            .iter_mut()
-            .find(|server| server.id == entry_id)
-        {
+        if let Some(server) = registry.servers.iter_mut().find(|server| server.id == id) {
             server.accept_any_size = accept;
         }
 
@@ -650,7 +642,9 @@ pub fn app_version() -> &'static str {
 
 #[tauri::command]
 pub fn get_settings(store: State<'_, Store>) -> Settings {
-    store.registry().settings.clone()
+    // sanitised on the way out too: `servers.json` is a file, and a value hand-edited into it has
+    // never been past `update_settings`
+    store.registry().settings.clone().sanitised()
 }
 
 #[tauri::command]
@@ -663,10 +657,12 @@ pub fn update_settings(app: AppHandle, store: State<'_, Store>, settings: Settin
         let last_server_id = registry.settings.last_server_id.clone();
         let skipped_update = registry.settings.skipped_update.clone();
 
+        // Sanitised rather than taken as given. The colours reach every server's page, and this
+        // command is the door they come in through.
         registry.settings = Settings {
             last_server_id,
             skipped_update,
-            ..settings
+            ..settings.sanitised()
         };
 
         Ok(())
@@ -870,30 +866,6 @@ pub fn reorder_servers(store: State<'_, Store>, ordered_ids: Vec<String>) -> Res
         }
 
         registry.servers.sort_by_key(|server| server.position);
-
-        Ok(())
-    })
-}
-
-/// Mutes or unmutes one channel on one server.
-#[tauri::command]
-pub fn set_channel_muted(
-    store: State<'_, Store>,
-    entry_id: String,
-    channel_id: i64,
-    muted: bool,
-) -> Result<()> {
-    store.update(|registry| {
-        registry
-            .muted
-            .retain(|entry| !(entry.entry_id == entry_id && entry.channel_id == channel_id));
-
-        if muted {
-            registry.muted.push(MutedChannel {
-                entry_id: entry_id.clone(),
-                channel_id,
-            });
-        }
 
         Ok(())
     })

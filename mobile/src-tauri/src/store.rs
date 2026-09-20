@@ -2,7 +2,16 @@
 //!
 //! The store itself lives in `shared/shiver-core`: everything around the registry — the corrupt-file
 //! handling, the legacy cache cleanup, the atomic write — was the same file in both clients, so it
-//! is one file now. What stays here is the only part that differs: where this platform puts it.
+//! is one file now.
+//!
+//! **What stays here is identical in both clients, and has to be.** The header used to claim this
+//! was the part that differs per platform, which was not true even when it was written — both
+//! `load`s ask Tauri for `app_config_dir`. What is actually left is a trait that pins the shared
+//! store's generic error to *this crate's* `Error`, which cannot be written once because it names
+//! a type each client owns, and six lines of Tauri glue in front of `Store::load`. Sharing those
+//! six lines would mean `shiver-core` — a crate that compiles and tests in under a second, with
+//! four small dependencies — taking a dependency on Tauri. That is the wrong trade, so the
+//! duplication is deliberate rather than overlooked.
 
 use tauri::{AppHandle, Manager};
 

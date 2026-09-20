@@ -369,7 +369,7 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
         "soundVolume": page.settings.sound_volume.min(crate::model::MAX_SOUND_VOLUME),
         "minimiseAttachments": page.settings.minimise_attachments,
         // json object keys are strings, so the channel ids go over as strings and are parsed back
-        // on the way in — see `parse_shared_floor` in `shiver-sharkord`
+        // on the way in — see `parse_shared_floor` in `sharkord-client`
         "readFloor": page.read_floor.map(|floor| {
             floor
                 .iter()

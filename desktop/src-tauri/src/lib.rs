@@ -5,7 +5,6 @@ mod drain;
 mod error;
 mod feed;
 mod hotkey;
-mod http;
 mod jwt;
 mod login;
 mod model;
@@ -115,7 +114,6 @@ pub fn run() {
             commands::list_dms,
             commands::unread_count,
             commands::unread_counts,
-            commands::server_plugins,
             commands::set_accept_any_size,
             commands::mark_server_read,
             commands::mark_notifications_read,

@@ -168,7 +168,7 @@ export const App = () => {
   const open = useCallback(async (id: string, dms = false, dmUser?: string) => {
     try {
       // from here the webview belongs to the server until its rail brings the user back
-      await api.openServer(id, dms, dmUser);
+      await api.selectServer(id, dms, dmUser);
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -296,7 +296,7 @@ export const App = () => {
   // the core counts unread over its own connections to the servers with no page on screen, which
   // on mobile is every server but one. it is asked once and then pushes.
   useEffect(() => {
-    api.listUnread().then(setUnread).catch(() => undefined);
+    api.unreadCounts().then(setUnread).catch(() => undefined);
 
     const stop = api.onUnread(setUnread);
 
@@ -368,7 +368,7 @@ export const App = () => {
   const handleAcceptAnySize = useCallback(
     async (id: string, accept: boolean) => {
       try {
-        await api.setServerAcceptsAnySize(id, accept);
+        await api.setAcceptAnySize(id, accept);
         await refresh();
       } catch (cause) {
         setError(errorMessage(cause));

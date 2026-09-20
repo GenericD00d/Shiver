@@ -19,7 +19,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-shiver-secrets = { path = "../plugins/tauri-plugin-shiver-secrets" }
 # the Sharkord protocol itself, shared with desktop so there is one transcription of it
-shiver-sharkord = { path = "../../shared/sharkord-client" }
+sharkord-client = { path = "../../shared/sharkord-client" }
 # the origin rules and the registry store, shared so there is one copy of each rather than two
 shiver-core = { path = "../../shared/shiver-core" }
 tauri-plugin-shiver-push = { path = "../plugins/tauri-plugin-shiver-push" }

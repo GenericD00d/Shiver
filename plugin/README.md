@@ -2,7 +2,9 @@
 
 Optional. Shiver works fine against a stock Sharkord server; installing this adds one thing the
 client cannot do alone: **your Shiver settings are kept on the server, per user, so they follow you to
-every device.** Today that means your muted channels.
+every device.** Today that means your muted channels, your custom status, and the UnifiedPush
+endpoints that let this server wake your phone while Shiver is closed. The last two have sections
+of their own below.
 
 Needs Sharkord **0.0.25 or newer** (plugin SDK 2). A server on 0.0.24 refuses to load it, and the
 0.0.24 version of this plugin refuses to load on 0.0.25 — the SDK version is checked both ways.
@@ -27,10 +29,26 @@ That is the whole install. Nothing else about the server changes.
 One row per user, in Sharkord's own per-plugin storage (the `plugin_user_data` table):
 
 ```json
-{ "mutedChannels": [4, 17] }
+{
+  "mutedChannels": [4, 17],
+  "status": "back on Thursday",
+  "pushEndpoints": ["https://ntfy.example.com/up1a2b3c…"]
+}
 ```
 
-Nothing else about a user is recorded, and no message content ever passes through the plugin.
+Three fields, and a row carries only the ones that user has actually set:
+
+| Field | What it is | Who can see it |
+| --- | --- | --- |
+| `mutedChannels` | channels that user has muted in Shiver | them, and anyone who can read the database |
+| `status` | the line they wrote about themselves | **everyone on the server** — that is the point of it |
+| `pushEndpoints` | URLs this server posts an empty body to, to wake their devices | them, and anyone who can read the database |
+
+**No message content ever passes through the plugin**, and nothing else about a user is recorded.
+
+`pushEndpoints` is the one worth treating carefully. An endpoint is a capability: anyone holding
+it can make that person's phone buzz, through a relay outside this server. It is never shown to
+other users and never leaves the server except as the request that uses it.
 
 The row is the host's to keep: it is size-capped by the server, deleted with the user, and every
 row is deleted when the plugin is removed. That last part is Shiver's rule — it forgets a user once
@@ -39,8 +57,9 @@ file and deleted rows on the `user:left` event instead; on 0.0.25 that event tur
 every *disconnect*, so it would have wiped a user's settings each time they closed the app. The file
 is read once on load and carried into the host's storage, then deleted.
 
-**A server admin can read the database.** Which channels you muted is not sensitive, but it is worth
-knowing that it stops being private to your machine once the plugin is installed.
+**A server admin can read the database.** Which channels you muted is not especially sensitive; a
+push endpoint is more so, because it can be used. Both stop being private to your machine once the
+plugin is installed, which is the trade for having them follow you between devices.
 
 ## How it works
 
@@ -59,8 +78,20 @@ same-origin messages, and only two named operations:
 | `setMutedChannels` | Replaces them, leaving anything else in the row alone |
 
 Named operations rather than passing storage calls straight through, so the relay cannot be talked
-into reading or writing anything but this. The server half registers no actions at all now — it
-exists to enable the client bundle and to carry the old file forward.
+into reading or writing anything but this.
+
+The server half registers four actions of its own, for the two things that cannot go through the
+relay because the server has to *do* something with them rather than just store them:
+
+| Action | Does |
+| --- | --- |
+| `setStatus` | Sets the caller's status line, and pushes it to everyone connected |
+| `getStatuses` | Every status currently set, for drawing the member list |
+| `setPushEndpoint` | Registers an endpoint **after checking it** — see the section below |
+| `clearPushEndpoint` | Drops one endpoint, or all of the caller's when none is named |
+
+Each acts on `invoker.userId`, which Sharkord authenticates, so none of them can be aimed at
+another account.
 
 ## Merge behaviour
 

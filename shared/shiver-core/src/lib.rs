@@ -7,9 +7,11 @@
 //! least as strongly to the comparison that decides whether a webview may navigate somewhere.
 
 pub mod error;
+pub mod http;
 pub mod origin;
 pub mod store;
 
 pub use error::{Error, Result};
+pub use http::{client, json_within_limit, MAX_BODY};
 pub use origin::{is_same_origin, normalize_origin};
 pub use store::Store;
