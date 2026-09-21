@@ -190,6 +190,7 @@ let shiverConfig: ShiverConfig | null = null;
 
 const MESSAGE_ACTIONS_CLASS = 'shiver-message-actions';
 const ACTIONS_STYLE_ID = 'shiver-actions-style';
+const COMPOSE_STYLE_ID = 'shiver-compose-style';
 const RECONNECT_HOST_ID = 'shiver-reconnect';
 const THEME_STYLE_ID = 'shiver-theme';
 
@@ -203,6 +204,26 @@ const MESSAGE_ITEM = '[data-testid="message-item"]';
 const MEMBER_ITEM = '[data-testid="member-item"]';
 /** Every message's wrapper carries its own id, which is the way up to the name above it. */
 const MESSAGE_WRAPPER = '[id^="message-"]';
+/** The composer: its outer box, the row that scrolls inside it, and the drag handle above it. */
+const COMPOSE_CONTAINER = '.compose-container';
+const COMPOSE_SCROLL_ROW = '.compose-scroll-row';
+/**
+ * Matched two ways on purpose. The label is a literal in Sharkord's source rather than a
+ * translated string today, but it is the kind of thing that gets translated later and would take
+ * this fix with it silently; the cursor class is what the component is *for* and survives that.
+ * Either alone would be enough, and neither matches anything else on the page.
+ */
+const COMPOSE_DIVIDER =
+  '[role="separator"][aria-label="Resize chat input"], [role="separator"].cursor-row-resize';
+/**
+ * Where Sharkord persists a dragged composer height, in vh — one key per composer it has.
+ *
+ * Read here only to *clear* them. See `settleTheComposer`.
+ */
+const COMPOSE_HEIGHT_KEYS = [
+  'sharkord-chat-input-height-vh',
+  'sharkord-thread-input-height-vh'
+];
 /**
  * The author's name in an inline reply's preview line.
  *
@@ -290,6 +311,7 @@ function install(shiver: ShiverConfig) {
   installPageActions();
   quietTheLoadingScreen();
   styleMessageActions();
+  settleTheComposer();
 
   if (shiver.carried) restoreCarried(shiver.carried);
   if (shiver.session) seedSession(shiver.session);
@@ -1004,9 +1026,15 @@ function mountRail(shiver: ShiverConfig): Rail {
       const count = unread[id] ?? 0;
 
       badge.textContent = count > 99 ? '99+' : String(count);
-      // the server on screen reports its own unread in its own client; a badge for it in Shiver's
-      // rail would be a second, staler answer to a question already on the page
-      badge.hidden = count === 0 || id === shiver.entryId;
+      // **The server on screen keeps its badge**, like every other tile. It used to be hidden on
+      // the reasoning that this server's own client is right there reporting, so a badge would be
+      // a second and staler answer — which was true while the core hung up on the server it was
+      // showing. It no longer does: that socket stays up precisely so Shiver hears the reads, so
+      // the count is live and falls channel by channel as they are read. Hiding it meant opening
+      // a server looked like reading all of it, and there was no way to see what was left. It is
+      // also what Shiver's own rail does on its own screens — see `Rail.tsx`, which never
+      // special-cased the active server.
+      badge.hidden = count === 0;
     }
   };
 
@@ -2638,6 +2666,54 @@ ${MESSAGE_ITEM} { -webkit-user-select: none; user-select: none; -webkit-touch-ca
 ${MESSAGE_ITEM} input, ${MESSAGE_ITEM} textarea, ${MESSAGE_ITEM} [contenteditable]
   { -webkit-user-select: text; user-select: text; }
 `;
+}
+
+/**
+ * Stops a phone's composer growing and staying grown, and gets the scrollbar off the send button.
+ *
+ * Sharkord's composer can be resized by dragging: there is a `ChatInputDivider` above it, a strip
+ * about sixteen pixels tall spanning the full width, and dragging it sets an explicit height and
+ * writes that height to `localStorage` in vh. On a desktop with a mouse that is a feature. On a
+ * phone it is a trap, for three reasons that compound:
+ *
+ * - **The strip sits exactly where a thumb lands.** It straddles the top edge of the composer,
+ *   which is the border a person reaches across to put a cursor in the text.
+ * - **A tap is enough.** `onPointerDown` clears `maxHeight` and pins `height` to whatever the
+ *   composer measures *at that moment*, before any movement; a tap with no drag then falls into
+ *   the branch that keeps that height and saves it. Paste a large block, brush the strip, and the
+ *   composer is pinned at its inflated height — which is the report, and it is why the box stays
+ *   inflated after the message is sent rather than springing back.
+ * - **It outlives the app.** The pinned height is in `localStorage`, so it survives a reload, and
+ *   nothing on a touch screen suggests the strip is what did it or that dragging would undo it.
+ *
+ * So the handle is made inert rather than removed: it still draws the one-pixel line between the
+ * messages and the composer, which is Sharkord's own furniture and not Shiver's to redesign, and
+ * it no longer answers a finger. `height: auto` then overrides any pin already applied — including
+ * one restored from storage before this bridge was evaluated, which mobile's late injection makes
+ * likely — and the keys are cleared so it is not restored again. What is left is the auto-growing
+ * composer Sharkord has when nobody has ever dragged it, bounded by its own `max-height`.
+ *
+ * **The scrollbar is hidden for a different reason.** Once the content is taller than the box,
+ * `.compose-scroll-row` scrolls, and the action buttons — emoji, attach, send — are `sticky` at
+ * the top of that same scrolling row, at its right edge. Android draws the overlay scrollbar down
+ * that edge, directly over the send button. Hiding it costs nothing on a touch screen, where the
+ * gesture is the same whether or not a bar is drawn.
+ */
+function settleTheComposer() {
+  ensureStyle(COMPOSE_STYLE_ID).textContent = `
+${COMPOSE_DIVIDER} { pointer-events: none !important; cursor: default !important; }
+${COMPOSE_CONTAINER} { height: auto !important; }
+${COMPOSE_SCROLL_ROW} { scrollbar-width: none; }
+${COMPOSE_SCROLL_ROW}::-webkit-scrollbar { width: 0; height: 0; display: none; }
+`;
+
+  for (const key of COMPOSE_HEIGHT_KEYS) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // a page that denies storage has nothing pinned in it either
+    }
+  }
 }
 
 /* ────────────────────── coming back from the background ───────────────────── */

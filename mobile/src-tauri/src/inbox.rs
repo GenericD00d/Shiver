@@ -7,9 +7,13 @@
 //!
 //! Three decisions worth knowing:
 //!
-//! - **The shown server is deliberately not connected.** Its own client is right there doing the
-//!   job, and you do not need a badge for the thing you are looking at. So Shiver holds at most
-//!   `servers - 1` sockets, and hands the server back to itself the moment you open it.
+//! - **Every server is connected, the one on screen included.** That was not always so: the shown
+//!   server's socket used to stand down on the reasoning that its own client was right there doing
+//!   the job. Half of that was false in the way that matters — reading a channel is published to
+//!   the user's *other* sessions, and this socket is one of them — so hanging it up meant hanging
+//!   up on the one server whose reads Shiver most needed to hear. It stays up; what it does not do
+//!   for that server is *announce*, which is `announce`'s own check. Its badge stays up too, and
+//!   counts down as channels are actually read.
 //! - **Tokens are kept encrypted, not in memory.** `keyring` has no Android backend and a bearer
 //!   token in `servers.json` would be a credential written to disk in the clear, so Shiver holds them
 //!   in `EncryptedSharedPreferences` through its own small Android plugin — master key in the
