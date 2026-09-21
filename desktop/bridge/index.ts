@@ -1660,7 +1660,7 @@ function installVoiceLock(initial: boolean, getState: () => SharkordState) {
 
       if (!row) return;
 
-      const name = row.textContent?.trim() ?? '';
+      const name = rowName(row);
       const isVoiceRow = (getState().channels ?? []).some(
         (channel) => channel.type === 'VOICE' && channel.name === name
       );
@@ -1724,6 +1724,36 @@ const MUTE_CLASS = 'shiver-muted-channel';
 const MUTE_STYLE_ID = 'shiver-mute-style';
 
 /**
+ * The channel name a sidebar row stands for.
+ *
+ * **Not `row.textContent`.** Sharkord renders its unread pill *inside* the row, so a channel with
+ * anything waiting reads as `General Business11` and matches no channel at all. Every caller here
+ * compares that string against `channel.name`, so the effect was that a channel stopped being
+ * mutable the moment it had something to mute — and a channel already muted stopped being dimmed,
+ * and its count reappeared, for the same reason. Reported as "you cannot mute a channel that has a
+ * notification in it".
+ *
+ * The name has a span of its own — `flex-1` on a text channel, `flex-1 truncate` on a voice one —
+ * which is the seam `rowMatchesName` already uses for direct-message rows. Reading it is exact
+ * rather than subtractive, and it is right whatever else the row grows later: the typing indicator
+ * that replaces the count, a second badge, anything.
+ *
+ * The fallback is mobile's `rowName`, which takes the text and removes the trailing count. Kept
+ * because it fails differently: it survives the span's classes changing, which is the one thing the
+ * primary path cannot.
+ */
+function rowName(row: Element): string {
+  const named = row.querySelector<HTMLElement>('span.flex-1, span.truncate');
+
+  if (named) return named.textContent?.trim() ?? '';
+
+  const text = row.textContent?.trim() ?? '';
+  const count = row.querySelector('[data-testid="unread-count"]')?.textContent?.trim() ?? '';
+
+  return (count && text.endsWith(count) ? text.slice(0, -count.length) : text).trim();
+}
+
+/**
  * Darkens muted channels in Sharkord's own channel list.
  *
  * Sharkord's channel rows carry `data-testid="channel-item"` but no channel id, so the row is
@@ -1759,9 +1789,7 @@ ${REACTED_PILL} {
   const rows = document.querySelectorAll<HTMLElement>('[data-testid="channel-item"]');
 
   for (const row of rows) {
-    const name = row.textContent?.trim() ?? '';
-
-    row.classList.toggle(MUTE_CLASS, mutedNames.has(name));
+    row.classList.toggle(MUTE_CLASS, mutedNames.has(rowName(row)));
   }
 }
 
@@ -1838,7 +1866,7 @@ function watchChannelContextMenu(
 
       if (!row) return;
 
-      const name = row.textContent?.trim() ?? '';
+      const name = rowName(row);
 
       pendingChannel =
         (getState().channels ?? []).find(
@@ -1988,7 +2016,7 @@ function openOwnMenu(
 
   item.addEventListener('click', () => {
     muteQueue.push({ channelId: channel.id, muted: !isMuted });
-    closeOwnMenu();
+    dismiss();
   });
 
   menu.className = 'menu';
@@ -1998,21 +2026,43 @@ function openOwnMenu(
   root.append(style, menu);
   document.body.append(host);
 
-  // the next click anywhere, a scroll, or escape puts it away — the same ways the page's own menus
-  // are dismissed, so it never becomes the one thing left on screen
+  // the next press outside it, a scroll, or escape puts it away — the same ways the page's own
+  // menus are dismissed, so it never becomes the one thing left on screen
   const dismiss = () => {
     closeOwnMenu();
 
-    document.removeEventListener('mousedown', dismiss, true);
+    document.removeEventListener('mousedown', onMouseDown, true);
     document.removeEventListener('scroll', dismiss, true);
     document.removeEventListener('keydown', onKey, true);
+  };
+
+  /**
+   * Dismisses on a press *outside* the menu, and this distinction is the whole feature working.
+   *
+   * `mousedown` on the capture phase runs before the item's own `click` — and a `click` is only
+   * dispatched to an element that was still in the document for both halves of the press. So
+   * dismissing on any `mousedown` tore the menu out between mousedown and mouseup, the click never
+   * reached the item, and nothing was ever muted. The menu closing looked like it had worked.
+   *
+   * **That made the whole of this menu dead**, and it is not a corner: Sharkord gives a member who
+   * cannot manage channels no channel menu at all, so this fallback *is* the path every ordinary
+   * user takes. Muting is Shiver's own and needs no permission from anybody, and it was the people
+   * with no permissions who could not reach it. Reported as muting not working as a non-admin.
+   *
+   * The shadow root is closed, so an event raised inside it retargets to the host on the way out;
+   * comparing against the host is enough to tell the two apart.
+   */
+  const onMouseDown = (event: MouseEvent) => {
+    if (event.target instanceof Node && host.contains(event.target)) return;
+
+    dismiss();
   };
 
   const onKey = (event: KeyboardEvent) => {
     if (event.key === 'Escape') dismiss();
   };
 
-  document.addEventListener('mousedown', dismiss, true);
+  document.addEventListener('mousedown', onMouseDown, true);
   document.addEventListener('scroll', dismiss, true);
   document.addEventListener('keydown', onKey, true);
 }
