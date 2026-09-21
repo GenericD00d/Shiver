@@ -1,6 +1,6 @@
 [package]
 name = "shiver-core"
-version = "0.1.3"
+version = "0.1.4"
 description = "The pieces of Shiver both clients need to agree on: origin rules and the registry store"
 edition = "2021"
 rust-version = "1.77.2"
