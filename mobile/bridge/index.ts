@@ -262,6 +262,59 @@ const WIDE_LAYOUT = 768;
  * Non-writable and non-configurable, so a later assignment throws in strict mode and is ignored
  * otherwise, rather than quietly winning.
  */
+/**
+ * Runs `callback` once the page's DOM has settled, however many changes caused it.
+ *
+ * **One observer for the whole bridge, and one call per frame.** Each of these used to be its own
+ * `MutationObserver` watching `document.body` with `subtree: true`, unthrottled — and in a chat
+ * client the DOM mutates on every arriving message, every scroll of a virtualised list and every
+ * typing indicator. Each callback then swept the document: the role-colour pass runs
+ * `querySelectorAll` over every message *and* every member row, the attachment pass over every
+ * media element and file card. So a single message cost several full document walks, on the main
+ * thread of the client Shiver is trying to stay out of the way of.
+ *
+ * Batching through `requestAnimationFrame` collapses a burst of mutations into one pass, and
+ * sharing the observer means the page is walked once per frame rather than once per registered
+ * callback. The callbacks stay idempotent, which is what makes this safe: they are free to run when
+ * nothing relevant changed, and the ones that write to the DOM write the same thing twice.
+ *
+ * Callers that need a first pass before anything mutates keep their own initial call — this only
+ * replaces the observing.
+ */
+const domSettledCallbacks = new Set<() => void>();
+
+let domSettledObserver: MutationObserver | null = null;
+let domSettledScheduled = false;
+
+function runDomSettled() {
+  domSettledScheduled = false;
+
+  for (const callback of domSettledCallbacks) {
+    try {
+      callback();
+    } catch (error) {
+      // one misbehaving pass must not stop the others: they are independent, and a page that has
+      // moved on from what one of them expects is exactly when the rest still need to run
+      console.error('[shiver] a dom-settled callback failed', error);
+    }
+  }
+}
+
+function onDomSettled(callback: () => void) {
+  domSettledCallbacks.add(callback);
+
+  if (domSettledObserver) return;
+
+  domSettledObserver = new MutationObserver(() => {
+    if (domSettledScheduled) return;
+
+    domSettledScheduled = true;
+    requestAnimationFrame(runDomSettled);
+  });
+
+  domSettledObserver.observe(document.body, { childList: true, subtree: true });
+}
+
 function defineHook<K extends keyof Window>(name: K, value: Window[K]) {
   try {
     // Cleared first. On desktop the bridge is an initialization script and there is never anything
@@ -369,7 +422,7 @@ function install(shiver: ShiverConfig) {
 
     // Sharkord re-renders its channel list on scroll, selection and unread changes, each of which
     // drops the dimming, so it is reapplied whenever the sidebar's dom changes
-    new MutationObserver(paint).observe(document.body, { childList: true, subtree: true });
+    onDomSettled(paint);
     defineHook('__SHIVER_MOBILE_INSTALLED__', true);
   }
 }
@@ -697,7 +750,7 @@ function installRoleColors() {
 
   // Messages and members are drawn as they arrive and redrawn as the user scrolls, and neither
   // touches the store, so the dom is what has to be watched for the rest.
-  new MutationObserver(paint).observe(document.body, { childList: true, subtree: true });
+  onDomSettled(paint);
 }
 
 /* ────────────────────────────── the rail ────────────────────────────── */
@@ -3934,7 +3987,7 @@ function installStatusButton() {
 
     add();
 
-    new MutationObserver(add).observe(document.body, { childList: true, subtree: true });
+    onDomSettled(add);
   });
 }
 
@@ -4017,7 +4070,7 @@ a.${ATTACHMENT_MINIMISED} > [class~="flex-1"] { display: none; }
 
   paint();
 
-  new MutationObserver(paint).observe(document.body, { childList: true, subtree: true });
+  onDomSettled(paint);
 
   defineHook('__SHIVER_SET_ATTACHMENT_CARDS__', (next: boolean) => {
     on = next;

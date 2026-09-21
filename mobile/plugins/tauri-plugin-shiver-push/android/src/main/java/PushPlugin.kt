@@ -418,7 +418,7 @@ class PushReceiver : BroadcastReceiver() {
         val pending = open?.let {
             android.app.PendingIntent.getActivity(
                 context,
-                token.hashCode(),
+                notificationId(token),
                 it,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or
                     android.app.PendingIntent.FLAG_IMMUTABLE
@@ -434,7 +434,7 @@ class PushReceiver : BroadcastReceiver() {
 
         try {
             androidx.core.app.NotificationManagerCompat.from(context)
-                .notify(token.hashCode(), builder.build())
+                .notify(notificationId(token), builder.build())
         } catch (error: SecurityException) {
             // notifications not granted; nothing to be done from here
         }
@@ -458,3 +458,23 @@ class PushReceiver : BroadcastReceiver() {
         const val CHANNEL_ID = "shiver-push"
     }
 }
+
+/**
+ * The notification id for one server, shared by both halves of push.
+ *
+ * **This number has to match the one Shiver's core computes**, because the two halves post and
+ * clear the same server's notification independently: this receiver posts from a dead process, and
+ * the running core takes it back when the user opens that server. It was `token.hashCode()` here
+ * and a Rust `DefaultHasher` there — the same string through two different hash functions — so the
+ * numbers disagreed, and a notification posted from a cold start could never be cleared. It sat on
+ * the shade until the user swiped it, and the next warm notification stacked beside it instead of
+ * replacing it.
+ *
+ * `String.hashCode` is the specified one of the two, so it is the one both sides implement: the
+ * core calls `shiver_core::hash::java_string`, which is checked against a JVM's own answers. This
+ * stays a named function rather than an inline `.hashCode()` so that the next person to touch
+ * either side can see there is a second implementation to keep in step.
+ *
+ * The token is the rail entry's uuid, which is what makes it the right thing to key on.
+ */
+internal fun notificationId(token: String): Int = token.hashCode()

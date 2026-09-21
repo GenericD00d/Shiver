@@ -2,7 +2,8 @@
 //!
 //! One webview means one server's client is running at a time, so before this the mobile rail could
 //! only ever show a badge for the server you were already looking at — which is no badge at all.
-//! The core holds its own connection to every *other* server instead (`sharkord.rs`), counts what
+//! The core holds its own connection to every *other* server instead (`shared/sharkord-client`,
+//! which both clients speak the protocol through), counts what
 //! arrives, and tells both rails.
 //!
 //! Three decisions worth knowing:
@@ -647,7 +648,17 @@ fn record_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) {
     sync(app);
 }
 
-/// Writes a session to the encrypted store from a thread of Shiver's own.
+/// What the store writer is being asked to do.
+enum StoreWrite {
+    Set(String, String),
+    Remove(String),
+}
+
+/// The queue feeding the one thread that talks to the encrypted store.
+static STORE_WRITER: std::sync::OnceLock<std::sync::mpsc::Sender<StoreWrite>> =
+    std::sync::OnceLock::new();
+
+/// Writes to the encrypted store from a thread of Shiver's own — **one** thread, in order.
 ///
 /// Every caller goes through here, and not for tidiness. `run_mobile_plugin` blocks the calling
 /// thread until the JVM answers, and the JVM answers on the Android main thread — so any plugin call
@@ -655,19 +666,63 @@ fn record_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) {
 /// path, and it has arrived three separate ways now: from an eval callback, from the page-load hook,
 /// and from a synchronous command handler. Nothing that reaches the store is urgent enough to be
 /// worth being on the caller's thread, so none of it is.
+///
+/// **One long-lived worker rather than a thread per write**, which is the part that changed. Two
+/// things were wrong with spawning one each time.
+///
+/// The ordering was the bug. Threads finish in whatever order the scheduler likes, so a write and a
+/// later delete of the *same key* could land the wrong way round — and the first touch of
+/// `EncryptedSharedPreferences` asks the Keystore for a master key and parses a keyset, which its
+/// own documentation says took *seconds* on a cold start. So "remember this session, then remove
+/// this server" could leave the session in the store after the entry it belonged to was gone:
+/// exactly what `forget_everywhere` exists to prevent, defeated by a race. A channel into one
+/// worker makes the queue FIFO, so a delete issued after a write happens after it.
+///
+/// The churn was the smaller half: `forget_everywhere` alone spawned four OS threads, all of which
+/// then queued behind the single-threaded executor on the Kotlin side anyway.
 fn store_off_thread(app: &AppHandle, key: String, value: Option<String>) {
-    let handle = app.clone();
+    let sender = STORE_WRITER.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel::<StoreWrite>();
+        let handle = app.clone();
 
-    std::thread::spawn(move || {
-        let result = match &value {
-            Some(value) => handle.shiver_secrets().set(&key, value),
-            None => handle.shiver_secrets().remove(&key),
-        };
+        std::thread::Builder::new()
+            .name("shiver-store".into())
+            .spawn(move || {
+                // ends when the sender is dropped, which is process exit: the channel lives in a
+                // `OnceLock` for the life of the app
+                for write in receiver {
+                    let (key, result) = match write {
+                        StoreWrite::Set(key, value) => {
+                            let result = handle.shiver_secrets().set(&key, &value);
 
-        if let Err(error) = result {
-            eprintln!("[shiver] could not update the stored session for {key}: {error}");
-        }
+                            (key, result)
+                        }
+                        StoreWrite::Remove(key) => {
+                            let result = handle.shiver_secrets().remove(&key);
+
+                            (key, result)
+                        }
+                    };
+
+                    if let Err(error) = result {
+                        eprintln!(
+                            "[shiver] could not update the stored session for {key}: {error}"
+                        );
+                    }
+                }
+            })
+            .expect("the store writer thread should start");
+
+        sender
     });
+
+    let write = match value {
+        Some(value) => StoreWrite::Set(key, value),
+        None => StoreWrite::Remove(key),
+    };
+
+    // a send that fails means the worker is gone, which only happens at shutdown
+    let _ = sender.send(write);
 }
 
 /// Where a server's carried page state lives in the encrypted store.
@@ -1269,15 +1324,30 @@ fn clear_notification(app: &AppHandle, entry_id: &str) {
 
 /// A stable notification id for one server, so a second message replaces the first rather than
 /// stacking on it. Android wants an `i32`; entry ids are uuids, so this is their hash.
+///
+/// **Java's `String.hashCode`, deliberately, and not Rust's `DefaultHasher`.** Two things were
+/// wrong with the hasher this used.
+///
+/// The first is a real bug. The cold-start half of push — `PushReceiver` in
+/// `tauri-plugin-shiver-push`, which posts when Shiver is not running at all — identifies its
+/// notification by `token.hashCode()`, and that token *is* the rail entry id. Same string, a
+/// different hash, so the two halves were numbering the same server's notification differently: a
+/// push that arrived while Shiver was closed posted under one id, and opening that server cleared
+/// the other. The cold-start notification stayed on the shade with nothing able to take it back,
+/// and a later warm one stacked beside it rather than replacing it — which is exactly what the
+/// "one notification per server" rule at the top of this file exists to prevent.
+///
+/// The second is that `DefaultHasher` is explicitly documented as not stable across Rust releases.
+/// An id that has to match one posted by an earlier build — because the user updated Shiver while a
+/// notification was showing — cannot be built on a hash that is allowed to change.
+///
+/// `String.hashCode` is specified rather than merely implemented: `s[0]*31^(n-1) + s[1]*31^(n-2) +
+/// … + s[n-1]`, over UTF-16 code units, wrapping. Both halves can compute it and get the same
+/// answer, now and after either side is rebuilt.
 fn notification_id(entry_id: &str) -> i32 {
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-
-    entry_id.hash(&mut hasher);
-
-    // the sign is meaningless to Android, but a positive id is easier to read in a log
-    (hasher.finish() as u32 & 0x7fff_ffff) as i32
+    // in `shiver-core` rather than here, because it is checked against a real JVM's answers and
+    // `mobile/src-tauri`'s tests are not where that check belongs — see `hash::java_string`
+    shiver_core::hash::java_string(entry_id)
 }
 
 /// Signs a server in again, where the user has asked Shiver to be able to.

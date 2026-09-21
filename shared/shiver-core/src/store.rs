@@ -144,29 +144,46 @@ where
     where
         E: From<Error>,
     {
-        let (value, snapshot) = {
+        // Serialised while the lock is still held, so the registry is cloned once rather than
+        // twice. It used to clone for the draft and clone again to publish it — the second copy
+        // existing only so `persist` had something to read after the lock was released. Turning it
+        // into the json it was always going to become costs the same walk and keeps nothing.
+        let (value, json) = {
             let mut registry = self.registry();
             let mut draft = registry.clone();
             let value = edit(&mut draft)?;
 
-            *registry = draft.clone();
+            let json = self.serialise(&draft)?;
 
-            (value, draft)
+            *registry = draft;
+
+            (value, json)
         };
 
-        self.persist(&snapshot)?;
+        self.persist(json)?;
 
         Ok(value)
     }
 
-    fn persist(&self, registry: &R) -> Result<()> {
-        let Some(path) = self.path.as_ref() else {
-            // an in-memory store, which is what `for_tests` builds
+    /// The registry as it will be written, or nothing when this store has no file.
+    ///
+    /// `None` rather than an empty string, so an in-memory store does no serialising at all rather
+    /// than serialising something it will throw away.
+    fn serialise(&self, registry: &R) -> Result<Option<String>> {
+        if self.path.is_none() {
+            return Ok(None);
+        }
+
+        serde_json::to_string_pretty(registry)
+            .map(Some)
+            .map_err(|error| Error::Storage(error.to_string()))
+    }
+
+    fn persist(&self, json: Option<String>) -> Result<()> {
+        // an in-memory store, which is what `for_tests` builds
+        let (Some(path), Some(json)) = (self.path.as_ref(), json) else {
             return Ok(());
         };
-
-        let json = serde_json::to_string_pretty(registry)
-            .map_err(|error| Error::Storage(error.to_string()))?;
 
         // One writer at a time. `update` releases the registry lock before getting here, so without
         // this two saves could write the same temp file at once and rename in whichever order they
