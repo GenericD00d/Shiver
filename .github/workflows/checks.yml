@@ -71,11 +71,13 @@ jobs:
       - name: Desktop
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
 
-      # `check` rather than `test`: the mobile crate's logic is tested through the shared crates and
-      # its own unit tests need an Android runtime to mean anything. This is here to catch the
-      # compile break that a change to a shared crate causes.
+      # `test`, not `check`. This was `check` on the grounds that "its own unit tests need an
+      # Android runtime to mean anything" — which is not true of the 41 that exist: they are unread
+      # counts, origin rules, update comparisons and rail ordering, all pure logic, and they pass on
+      # an ordinary host. Running only `check` meant a whole test suite that could fail without
+      # anyone hearing about it.
       - name: Mobile
-        run: cargo check --manifest-path mobile/src-tauri/Cargo.toml
+        run: cargo test --manifest-path mobile/src-tauri/Cargo.toml
 
       # Warnings are failures here on purpose. Several of the things a review turned up — redundant
       # clones in the message path, a `Vec` used as a set, an argument list long enough to need an

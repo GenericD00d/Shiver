@@ -7,6 +7,7 @@
 //! least as strongly to the comparison that decides whether a webview may navigate somewhere.
 
 pub mod error;
+pub mod hash;
 pub mod origin;
 pub mod store;
 

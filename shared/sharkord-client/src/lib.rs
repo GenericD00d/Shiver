@@ -558,6 +558,14 @@ async fn fetch_shared_floor(socket: &mut Socket) -> Result<Option<HashMap<i64, u
 /// Json object keys are strings, so the channel ids arrive as `"12"` rather than `12` and have to
 /// be parsed back. A key that is not a number, or a count that is not one, is skipped rather than
 /// failing the lot: this row is written by Shiver but it is stored on somebody else's server.
+///
+/// **Through `as_count`, like every other count in this file.** It read `count.as_u64()? as u32`,
+/// which got both halves of that wrong. `as_u64` answers `None` for a float, and this floor is
+/// written by the *bridge* — from a page, where every json number is a double — so a value that
+/// serialised as `12.0` was not clamped or rounded but dropped, taking that channel's floor with
+/// it and making the whole backlog read as unread. And the cast was unclamped, so a value above
+/// `u32::MAX` wrapped rather than saturating, which for a row on somebody else's server is worth
+/// the one function call to avoid.
 fn parse_shared_floor(stored: &Value) -> Option<HashMap<i64, u32>> {
     let floor = stored.get("readFloor")?.as_object()?;
 
@@ -565,7 +573,7 @@ fn parse_shared_floor(stored: &Value) -> Option<HashMap<i64, u32>> {
         floor
             .iter()
             .filter_map(|(channel_id, count)| {
-                Some((channel_id.parse::<i64>().ok()?, count.as_u64()? as u32))
+                Some((channel_id.parse::<i64>().ok()?, as_count(count)?))
             })
             .collect(),
     )
@@ -1465,6 +1473,31 @@ mod floor_tests {
     fn a_row_that_is_not_an_object_is_no_floor() {
         assert!(parse_shared_floor(&serde_json::Value::Null).is_none());
         assert!(parse_shared_floor(&serde_json::json!({ "readFloor": 7 })).is_none());
+    }
+
+    /// The bridge writes this floor from a page, and a page has only doubles. `as_u64` answers
+    /// `None` for `12.0`, so a floor written by the very thing that is supposed to write it was
+    /// being dropped channel by channel — and a dropped floor reads as "none of this is read".
+    #[test]
+    fn a_floor_written_as_a_double_is_kept() {
+        let stored = serde_json::json!({ "readFloor": { "4": 12.0, "9": 3 } });
+        let floor = parse_shared_floor(&stored).expect("a floor");
+
+        assert_eq!(
+            floor.get(&4),
+            Some(&12),
+            "a float count must not be skipped"
+        );
+        assert_eq!(floor.get(&9), Some(&3));
+    }
+
+    /// And a count too large for the type saturates rather than wrapping round to something small.
+    #[test]
+    fn an_enormous_floor_saturates() {
+        let stored = serde_json::json!({ "readFloor": { "4": 4_294_967_296u64 } });
+        let floor = parse_shared_floor(&stored).expect("a floor");
+
+        assert_eq!(floor.get(&4), Some(&u32::MAX));
     }
 
     #[test]

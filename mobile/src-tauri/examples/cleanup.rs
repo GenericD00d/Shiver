@@ -3,7 +3,7 @@
 //! A tidy-up for `postas`: testing the unread badge means putting real messages on a real server,
 //! and a shared demo server should not be left holding them.
 //!
-//!   cargo run --example cleanup -- https://demo.sharkord.com someone hunter2 8
+//!   SHIVER_PASSWORD='…' cargo run --example cleanup -- https://demo.sharkord.com someone 8
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -12,12 +12,29 @@ use tokio_tungstenite::tungstenite::Message;
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+/// The password, from the environment rather than the command line.
+///
+/// `argv` is readable by any process on the machine through `ps`, and lands in shell history —
+/// which is a poor place for a password even in a developer tool that never ships. `SHIVER_PASSWORD`
+/// is read once and is not echoed anywhere.
+///
+///     SHIVER_PASSWORD='…' cargo run --example cleanup -- https://chat.example.com <identity> <channel id>
+fn password() -> String {
+    std::env::var("SHIVER_PASSWORD").unwrap_or_else(|_| {
+        eprintln!(
+            "set SHIVER_PASSWORD to the account's password — it is not taken on the command line, \
+             where `ps` and the shell's history would both keep a copy"
+        );
+        std::process::exit(2);
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let origin = args.next().expect("origin");
     let identity = args.next().expect("identity");
-    let password = args.next().expect("password");
+    let password = password();
     let channel_id: i64 = args.next().expect("channel id").parse()?;
 
     let client = reqwest::Client::builder()
