@@ -2690,8 +2690,16 @@ ${MESSAGE_ITEM} input, ${MESSAGE_ITEM} textarea, ${MESSAGE_ITEM} [contenteditabl
  * messages and the composer, which is Sharkord's own furniture and not Shiver's to redesign, and
  * it no longer answers a finger. `height: auto` then overrides any pin already applied — including
  * one restored from storage before this bridge was evaluated, which mobile's late injection makes
- * likely — and the keys are cleared so it is not restored again. What is left is the auto-growing
- * composer Sharkord has when nobody has ever dragged it, bounded by its own `max-height`.
+ * likely — and the keys are cleared so it is not restored again.
+ *
+ * **The `max-height` is the other half of that, and it is deliberately not `!important`.** Pinning
+ * is not only a height: `onPointerDown` clears Sharkord's inline `maxHeight` on the way past, so
+ * unpinning on its own leaves the composer with nothing to stop it, and a pasted block then grows
+ * it to the full height of what was pasted — the same complaint arriving through the other door.
+ * A test against a fixed bridge caught exactly that. So the cap is stated here, at Sharkord's own
+ * `DEFAULT_MAX_HEIGHT_VH`; and because an inline style beats a stylesheet, any value Sharkord sets
+ * itself still wins, which is what keeps its attachment path — where it raises the cap on purpose
+ * — working.
  *
  * **The scrollbar is hidden for a different reason.** Once the content is taller than the box,
  * `.compose-scroll-row` scrolls, and the action buttons — emoji, attach, send — are `sticky` at
@@ -2702,7 +2710,7 @@ ${MESSAGE_ITEM} input, ${MESSAGE_ITEM} textarea, ${MESSAGE_ITEM} [contenteditabl
 function settleTheComposer() {
   ensureStyle(COMPOSE_STYLE_ID).textContent = `
 ${COMPOSE_DIVIDER} { pointer-events: none !important; cursor: default !important; }
-${COMPOSE_CONTAINER} { height: auto !important; }
+${COMPOSE_CONTAINER} { height: auto !important; max-height: 35vh; }
 ${COMPOSE_SCROLL_ROW} { scrollbar-width: none; }
 ${COMPOSE_SCROLL_ROW}::-webkit-scrollbar { width: 0; height: 0; display: none; }
 `;

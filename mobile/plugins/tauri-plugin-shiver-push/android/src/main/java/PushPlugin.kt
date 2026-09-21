@@ -215,7 +215,9 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
         }
 
         val sender = try {
-            receiver.sentFromPackage()
+            // a Java getter, so Kotlin sees a property — `sentFromPackage()` asks to invoke the
+            // String it returns, which is what stopped this module compiling at all
+            receiver.sentFromPackage
         } catch (ex: Exception) {
             // only valid while the broadcast is being delivered; if it is not available, fall back
             // to the token check alone rather than dropping a push the user is waiting for
