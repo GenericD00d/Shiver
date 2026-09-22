@@ -404,6 +404,16 @@ pub fn create_main_window(app: &AppHandle) -> Result<Window> {
             if let Err(error) = relayout(&handle) {
                 eprintln!("[shiver] could not relayout after a resize: {error}");
             }
+
+            // Minimizing arrives as a resize on Windows rather than an event of its own, so the
+            // window is asked rather than the event read. Pushed on every resize and not only on a
+            // change, because the pages are the ones holding the state and one of them may have
+            // reloaded since the last push — `__SHIVER_SET_HIDDEN__` is idempotent for that reason.
+            if let Ok(window) = main_window(&handle) {
+                let hidden = window.is_minimized().unwrap_or(false);
+
+                push_visibility(&handle, hidden);
+            }
         }
     });
 
@@ -1081,6 +1091,41 @@ pub fn hide_dm_views(app: &AppHandle) -> Result<()> {
     app.state::<ActiveServer>().set_dm_on_screen(None);
 
     Ok(())
+}
+
+/// Tells every server page whether the window can actually be seen.
+///
+/// **A minimized Shiver is not a visible one, and the page has no way to know that.** A wry webview
+/// is a child window of Shiver's own; minimizing the top level does not change the WebView2
+/// controller's visibility, so `document.hidden` stays `false` and the page goes on believing the
+/// user is looking at it.
+///
+/// That matters because of what Sharkord does with it. In `messages/actions.ts` it reads
+/// `document?.hidden` and sends a notification when the window is hidden *or* the channel is not on
+/// screen — so a minimized Shiver sitting in a channel got no notification at all, and the message
+/// arrived nowhere the user would see it. Shiver's own feed is built out of the notifications
+/// Sharkord composes, so this is not only Sharkord's own badge that goes quiet: it is the bell.
+///
+/// What this does **not** fix is the other half of the same report. Sharkord marks the selected
+/// channel read on arrival whenever that channel is on screen, and that decision does not consult
+/// the window at all — it is three lines below the one that does. Being minimized therefore still
+/// marks messages read; the notification is what comes back. Suppressing the read itself means
+/// intercepting a call to somebody else's server, and that is a different trade to make
+/// deliberately rather than as a side effect of this.
+pub fn push_visibility(app: &AppHandle, hidden: bool) {
+    let Ok(window) = main_window(app) else {
+        return;
+    };
+
+    for webview in window.webviews() {
+        if is_shiver_chrome(webview.label()) {
+            continue;
+        }
+
+        let _ = webview.eval(format!(
+            "window.__SHIVER_SET_HIDDEN__ && window.__SHIVER_SET_HIDDEN__({hidden})"
+        ));
+    }
 }
 
 /// Repaints every open server and conversation page in the user's colours, without reloading them.

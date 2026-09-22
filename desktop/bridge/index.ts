@@ -190,6 +190,8 @@ declare global {
     __SHIVER_SET_READ_FLOOR__?: (floor: Record<string, number>) => void;
     __SHIVER_SET_DM_MODE__?: (enabled: boolean) => void;
     __SHIVER_SET_THEME__?: (theme: ShiverTheme | null) => void;
+    /** tells the page the window is minimised, which nothing else here would make it notice */
+    __SHIVER_SET_HIDDEN__?: (hidden: boolean) => void;
     __SHIVER_SET_VOICE_LOCK__?: (locked: boolean) => void;
     /** turns the minimised attachment cards on or off without reloading the page */
     __SHIVER_SET_ATTACHMENT_CARDS__?: (minimised: boolean) => void;
@@ -401,6 +403,7 @@ function install(shiver: ShiverConfig) {
   defineHook('__SHIVER_SET_READ_FLOOR__', (floor) => void storeReadFloor(floor));
   defineHook('__SHIVER_SET_DM_MODE__', (enabled) => setDmMode(enabled));
   defineHook('__SHIVER_SET_THEME__', (theme) => setTheme(theme));
+  defineHook('__SHIVER_SET_HIDDEN__', (hidden) => setWindowHidden(hidden));
 
   captureNotifications(queue, lastSeen, () => state, () => muted);
 
@@ -2119,6 +2122,70 @@ function addMuteItem(
   });
 
   menu.appendChild(item);
+}
+
+/**
+ * Makes the page agree with the window about whether anyone can see it.
+ *
+ * **A minimised Shiver still looks visible from inside the page.** Each server's client runs in a
+ * wry webview that is a child window of Shiver's own, and minimising the top level does not change
+ * the WebView2 controller's visibility — so `document.hidden` stays `false` and
+ * `visibilityState` stays `'visible'` however long the app sits in the taskbar.
+ *
+ * Sharkord reads exactly that. `messages/actions.ts` notifies when the window is hidden *or* the
+ * channel is off screen, so a minimised Shiver parked in a channel matched neither and the message
+ * arrived with no notification at all. Shiver's own bell is built out of the notifications Sharkord
+ * composes, so the silence was not Sharkord's alone.
+ *
+ * The getters are defined on the document itself, which shadows the prototype's, and they fall back
+ * to the real ones whenever Shiver is not forcing the point — so a page that genuinely goes hidden
+ * for some other reason still says so. `visibilitychange` is dispatched because that is the event a
+ * page listens for, even though the caller this exists for reads the property directly.
+ *
+ * It does **not** stop a minimised Shiver marking the channel read. That decision is three lines
+ * below the one this fixes and consults no window state at all; changing it means intercepting a
+ * call to the server, which is a heavier thing to do to somebody else's client.
+ */
+let windowHidden = false;
+let visibilityPatched = false;
+
+function setWindowHidden(hidden: boolean) {
+  patchVisibility();
+
+  if (windowHidden === hidden) return;
+
+  windowHidden = hidden;
+
+  document.dispatchEvent(new Event('visibilitychange'));
+}
+
+function patchVisibility() {
+  if (visibilityPatched) return;
+
+  visibilityPatched = true;
+
+  const real = (name: 'hidden' | 'visibilityState') =>
+    Object.getOwnPropertyDescriptor(Document.prototype, name)?.get;
+
+  const nativeHidden = real('hidden');
+  const nativeState = real('visibilityState');
+
+  try {
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      get: () => windowHidden || (nativeHidden?.call(document) ?? false)
+    });
+
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () =>
+        windowHidden ? 'hidden' : (nativeState?.call(document) ?? 'visible')
+    });
+  } catch {
+    // a page that has already sealed these keeps its own, and the notification is lost the way it
+    // was before — worth trying for, not worth throwing the rest of the bridge away for
+    visibilityPatched = false;
+  }
 }
 
 const THEME_STYLE_ID = 'shiver-theme';
