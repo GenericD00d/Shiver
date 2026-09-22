@@ -20,6 +20,14 @@ dist-bridge/
 #   AndroidManifest.xml    allowBackup off, and the network security config
 #   res/xml/               those rules themselves; src/debug/res/xml relaxes cleartext for the dev
 #                          server, and only for debug builds
+#   res/values/            `colors.xml` carries `shiver_background`, Sharkord's own background kept
+#                          in step with DEFAULT_THEME_COLOR, and both `themes.xml` files paint the
+#                          window behind the system bars with it. Without them the strips either
+#                          side of the inset webview fall back to the platform default, which is
+#                          white — a white band above a black client, on every device, and nothing
+#                          failing to say so. Added to this list late: they were hand-written from
+#                          the start and ignored the whole time, so a clean checkout had been
+#                          losing them silently, which is the exact thing this list exists to stop
 #   app/build.gradle.kts   the release signing config, compileSdk 36, the cleartext placeholders
 #                          and the extra dependencies
 #
@@ -43,6 +51,11 @@ dist-bridge/
 !**/src-tauri/gen/android/app/src/main/res/
 !**/src-tauri/gen/android/app/src/main/res/xml/
 !**/src-tauri/gen/android/app/src/main/res/xml/*.xml
+!**/src-tauri/gen/android/app/src/main/res/values/
+!**/src-tauri/gen/android/app/src/main/res/values/colors.xml
+!**/src-tauri/gen/android/app/src/main/res/values/themes.xml
+!**/src-tauri/gen/android/app/src/main/res/values-night/
+!**/src-tauri/gen/android/app/src/main/res/values-night/themes.xml
 !**/src-tauri/gen/android/app/src/debug/
 !**/src-tauri/gen/android/app/src/debug/res/
 !**/src-tauri/gen/android/app/src/debug/res/xml/

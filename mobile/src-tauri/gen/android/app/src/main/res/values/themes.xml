@@ -1,0 +1,16 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.shiver_mobile" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!--
+          What shows through behind the system bars.
+
+          The webview is inset so it does not draw under the status or navigation bar, which means
+          those strips show the window's own background rather than the page. Left at the platform
+          default that is white in light mode, and a white band above a black client looks broken.
+
+          The value is Sharkord's own background colour, the same one Shiver uses as its default
+          theme colour, so the inset reads as part of the app instead of as a gap in it.
+        -->
+        <item name="android:windowBackground">@color/shiver_background</item>
+    </style>
+</resources>
