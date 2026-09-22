@@ -164,8 +164,17 @@ jobs:
       # `NDK_HOME` is named explicitly because Tauri reads it before it goes hunting inside the SDK.
       - name: Android SDK
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          # not on PATH on this image; it lives under the sdk's cmdline-tools, versioned
+          sdkmanager=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
+
+          if [ -z "$sdkmanager" ]; then
+            echo "no sdkmanager under $ANDROID_HOME/cmdline-tools" >&2
+            exit 1
+          fi
+
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+
           echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
 
       - name: Generate the Android project
