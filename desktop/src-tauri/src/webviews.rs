@@ -774,6 +774,39 @@ fn create_server_webview(
     )
 }
 
+/// Where one rail entry's browser profile lives.
+///
+/// **A directory per entry, and that is the whole of what keeps two accounts apart.** WebView2 keys
+/// its storage by origin, and Tauri keys a web context by this path
+/// (`WebContextStore = HashMap<Option<PathBuf>, WebContext>`), so every webview left on the default
+/// shared one profile. Two rail entries pointing at the *same* server therefore shared a
+/// `localStorage` — including `sharkord-auto-login-token`, which `seedAutoLogin` writes — so the
+/// second entry's seed overwrote the first's, and on the next launch both pages signed in as
+/// whichever account was written last. Adding a server twice for two accounts is a feature Shiver
+/// advertises, and it quietly did not work.
+///
+/// It is also why the badge doubled: two pages signed into one account report that account's
+/// notifications twice, and the feed has no way to tell them apart.
+///
+/// Keyed by entry id rather than by origin, so two entries are two profiles even on one server, and
+/// a server's conversation view shares its own entry's profile rather than opening a second login.
+///
+/// Falling back to the shared profile when the directory cannot be resolved is deliberate: that is
+/// the behaviour Shiver had, and a server that opens signed into the wrong account is better than a
+/// server that does not open.
+fn profile_directory(app: &AppHandle, entry_id: &str) -> Option<std::path::PathBuf> {
+    match app.path().app_local_data_dir() {
+        Ok(dir) => Some(dir.join("webviews").join(entry_id)),
+        Err(error) => {
+            eprintln!(
+                "[shiver] no local data directory for {entry_id}'s browser profile ({error}),                  so it shares the default one"
+            );
+
+            None
+        }
+    }
+}
+
 /// Builds one webview holding a server's own client, pinned to its origin.
 ///
 /// `dm_role` marks the conversation view: that page hides its own sidebar and reports neither
@@ -807,7 +840,7 @@ fn build_page_webview(
     let loaded_for_page = loaded.clone();
     let origin_for_nav = origin.clone();
 
-    let builder = WebviewBuilder::new(label.to_string(), WebviewUrl::External(url))
+    let mut builder = WebviewBuilder::new(label.to_string(), WebviewUrl::External(url))
         // Off for the same reason as the shell's, with the opposite motive. Tauri's native handler
         // takes a drag before the page can see it, so `dragover` and `drop` never fire — and
         // Sharkord uploads by listening for exactly those (`hooks/use-upload-files.ts`). Left on,
@@ -865,6 +898,12 @@ fn build_page_webview(
             tauri::webview::NewWindowResponse::Deny
         }
     });
+
+    // Applied after the chain rather than in it, because it is the one setting here that may have
+    // nothing to apply — see `profile_directory`.
+    if let Some(directory) = profile_directory(window.app_handle(), &entry.id) {
+        builder = builder.data_directory(directory);
+    }
 
     window.add_child(builder, position, size)?;
 
