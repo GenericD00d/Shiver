@@ -207,21 +207,42 @@ jobs:
       # somewhere further down with a stack trace.
       - name: Point the Gradle task straight at the Tauri CLI
         run: |
-          task=$(find mobile/src-tauri/gen/android/buildSrc -name BuildTask.kt)
-          cli="$GITHUB_WORKSPACE/mobile/node_modules/.bin/tauri"
+          python3 - <<'PATCH'
+          import os, pathlib, sys
 
-          if [ ! -x "$cli" ]; then
-            echo "no executable tauri CLI at $cli" >&2
-            exit 1
-          fi
+          root = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+          found = list(root.glob("mobile/src-tauri/gen/android/buildSrc/**/BuildTask.kt"))
 
-          sed -i "s|val executable = \"\"\"bun\"\"\"|val executable = \"\"\"$cli\"\"\"|" "$task"
-          sed -i 's|listOf("tauri", "android", "android-studio-script")|listOf("android", "android-studio-script")|' "$task"
+          if len(found) != 1:
+              sys.exit(f"expected one BuildTask.kt, found {[str(f) for f in found]}")
 
-          grep -q "val executable = \"\"\"$cli\"\"\"" "$task" || { echo "executable patch did not apply" >&2; exit 1; }
-          grep -q 'listOf("android", "android-studio-script")' "$task" || { echo "args patch did not apply" >&2; exit 1; }
+          task = found[0]
+          cli = root / "mobile" / "node_modules" / ".bin" / "tauri"
 
-          grep -n 'val executable\|val args' "$task"
+          if not os.access(cli, os.X_OK):
+              sys.exit(f"no executable Tauri CLI at {cli}")
+
+          source = task.read_text(encoding="utf8")
+
+          swaps = [
+              ('val executable = """bun"""', f'val executable = """{cli}"""'),
+              ('listOf("tauri", "android", "android-studio-script")',
+               'listOf("android", "android-studio-script")'),
+          ]
+
+          for old, new in swaps:
+              if old not in source:
+                  print(task.read_text(encoding="utf8"), file=sys.stderr)
+                  sys.exit(f"{task.name} does not contain {old!r} — android init changed shape")
+
+              source = source.replace(old, new, 1)
+
+          task.write_text(source, encoding="utf8")
+
+          for line in source.splitlines():
+              if "val executable" in line or "val args" in line:
+                  print(line.strip())
+          PATCH
 
       # One ABI is enough to compile every line of it; the release build does the rest.
       - name: Build the debug APK
