@@ -96,6 +96,85 @@ jobs:
           cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --check
           cargo fmt --manifest-path mobile/src-tauri/Cargo.toml --check
 
+  # The Android app, which nothing here used to compile.
+  #
+  # `cargo test` on `mobile/src-tauri` builds the **Rust** crate and nothing else, and the Android
+  # app is also Kotlin, Gradle, a manifest and resources — sixteen tracked files that no job
+  # touched. That is not theoretical: `PushPlugin.kt` called `receiver.sentFromPackage()`, which is
+  # a Java getter and so a property in Kotlin, and the app did not compile *at all* from the source
+  # review until it was found by hand. CI stayed green on this step throughout, because the break
+  # was in a language this job did not build. Two agents edited that file in that state, one of
+  # them recording in its own commit that it could not compile what it had written.
+  #
+  # **A debug build rather than a release one, which is what keeps it free of secrets.** Debug signs
+  # with the auto-generated debug keystore; `failOnUnsignedRelease` guards `release` only and
+  # exempts debug by name. So this needs no signing key and stays safe to run on a fork's pull
+  # request, like everything else here.
+  #
+  # **Why the whole build and not just the Kotlin.** The Rust cross-compile hangs off
+  # `merge…JniLibFolders` rather than the Kotlin tasks, so compiling Kotlin alone looks reachable —
+  # but `settings.gradle` applies `tauri.settings.gradle`, and that file is written by Tauri's own
+  # Android pipeline and holds absolute paths into the cargo registry. Without it Gradle cannot
+  # evaluate the project at all. Generating it here would mean reimplementing how Tauri resolves
+  # its mobile plugins, which is a worse thing to own than a slower job.
+  #
+  # **`android init` first**, because `gen/android` is ignored apart from ten hand-written files:
+  # a checkout has no `gradlew`, no `settings.gradle` and no `buildSrc`. Init regenerates those and
+  # leaves existing files alone, but the `git checkout` after it is not superstition — the README
+  # warns that init overwrites the hand-written ones, and this is the guard against that becoming
+  # true again silently. If init ever does start clobbering them, this job fails rather than the
+  # next release quietly shipping without the window insets or the network security config.
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 17, which is what the Android Gradle plugin needs here
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mobile/src-tauri
+          key: android
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install
+        run: bun install --frozen-lockfile
+        working-directory: mobile
+
+      # The NDK the runner image already ships, so nothing large is downloaded. Named explicitly
+      # because Tauri looks for `NDK_HOME` before it goes hunting inside the SDK.
+      - name: Point at the NDK
+        run: echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+
+      - name: Generate the Android project
+        run: ./node_modules/.bin/tauri android init
+        working-directory: mobile
+
+      # Init writes the whole project, including the ten files that are hand-written and tracked.
+      # Restoring them is what makes this job test *Shiver's* Android app rather than a stock one —
+      # and `--quiet` would hide the very thing worth seeing, so the diff is printed first.
+      - name: Restore the hand-written parts
+        run: |
+          git status --porcelain mobile/src-tauri/gen/android
+          git checkout -- mobile/src-tauri/gen/android
+
+      # One ABI is enough to compile every line of it; the release build does the rest.
+      - name: Build the debug APK
+        run: ./node_modules/.bin/tauri android build --apk --debug --target aarch64
+        working-directory: mobile
+
   # Known-vulnerable dependencies, which is the one kind of security problem a project can find
   # without anybody reading anything. The README says plainly that no audit has been done; this is
   # the part of that which a machine can do every time.
