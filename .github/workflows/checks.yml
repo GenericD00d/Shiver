@@ -136,8 +136,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
@@ -153,10 +151,22 @@ jobs:
         run: bun install --frozen-lockfile
         working-directory: mobile
 
-      # The NDK the runner image already ships, so nothing large is downloaded. Named explicitly
-      # because Tauri looks for `NDK_HOME` before it goes hunting inside the SDK.
-      - name: Point at the NDK
-        run: echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+      # The SDK and NDK the runner image already ships, so nothing large is downloaded and there is
+      # no `setup-android` step: that action's own licence acceptance exits 1 on this image
+      # (`sdkmanager --licenses` reporting "6 of 7 SDK package licenses not accepted") and took the
+      # job with it before anything was built.
+      #
+      # Licences are accepted here instead, tolerating that same exit code, and then the two
+      # packages this project actually pins are installed — `compileSdk 36` in `build.gradle.kts`.
+      # Those are *not* tolerant: if the platform cannot be installed the build cannot work, and
+      # failing here says so plainly rather than a hundred lines later.
+      #
+      # `NDK_HOME` is named explicitly because Tauri reads it before it goes hunting inside the SDK.
+      - name: Android SDK
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
 
       - name: Generate the Android project
         run: ./node_modules/.bin/tauri android init
