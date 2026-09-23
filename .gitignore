@@ -70,6 +70,8 @@ keystore.properties
 !plugin/README.md
 !SECURITY.md
 !RELEASING.md
+!ARCHITECTURE.md
+!CLAUDE.md
 
 # bug-report screenshots
 example*.png
