@@ -38,9 +38,10 @@ will serve you perfectly well.
 - **Seamless sign-in.** Shiver signs in for you and the server opens straight into the app rather
   than onto a login page. Sessions and passwords live in the OS keychain, or
   `EncryptedSharedPreferences` on Android — never in a file, never in plaintext. Keeping the password
-  is the default, because it is what lets Shiver sign itself back in when a session expires;
-  Sharkord's last seven days and cannot be refreshed. **Forget my password** in a server's menu
-  removes it
+  is the default, because it is what lets Shiver sign itself back in when a session expires
+  (Sharkord's sessions last seven days and cannot be refreshed). The session is handed to a server's
+  page from memory and never written to the webview's storage. **Forget my password** in a server's menu
+  removes it.
 - **HTTPS only.** Shiver refuses to add a server, sign in to one, or open a socket over `http://`,
   with no exemption for localhost or a private address.
 - **Unread badges per server**, cleared by opening it, with per-channel mutes excluded
@@ -76,9 +77,12 @@ server wake your phone. Everyone on the server sees statuses, browser users incl
 
 ## What it deliberately does not do
 
-Each server's client runs pinned to its own origin with no way to call into Shiver. The only things
-about your *other* servers that ever reach one are what a rail cannot be drawn without: a name, a
-logo as image data, and an opaque id — **never an address**, and never who you talk to elsewhere.
+Each server's client runs pinned to its own origin with no way to call into Shiver. On desktop the
+rail is Shiver's own webview and a server's page learns nothing about your other servers. On
+Android there is one webview, so the rail is drawn inside the server's page, and that page is handed
+what the rail cannot be drawn without: each server's name, logo as image data, opaque id, place in
+the rail and folders, unread count and whether it is signed out — **never an address**, account or
+session, and never who you talk to elsewhere.
 
 ## Building
 

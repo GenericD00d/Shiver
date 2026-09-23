@@ -54,7 +54,17 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   if the machine trusts it. That is a deliberate trade and it is also why "could not reach the
   server" is sometimes a certificate problem.
 - **https is required everywhere**, with no exemption for localhost or a private address.
-- **DNS rebinding is not defeated** in the companion plugin's endpoint check. The endpoint is
-  re-resolved and re-checked immediately before every send, which narrows the window to that
-  request rather than closing it; pinning the connection to the vetted address would close it, and
-  has not been done.
+- **Sessions never reach a webview's storage.** A small script that runs before the page's own
+  patches `Storage.prototype` so Sharkord's auto-login token and live session are served from
+  memory (`shared/web/session.ts`). On desktop it is part of the initialization script; on Android
+  the token arrives in a `#shiver-seed=` fragment that the document-start script removes before any
+  page script runs. It steps aside if the server refuses the token or the user signs in on the page.
+- **What a server's page can learn on Android.** There is one webview, so the rail is drawn inside
+  the server's page. It is handed, for every server in the rail: display name, inlined logo,
+  opaque entry id, position and folder, unread count and a signed-out flag; plus folder names. It
+  is never handed another server's address, account, session or push endpoint. Actions the page's
+  rail requests by navigating to Shiver's own page (remove, log out, forget password) need
+  confirmation there.
+- **The plugin's push delivery is pinned.** The endpoint is resolved once, every address is
+  checked, and the request is sent over TLS to that vetted address with the hostname as SNI, so
+  DNS rebinding cannot redirect it.
