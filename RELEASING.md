@@ -54,9 +54,31 @@ Also back up, because they are needed to *use* the keys and are not secret:
 
 ## Building a release
 
-Bump the version in **one** place: `version` under `[workspace.package]` in the root
-`Cargo.toml`. Every crate inherits it, and both `tauri.conf.json` files omit `version`, so Tauri
-(including Android's `versionCode`) takes it from the crate.
+Bump the version in **two** places:
+
+- `version` under `[workspace.package]` in the root `Cargo.toml`. Every crate inherits it, and
+  `desktop/src-tauri/tauri.conf.json` omits `version`, so the desktop build takes it from there.
+- `version` in `mobile/src-tauri/tauri.conf.json`, which Android needs and cannot get from the
+  crate.
+
+**Android is the exception and it fails quietly.** Gradle reads the version from
+`gen/android/app/tauri.properties`, which the CLI writes from `tauri.conf.json` — not from the
+crate, and not from the workspace. With no `version` there, nothing writes that file, and
+`build.gradle.kts` falls back to its own defaults:
+
+```kotlin
+versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
+versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+```
+
+So the build succeeds and produces a signed APK claiming to be **version 1.0, versionCode 1** —
+which no existing install will accept as an upgrade, and which nothing in the build says a word
+about. Check it before publishing:
+
+```bash
+aapt2 dump badging <apk> | head -1
+# package: name='com.shiver.mobile' versionCode='1005' versionName='0.1.5'
+```
 
 The companion plugin is versioned separately. It installs separately and its
 `plugin/manifest.json` version is its own, bumped when the plugin changes rather than to match an
