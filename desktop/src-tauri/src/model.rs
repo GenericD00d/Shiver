@@ -11,7 +11,6 @@ pub use shiver_core::{
         DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME,
     },
     normalize_origin,
-    probe::ServerInfo,
     rail::Rail,
 };
 

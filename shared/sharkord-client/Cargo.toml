@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde.workspace = true
+shiver-core.workspace = true
+zeroize.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
@@ -13,6 +16,4 @@ tokio-tungstenite.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
 
 [dev-dependencies]
-# examples/sharkord.rs
-shiver-core.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

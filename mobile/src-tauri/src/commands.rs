@@ -8,6 +8,7 @@ use tauri_plugin_shiver_push::PushExt;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+use sharkord_client::ServerCheck;
 use shiver_core::{login, probe};
 
 use crate::{
@@ -38,43 +39,19 @@ pub async fn probe_server(origin: String) -> Result<ServerInfo> {
     Ok(probe::fetch_info(&normalize_origin(&origin)?).await?)
 }
 
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ServerCheck {
-    #[serde(flatten)]
-    pub info: ServerInfo,
-    /// Absent when unchecked (no credentials); `None` when checked and not installed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub plugin: Option<Option<String>>,
-}
-
-/// `/info`, plus — given credentials — whether the companion plugin is installed (only a signed-in
-/// join reveals it). Nothing is stored.
+/// See [`sharkord_client::check_server`].
 #[tauri::command]
 pub async fn check_server(
     origin: String,
     identity: Option<String>,
     password: Option<Password>,
 ) -> Result<ServerCheck> {
-    let origin = normalize_origin(&origin)?;
-    let info = probe::fetch_info(&origin).await?;
-
-    let (Some(identity), Some(password)) = (
-        identity.filter(|identity| !identity.trim().is_empty()),
-        password.filter(|password| !password.is_empty()),
-    ) else {
-        return Ok(ServerCheck { info, plugin: None });
-    };
-
-    let token = Zeroizing::new(login::sign_in(&origin, identity.trim(), &password).await?);
-    let session = crate::sharkord::open(&origin, &token, false)
-        .await
-        .map_err(|error| Error::Unreachable(format!("{origin}: {error}")))?;
-
-    Ok(ServerCheck {
-        info,
-        plugin: Some(session.joined.plugin_version.clone()),
-    })
+    Ok(sharkord_client::check_server(
+        &origin,
+        identity.as_deref(),
+        password.as_deref().map(String::as_str),
+    )
+    .await?)
 }
 
 /// Adds a server, signing in first when credentials are given (so a wrong password adds nothing).

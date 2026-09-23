@@ -3726,11 +3726,13 @@ name = "sharkord-client"
 version = "0.1.4"
 dependencies = [
  "futures-util",
+ "serde",
  "serde_json",
  "shiver-core",
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite",
+ "zeroize",
 ]
 
 [[package]]
