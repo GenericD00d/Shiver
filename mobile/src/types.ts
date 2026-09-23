@@ -1,4 +1,8 @@
+import type { Folder, MutedChannel, ServerCheck, ServerInfo } from '../../shared/web/types';
+
 export { DEFAULT_ACCENT_COLOR, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME } from '../../shared/web/settings';
+
+export type { Folder, MutedChannel, ServerCheck, ServerInfo };
 
 export type ServerEntry = {
   /** Shiver takes messages of any size from this server, because the user said it may */
@@ -49,17 +53,6 @@ export type PushServer = {
   state: 'off' | 'waiting' | 'ready' | 'failed';
 };
 
-/** A server Shiver cannot watch, and the reason in words meant for a person. */
-/** A server looked up before it is added, with the companion plugin's verdict where one is possible. */
-export type ServerCheck = ServerInfo & {
-  /**
-   * The plugin's version, null where the server has none — and **absent entirely** when Shiver
-   * could not ask, which is the case without credentials. Nothing reveals a server's plugins
-   * without a session, so an unasked server must not be drawn as lacking it.
-   */
-  plugin?: string | null;
-};
-
 /** What Shiver found out about a server's companion plugin, once it had connected to it. */
 export type PluginStatus = {
   entryId: string;
@@ -67,21 +60,10 @@ export type PluginStatus = {
   version: string | null;
 };
 
+/** A server Shiver cannot watch, and the reason in words meant for a person. */
 export type WatchProblem = {
   entryId: string;
   reason: string;
-};
-
-export type MutedChannel = {
-  entryId: string;
-  channelId: number;
-};
-
-export type Folder = {
-  id: string;
-  name: string;
-  position: number;
-  expanded: boolean;
 };
 
 export type Settings = {
@@ -106,14 +88,4 @@ export type Registry = {
   folders: Folder[];
   settings: Settings;
   muted: MutedChannel[];
-};
-
-export type ServerInfo = {
-  origin: string;
-  serverId: string;
-  name: string;
-  description: string | null;
-  iconUrl: string | null;
-  /** the logo as a `data:` uri, sent to the bridge so a server's page never learns another's address */
-  iconData: string | null;
 };

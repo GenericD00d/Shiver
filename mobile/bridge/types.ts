@@ -1,4 +1,5 @@
 import type { ShiverTheme } from '../../shared/web/bridge/theme';
+import type { Folder } from '../../shared/web/types';
 
 /** One server as a server's page may know it: no origin, icon URL, account or identity. */
 export type RailEntry = {
@@ -14,7 +15,7 @@ export type RailEntry = {
   folderId: string | null;
 };
 
-export type RailFolder = { id: string; name: string; position: number; expanded: boolean };
+export type RailFolder = Folder;
 
 export type RailMove = { serverId: string; folderId: string | null };
 
