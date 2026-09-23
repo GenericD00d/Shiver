@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { api, errorMessage } from '../api';
-import { automaticTextColor } from '../theme';
+import { automaticTextColor } from '../../../shared/web/theme';
 import { DEFAULT_ACCENT_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME, type Settings } from '../types';
 
 /** Which group of settings to draw. The rest live in their own components — see `App`. */

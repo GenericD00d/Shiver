@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../api';
 
 import { HotkeyField } from './HotkeyField';
-import { automaticTextColor } from '../theme';
+import { automaticTextColor } from '../../../shared/web/theme';
 import { playNotificationSound } from '../sounds';
 import {
   DEFAULT_ACCENT_COLOR,

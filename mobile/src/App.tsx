@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, errorMessage } from './api';
 import { AddServer } from './components/AddServer';
 import { BackgroundNotifications } from './components/BackgroundNotifications';
-import { Boot, type BootState } from './components/Boot';
+import { Boot, type BootState, type ConfirmAction } from './components/Boot';
 import { DirectMessages } from './components/DirectMessages';
 import { UpdateNotice } from './components/UpdateNotice';
 import type { SettingsSection } from './components/SettingsScreen';
@@ -12,7 +12,7 @@ import { ServerList } from './components/ServerList';
 import { Sessions } from './components/Sessions';
 import { SignInServer } from './components/SignInServer';
 import { SettingsScreen } from './components/SettingsScreen';
-import { applyTheme } from './theme';
+import { applyTheme } from '../../shared/web/theme';
 import {
   DEFAULT_ACCENT_COLOR,
   DEFAULT_THEME_COLOR,
@@ -62,7 +62,7 @@ const TITLES: Record<Exclude<Screen, 'boot'>, string> = {
 type Intent =
   | { kind: 'open'; id: string; dmUser?: string }
   | { kind: 'screen'; screen: Screen }
-  | { kind: 'do'; action: 'refresh' | 'remove' | 'forgetpw'; id: string }
+  | { kind: 'do'; action: 'refresh' | ConfirmAction; id: string }
   | null;
 
 const readIntent = (hash: string): Intent => {
@@ -87,7 +87,7 @@ const readIntent = (hash: string): Intent => {
   if (value.startsWith('do=')) {
     const [action, id] = value.slice('do='.length).split(':');
 
-    if ((action === 'refresh' || action === 'remove' || action === 'forgetpw') && id) {
+    if ((action === 'refresh' || action === 'remove' || action === 'forgetpw' || action === 'logout') && id) {
       return { kind: 'do', action, id: decodeURIComponent(id) };
     }
   }
@@ -186,7 +186,9 @@ export const App = () => {
         const { action, server } = boot;
 
         try {
-          await (action === 'remove' ? api.removeServer(server.id) : api.forgetPassword(server.id));
+          const run = { remove: api.removeServer, forgetpw: api.forgetPassword, logout: api.logOutServer }[action];
+
+          await run(server.id);
         } catch (cause) {
           setError(errorMessage(cause));
         }

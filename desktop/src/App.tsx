@@ -11,7 +11,7 @@ import { ServerRail } from './components/ServerRail';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SignInPanel } from './components/SignInPanel';
 import { WelcomePanel } from './components/WelcomePanel';
-import { applyTheme } from './theme';
+import { applyTheme } from '../../shared/web/theme';
 import {
   DEFAULT_ACCENT_COLOR,
   DEFAULT_PAGES_KEPT,

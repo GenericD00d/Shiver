@@ -9,6 +9,8 @@ export default defineConfig({
   server: {
     port: 1421,
     strictPort: true,
+    // shared/web is imported from outside this project
+    fs: { allow: ['.', '../shared/web'] },
     // the Android device loads the dev server over the network rather than from localhost
     host: process.env.TAURI_DEV_HOST || false
   }

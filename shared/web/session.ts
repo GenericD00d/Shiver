@@ -10,9 +10,9 @@
  * Must run before the page's own scripts. Idempotent: a second call only changes the session.
  */
 
-const AUTO_LOGIN = 'sharkord-auto-login';
-const AUTO_LOGIN_TOKEN = 'sharkord-auto-login-token';
-const LIVE_TOKEN = 'sharkord-token';
+export const AUTO_LOGIN = 'sharkord-auto-login';
+export const AUTO_LOGIN_TOKEN = 'sharkord-auto-login-token';
+export const LIVE_TOKEN = 'sharkord-token';
 
 type Shim = { seed: (token: string | null) => void; active: () => boolean };
 

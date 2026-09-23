@@ -1,6 +1,7 @@
 /** Paints Shiver's own pages in the user's colours, as `--shiver-*` custom properties. */
 
-import { automaticTextColor, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, lift } from './colors';
+import { automaticTextColor, lift } from './colors';
+import { DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR } from './settings';
 
 export { automaticTextColor };
 

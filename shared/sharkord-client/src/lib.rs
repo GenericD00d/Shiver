@@ -1,6 +1,6 @@
 //! Shiver's read-only connection to a Sharkord server, spoken from the core rather than a page.
 //!
-//! Sequence (worked out against a live server; `mobile/src-tauri/examples/wsprobe.rs` reproduces it):
+//! Sequence (worked out against a live server; `examples/sharkord.rs probe` reproduces it):
 //! 1. `POST /login` -> `{ token }` (done by the caller).
 //! 2. Connect to `wss://host/?connectionParams=1`; without the query the server fails the upgrade.
 //! 3. Send `{ method: "connectionParams", data: { token } }` to authenticate.

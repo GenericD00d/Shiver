@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { api } from './api';
 import { NotificationList } from './components/NotificationList';
-import { applyTheme } from './theme';
+import { applyTheme } from '../../shared/web/theme';
 import type { Notification } from './types';
 
 const FEED_EVENT = 'shiver://feed';

@@ -1,7 +1,7 @@
 import type { ServerEntry } from '../types';
 
 /** An action a server page's rail asked for by navigating here; confirmed on Shiver's own page, since any page can navigate. */
-export type ConfirmAction = 'remove' | 'forgetpw';
+export type ConfirmAction = 'remove' | 'forgetpw' | 'logout';
 
 export type BootState =
   | { kind: 'waiting' }
@@ -19,7 +19,8 @@ type Props = {
 
 const QUESTIONS: Record<ConfirmAction, { question: (name: string) => string; action: string }> = {
   remove: { question: (name) => `Remove ${name} from Shiver?`, action: 'Remove' },
-  forgetpw: { question: (name) => `Forget the saved password for ${name}?`, action: 'Forget' }
+  forgetpw: { question: (name) => `Forget the saved password for ${name}?`, action: 'Forget' },
+  logout: { question: (name) => `Log out of ${name}?`, action: 'Log out' }
 };
 
 /** Shiver's only front page (mobile has no home screen): a spinner, a failure, a confirmation or "add a server". */

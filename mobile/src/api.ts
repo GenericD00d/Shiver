@@ -95,7 +95,6 @@ export const api = {
   refreshServerInfo: (id: string) => invoke<ServerEntry>('refresh_server_info', { id }),
 
   /** both refuse unless that server is the one on screen; only its own client can do them */
-  markServerRead: (id: string) => invoke<void>('mark_server_read', { id }),
 
   logOutServer: (id: string) => invoke<void>('log_out_server', { id }),
 

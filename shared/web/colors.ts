@@ -1,10 +1,4 @@
-/** Colour constants and helpers shared by both clients' UI and both bridges. */
-
-/** Sharkord's own dark theme. Must match `DEFAULT_*_COLOR` in `shared/shiver-core/src/model.rs`. */
-export const DEFAULT_THEME_COLOR = '#0a0a0a';
-export const DEFAULT_ACCENT_COLOR = '#e5e5e5';
-/** Sharkord's sidebar shade, kept for the rail on the default theme. */
-export const DEFAULT_RAIL_COLOR = '#171717';
+/** Colour helpers shared by both clients' UI and both bridges. */
 
 /** Whether dark text reads better than light on `hex` (relative luminance). Non-`#rrggbb` is "light". */
 export const isLightColor = (hex: string) => {

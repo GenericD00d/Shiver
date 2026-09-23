@@ -40,20 +40,6 @@ fn clamp_name(name: &str) -> Result<String> {
     Ok(trimmed.chars().take(MAX_FOLDER_NAME).collect())
 }
 
-fn require_showing(app: &AppHandle, id: &str, why: &str) -> Result<()> {
-    if app.state::<Showing>().server().as_deref() == Some(id) {
-        Ok(())
-    } else {
-        Err(Error::InvalidInput(format!(
-            "Open this server first — {why}"
-        )))
-    }
-}
-
-fn eval_in_page(app: &AppHandle, script: &str) -> Result<()> {
-    Ok(webview::main_window(app)?.eval(script)?)
-}
-
 #[tauri::command]
 pub fn list_registry(store: State<'_, Store>) -> Registry {
     Registry::clone(&store.registry())
@@ -217,20 +203,6 @@ pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<
     })
 }
 
-/// Marks every channel read. Only the server on screen can do this (its own client does the work).
-#[tauri::command]
-pub async fn mark_server_read(app: AppHandle, id: String) -> Result<()> {
-    require_showing(
-        &app,
-        &id,
-        "Shiver can only mark the server you are looking at as read",
-    )?;
-    eval_in_page(
-        &app,
-        "window.__SHIVER_MARK_ALL_READ__ && window.__SHIVER_MARK_ALL_READ__()",
-    )
-}
-
 /* ── push ── */
 
 #[derive(serde::Serialize)]
@@ -328,18 +300,10 @@ pub fn forget_sessions(app: AppHandle, store: State<'_, Store>) {
     }
 }
 
-/// Signs out of the server on screen: Shiver's session and password for it, its identity, and the
-/// page's own sign-in state.
+/// Logs out of a server: forgets Shiver's session, password and carried state for it and its
+/// identity. The page's own storage was already wiped when it was left.
 #[tauri::command]
 pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
-    require_showing(
-        &app,
-        &id,
-        "signing out clears the session held in its own page",
-    )?;
-
-    inbox::forget_everywhere(&app, &id);
-
     store.update(|registry| {
         registry
             .server_mut(&id)
@@ -349,10 +313,9 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
         Ok(())
     })?;
 
-    eval_in_page(
-        &app,
-        "window.__SHIVER_SIGN_OUT__ && window.__SHIVER_SIGN_OUT__()",
-    )
+    inbox::forget_everywhere(&app, &id);
+
+    Ok(())
 }
 
 /// Signs an existing server in (after an expired session with no password, or a changed one).

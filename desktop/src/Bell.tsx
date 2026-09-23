@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { BellIcon } from './components/icons';
 import { playNotificationSound } from './sounds';
-import { applyTheme } from './theme';
+import { applyTheme } from '../../shared/web/theme';
 
 const FEED_EVENT = 'shiver://feed';
 const SETTINGS_EVENT = 'shiver://settings';

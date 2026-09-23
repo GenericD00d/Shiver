@@ -1,12 +1,4 @@
-/** Sharkord's own dark theme. Must match `DEFAULT_THEME_COLOR` / `DEFAULT_ACCENT_COLOR` in model.rs. */
-export const DEFAULT_THEME_COLOR = '#0a0a0a';
-export const DEFAULT_ACCENT_COLOR = '#e5e5e5';
-
-/** Loudest the sound slider goes. Must match `MAX_SOUND_VOLUME` in model.rs, which clamps it. */
-export const MAX_SOUND_VOLUME = 250;
-
-/** Sharkord's own sidebar shade, which the rail keeps while the theme is the default one. */
-export const DEFAULT_RAIL_COLOR = '#171717';
+export { DEFAULT_ACCENT_COLOR, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME } from '../../shared/web/settings';
 
 export type ServerEntry = {
   /** Shiver takes messages of any size from this server, because the user said it may */

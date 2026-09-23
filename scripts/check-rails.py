@@ -21,7 +21,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CSS = os.path.join(ROOT, "mobile", "src", "styles.css")
-BRIDGE = os.path.join(ROOT, "mobile", "bridge", "index.ts")
+BRIDGE = os.path.join(ROOT, "mobile", "bridge", "rail.ts")
 
 # the properties that decide what the badge *looks* like; geometry is checked too, because a badge
 # that matches in colour and not in size is still two badges

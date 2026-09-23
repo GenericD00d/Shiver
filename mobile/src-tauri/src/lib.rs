@@ -57,7 +57,6 @@ pub fn run() {
             commands::list_dms,
             commands::server_plugins,
             commands::refresh_server_info,
-            commands::mark_server_read,
             commands::log_out_server,
             commands::forget_sessions,
             commands::push_status,
