@@ -7,7 +7,6 @@ import type {
   Registry,
   ServerCheck,
   ServerEntry,
-  ServerInfo,
   Settings,
   VoiceStatus
 } from './types';
@@ -19,7 +18,6 @@ import type {
 export const api = {
   listRegistry: () => invoke<Registry>('list_registry'),
 
-  probeServer: (origin: string) => invoke<ServerInfo>('probe_server', { origin }),
   /** looks a server up and, when credentials are given, says whether it has the Shiver plugin */
   checkServer: (origin: string, identity: string | null, password: string | null) =>
     invoke<ServerCheck>('check_server', { origin, identity, password }),
@@ -101,7 +99,6 @@ export const api = {
   setServerFolder: (id: string, folderId: string | null) =>
     invoke<void>('set_server_folder', { id, folderId }),
 
-  createFolder: (name: string) => invoke<Folder>('create_folder', { name }),
 
   renameFolder: (id: string, name: string) => invoke<void>('rename_folder', { id, name }),
 

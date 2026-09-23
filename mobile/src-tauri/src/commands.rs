@@ -445,26 +445,8 @@ pub async fn select_server(
 }
 
 #[tauri::command]
-pub async fn show_shiver(app: AppHandle) -> Result<()> {
-    webview::show_shiver(&app)?;
-    inbox::sync(&app);
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn showing_server(showing: State<'_, Showing>) -> Option<String> {
-    showing.server()
-}
-
-#[tauri::command]
 pub fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
-}
-
-#[tauri::command]
-pub fn get_settings(store: State<'_, Store>) -> Settings {
-    store.registry().settings.clone().sanitised()
 }
 
 /// Saves settings (sanitised; bookkeeping fields kept) and repaints the gap between pages.
@@ -499,11 +481,6 @@ pub async fn reorder_rail(
     ordered: Vec<shiver_core::rail::RailRef>,
 ) -> Result<()> {
     store.update(|registry| Ok(registry.rail().reorder(&ordered)?))
-}
-
-#[tauri::command]
-pub async fn reorder_servers(store: State<'_, Store>, ordered_ids: Vec<String>) -> Result<()> {
-    store.update(|registry| Ok(registry.rail().reorder_servers(&ordered_ids)?))
 }
 
 /// Creates a folder holding `member_ids`, at the first member's place, in one step.

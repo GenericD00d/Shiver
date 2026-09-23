@@ -43,8 +43,6 @@ export const api = {
 
   removeServer: (id: string) => invoke<void>('remove_server', { id }),
 
-  /** hands the one webview over to that server's client; `dms` asks it to open its dm list */
-  reorderServers: (orderedIds: string[]) => invoke<void>('reorder_servers', { orderedIds }),
   reorderRail: (ordered: { kind: 'server' | 'folder'; id: string }[]) =>
     invoke<void>('reorder_rail', { ordered }),
   createFolderWith: (name: string, memberIds: string[]) =>
@@ -58,9 +56,7 @@ export const api = {
   selectServer: (id: string, dms = false, dmUser?: string) =>
     invoke<void>('select_server', { id, dms, dmUser }),
 
-  showShiver: () => invoke<void>('show_shiver'),
 
-  showingServer: () => invoke<string | null>('showing_server'),
 
   /** which build this is, for the settings screen and for answering "what are you running" */
   appVersion: () => invoke<string>('app_version'),
@@ -77,7 +73,6 @@ export const api = {
   checkForUpdate: () => invoke<string | null>('check_for_update'),
   /** opens the releases page in the browser, which is where the apk actually comes from */
   openReleases: () => invoke<void>('open_releases'),
-  getSettings: () => invoke<Settings>('get_settings'),
 
   updateSettings: (settings: Settings) => invoke<void>('update_settings', { settings }),
 

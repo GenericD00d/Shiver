@@ -187,23 +187,6 @@ pub fn show_server(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) ->
     Ok(window.navigate(url)?)
 }
 
-/// Navigates back to Shiver's own pages.
-pub fn show_shiver(app: &AppHandle) -> Result<()> {
-    let window = main_window(app)?;
-
-    let home = app
-        .state::<Showing>()
-        .home()
-        .and_then(|home| Url::parse(&home).ok())
-        .ok_or_else(|| Error::Webview("Shiver does not know where its own pages are".into()))?;
-
-    forget_page_session(&window);
-    leaving(app, &window, None);
-    app.state::<Showing>().set_server(None);
-
-    Ok(window.navigate(home)?)
-}
-
 /// Everything one server page is handed when the bridge is installed in it.
 pub struct PageContext<'a> {
     pub entry: &'a ServerEntry,

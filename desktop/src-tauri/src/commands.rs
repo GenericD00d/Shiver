@@ -130,12 +130,6 @@ pub fn list_registry(store: State<'_, Store>) -> Registry {
     Registry::clone(&store.registry())
 }
 
-/// Looks a server up without adding it.
-#[tauri::command]
-pub async fn probe_server(origin: String) -> Result<ServerInfo> {
-    Ok(probe::fetch_info(&normalize_origin(&origin)?).await?)
-}
-
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerCheck {
@@ -447,15 +441,6 @@ pub async fn create_folder_with(
         Ok(registry
             .rail()
             .create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?)
-    })
-}
-
-#[tauri::command]
-pub async fn create_folder(store: State<'_, Store>, name: String) -> Result<Folder> {
-    store.update(|registry| {
-        Ok(registry
-            .rail()
-            .create_folder(Uuid::new_v4().to_string(), &name, &[])?)
     })
 }
 
