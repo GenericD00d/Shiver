@@ -71,9 +71,23 @@ export TAURI_SIGNING_PRIVATE_KEY_PASSWORD='…'
 bun run app:build
 ```
 
-`createUpdaterArtifacts` is on, so this produces the installer *and* a `.sig` beside it. Both go in
-the GitHub release, along with a `latest.json` naming the version, the download URL and that
-signature — that file is what the updater fetches from
+`createUpdaterArtifacts` is on, so this produces the installer *and* a `.sig` beside it, four files
+in two directories:
+
+```
+target/release/bundle/nsis/Shiver_<version>_x64-setup.exe        (+ .sig)
+target/release/bundle/msi/Shiver_<version>_x64_en-US.msi         (+ .sig)
+```
+
+**That `target/` is the one at the repository root, not under `desktop/`.** The crates are a cargo
+workspace, and a workspace has a single build directory that every member writes into — so the
+bundle moved there when the workspace landed, and `desktop/src-tauri/target/` no longer exists.
+Worth stating because the failure is quiet: a script still pointing at the old path finds whatever
+that directory happened to hold, which for a while was the *previous* release's installers, and
+ships those instead.
+
+Both go in the GitHub release, along with a `latest.json` naming the version, the download URL and
+that signature — that file is what the updater fetches from
 `https://github.com/GenericD00d/Shiver/releases/latest/download/latest.json`.
 
 A release whose `latest.json` points at an installer whose `.sig` does not verify is not a broken
@@ -96,9 +110,26 @@ machine that has never held the key:
 ./node_modules/.bin/tauri android build --apk --debug
 ```
 
+The APK is Gradle's output rather than cargo's, so it did not move with the workspace:
+
+```
+mobile/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+It is named after the variant rather than the version, so rename it on the way into the release —
+`Shiver_<version>_arm64.apk`, matching every release so far.
+
 An unsigned or differently-signed APK is the failure this guards against, and it is not obvious
 when it happens: it installs perfectly well on a phone that has no Shiver on it, and cannot update
-one that does.
+one that does. Check it before publishing, against the certificate every release since 0.1.0
+carries:
+
+```bash
+apksigner verify --print-certs <apk>
+# Signer #1 certificate SHA-256 digest: 49e78c33db2056082cca67262ba1b7ef064b920606e08376b430164f0e51874b
+```
+
+A different fingerprint there cannot upgrade an installed Shiver, whatever else is right about it.
 
 ## What is deliberately not signed
 
