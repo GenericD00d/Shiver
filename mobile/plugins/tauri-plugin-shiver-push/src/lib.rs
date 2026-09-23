@@ -1,40 +1,17 @@
-//! UnifiedPush wake-ups, so Shiver can be told there are messages while it is not running.
+//! UnifiedPush wake-ups for Android (a no-op elsewhere).
 //!
-//! Shiver's mobile notifications come from its own sockets (`inbox.rs`), which run only while the
-//! process does. Android kills that process, and from then on the phone is silent. The usual answer
-//! is Google FCM, which would make a self-hosted client depend on Google Play Services — so Shiver
-//! uses **UnifiedPush**: a distributor app the user already runs (ntfy, say) holds one connection
-//! for every app on the phone and hands each one an endpoint URL its server can post to.
-//!
-//! The shape, end to end:
-//!
-//! 1. The core registers one UnifiedPush *instance per rail entry*, so every server gets its own
-//!    endpoint. The endpoint that receives a push is therefore the answer to "which server?", and
-//!    nothing has to travel in the payload.
-//! 2. The distributor answers asynchronously with a `NEW_ENDPOINT` broadcast, which arrives here as
-//!    an [`PushEvent::Endpoint`].
-//! 3. The core hands that endpoint to the server through the Shiver plugin's relay, which checks it
-//!    and stores it against that user.
-//! 4. When a message arrives for a user who is away, the plugin posts an **empty body** to the
-//!    endpoint. Empty because the relay sits outside the server's origin: anything in the payload is
-//!    something a third party would get to read.
-//! 5. Shiver wakes and finds out what actually happened over its own authenticated connection.
-//!
-//! Nothing here is exposed to a webview. The plugin declares no commands: an endpoint is a
-//! capability to make someone's phone light up, and a server's page must never be able to ask for
-//! one.
+//! The core registers one UnifiedPush instance per rail entry under that entry's push token; the
+//! distributor answers with broadcasts that arrive as [`PushEvent`]s. The companion plugin posts an
+//! empty body to an endpoint when a message arrives for an away user, and Shiver then fetches what
+//! happened over its own connection. No commands are exposed to any webview: an endpoint is a
+//! capability to wake the phone.
 
-use serde::Deserialize;
-
-#[cfg(target_os = "android")]
-use tauri::plugin::PluginHandle;
+use serde::{de::DeserializeOwned, Deserialize};
+use serde_json::{json, Value};
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Manager, Runtime,
 };
-
-#[cfg(target_os = "android")]
-const PLUGIN_IDENTIFIER: &str = "com.shiver.push";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -44,171 +21,110 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// What the distributor told us, once the Kotlin side has made sense of it.
+/// A distributor broadcast, as the Kotlin side reports it.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum PushEvent {
-    /// an endpoint for one rail entry, which is what the server needs to be given
-    Endpoint { token: String, endpoint: String },
-    /// something arrived for this entry. Carries nothing else, by design.
-    Message { token: String },
-    /// the distributor refused, usually because it has not been set up yet
-    Failed { token: String },
-    /// this entry is no longer registered, so the server should stop being told to use it
-    Unregistered { token: String },
+    Endpoint {
+        token: String,
+        endpoint: String,
+    },
+    /// something arrived for this token; carries nothing else by design
+    Message {
+        token: String,
+    },
+    /// usually no distributor has been set up
+    Failed {
+        token: String,
+    },
+    Unregistered {
+        token: String,
+    },
 }
 
-#[derive(Deserialize)]
-#[allow(dead_code)]
+#[derive(Default, Deserialize)]
 struct DistributorsResponse {
     distributors: Vec<String>,
-    /// the one already chosen, or empty
+    /// the chosen one, or empty
     saved: String,
 }
 
-/// The plugin handle. One instance, managed by Tauri.
 pub struct Push<R: Runtime> {
     #[cfg(target_os = "android")]
-    handle: PluginHandle<R>,
-    // see the note on `Secrets`: a `PhantomData<R>` would only be `Send + Sync` when `R` is, and
-    // managed state must be both
+    handle: tauri::plugin::PluginHandle<R>,
+    /// `fn() -> R` keeps the state `Send + Sync` whatever `R` is
     #[cfg(not(target_os = "android"))]
     marker: std::marker::PhantomData<fn() -> R>,
 }
 
 impl<R: Runtime> Push<R> {
-    /// Every app on the phone that can act as a distributor, and the one already chosen.
-    ///
-    /// An empty list is the ordinary case for someone who has never installed one, and is not an
-    /// error: Shiver simply cannot be woken, and should say so rather than pretending it can.
-    pub fn distributors(&self) -> Result<(Vec<String>, Option<String>)> {
-        #[cfg(target_os = "android")]
-        {
-            let response = self
-                .handle
-                .run_mobile_plugin::<DistributorsResponse>("listDistributors", ())
-                .map_err(|error| Error::Plugin(error.to_string()))?;
-
-            let saved = (!response.saved.is_empty()).then_some(response.saved);
-
-            return Ok((response.distributors, saved));
-        }
-
-        #[cfg(not(target_os = "android"))]
-        Ok((Vec::new(), None))
-    }
-
-    /// Remembers which distributor to talk to. Registration is a separate step.
-    pub fn set_distributor(&self, distributor: &str) -> Result<()> {
-        #[cfg(target_os = "android")]
-        {
-            return self
-                .handle
-                .run_mobile_plugin::<serde_json::Value>(
-                    "setDistributor",
-                    serde_json::json!({ "distributor": distributor }),
-                )
-                .map(|_| ())
-                .map_err(|error| Error::Plugin(error.to_string()));
-        }
-
-        #[cfg(not(target_os = "android"))]
-        {
-            let _ = distributor;
-
-            Ok(())
-        }
-    }
-
-    /// Asks for an endpoint for one rail entry.
-    ///
-    /// The endpoint does not come back from this call — the distributor answers with a broadcast,
-    /// which arrives on the event channel. `name` is stored beside the token so the cold-start
-    /// receiver can name the server without a network call.
-    pub fn register(&self, entry_id: &str, name: &str) -> Result<()> {
-        #[cfg(target_os = "android")]
-        {
-            return self
-                .handle
-                .run_mobile_plugin::<serde_json::Value>(
-                    "register",
-                    serde_json::json!({ "token": entry_id, "name": name }),
-                )
-                .map(|_| ())
-                .map_err(|error| Error::Plugin(error.to_string()));
-        }
-
-        #[cfg(not(target_os = "android"))]
-        {
-            let _ = (entry_id, name);
-
-            Ok(())
-        }
-    }
-
-    /// Stops this entry being woken. Safe to call for one that was never registered.
-    pub fn unregister(&self, entry_id: &str) -> Result<()> {
-        #[cfg(target_os = "android")]
-        {
-            return self
-                .handle
-                .run_mobile_plugin::<serde_json::Value>(
-                    "unregister",
-                    serde_json::json!({ "token": entry_id }),
-                )
-                .map(|_| ())
-                .map_err(|error| Error::Plugin(error.to_string()));
-        }
-
-        #[cfg(not(target_os = "android"))]
-        {
-            let _ = entry_id;
-
-            Ok(())
-        }
-    }
-
-    /// Where distributor events should be delivered.
-    ///
-    /// Called once at startup. Until it is, the Kotlin side drops what arrives rather than queueing
-    /// it — a push Shiver was not ready for is one the next connection will find anyway.
     #[cfg(target_os = "android")]
+    fn call<T: DeserializeOwned + Default>(&self, command: &str, payload: Value) -> Result<T> {
+        self.handle
+            .run_mobile_plugin(command, payload)
+            .map_err(|error| Error::Plugin(error.to_string()))
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn call<T: DeserializeOwned + Default>(&self, _command: &str, _payload: Value) -> Result<T> {
+        Ok(T::default())
+    }
+
+    /// Installed distributors, and the chosen one. An empty list (none installed) is not an error.
+    pub fn distributors(&self) -> Result<(Vec<String>, Option<String>)> {
+        let response: DistributorsResponse = self.call("listDistributors", Value::Null)?;
+
+        Ok((
+            response.distributors,
+            Some(response.saved).filter(|saved| !saved.is_empty()),
+        ))
+    }
+
+    pub fn set_distributor(&self, distributor: &str) -> Result<()> {
+        self.call::<Value>("setDistributor", json!({ "distributor": distributor }))
+            .map(drop)
+    }
+
+    /// Asks for an endpoint for `token`; it arrives later as a [`PushEvent::Endpoint`]. `name` is
+    /// kept for the cold-start notification.
+    pub fn register(&self, token: &str, name: &str) -> Result<()> {
+        self.call::<Value>("register", json!({ "token": token, "name": name }))
+            .map(drop)
+    }
+
+    /// Safe for a token that was never registered.
+    pub fn unregister(&self, token: &str) -> Result<()> {
+        self.call::<Value>("unregister", json!({ "token": token }))
+            .map(drop)
+    }
+
+    /// Where distributor events go. Until this is called they are dropped (the next connection
+    /// finds whatever they were about).
     pub fn on_event<F>(&self, handler: F) -> Result<()>
     where
         F: Fn(PushEvent) + Send + Sync + 'static,
     {
-        // The parameter is what the channel *sends*, which is nothing: traffic here is one-way,
-        // from the distributor's broadcast into Rust. It still has to be named.
-        let channel: tauri::ipc::Channel<serde_json::Value> =
-            tauri::ipc::Channel::new(move |message| {
-                // A malformed event is dropped rather than propagated: this arrives from the
-                // platform, and the only thing worse than missing a wake-up is a panic here.
-                if let Ok(raw) = message.deserialize::<serde_json::Value>() {
-                    if let Ok(event) = serde_json::from_value::<PushEvent>(raw) {
-                        handler(event);
-                    }
+        #[cfg(target_os = "android")]
+        {
+            let channel = tauri::ipc::Channel::<Value>::new(move |message| {
+                // malformed platform events are dropped, never propagated
+                if let Ok(event) = message.deserialize::<PushEvent>() {
+                    handler(event);
                 }
 
                 Ok(())
             });
 
-        self.handle
-            .run_mobile_plugin::<serde_json::Value>(
-                "setEventHandler",
-                serde_json::json!({ "handler": channel }),
-            )
-            .map(|_| ())
-            .map_err(|error| Error::Plugin(error.to_string()))
-    }
+            self.call::<Value>("setEventHandler", json!({ "handler": channel }))
+                .map(drop)
+        }
 
-    #[cfg(not(target_os = "android"))]
-    pub fn on_event<F>(&self, handler: F) -> Result<()>
-    where
-        F: Fn(PushEvent) + Send + Sync + 'static,
-    {
-        let _ = handler;
+        #[cfg(not(target_os = "android"))]
+        {
+            drop(handler);
 
-        Ok(())
+            Ok(())
+        }
     }
 }
 
@@ -226,18 +142,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("shiver-push")
         .setup(|app, _api| {
             #[cfg(target_os = "android")]
-            {
-                let handle = _api.register_android_plugin(PLUGIN_IDENTIFIER, "PushPlugin")?;
-
-                app.manage(Push { handle });
-            }
+            app.manage(Push {
+                handle: _api.register_android_plugin("com.shiver.push", "PushPlugin")?,
+            });
 
             #[cfg(not(target_os = "android"))]
-            {
-                app.manage(Push::<R> {
-                    marker: std::marker::PhantomData,
-                });
-            }
+            app.manage(Push::<R> {
+                marker: std::marker::PhantomData,
+            });
 
             Ok(())
         })

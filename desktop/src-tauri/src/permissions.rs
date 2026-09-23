@@ -1,40 +1,93 @@
-//! Forgetting a camera or microphone answer, so an accidental "block" is not for ever.
+//! Resetting the camera and microphone answers WebView2 remembers per site, so an accidental
+//! "Block" is not permanent (a webview has no address bar to undo it from).
 //!
-//! WebView2 remembers what a site was allowed per origin, in the profile, and there is no way back
-//! from inside the page: a user who pressed Block once is refused silently every time after, with
-//! Sharkord showing only that the camera did not start. Chrome has an address-bar control for this;
-//! a Tauri webview has no address bar, so Shiver has to offer the way back itself.
-//!
-//! **This used to call `ClearBrowsingData(SETTINGS)`, and that does not touch permissions.** The
-//! button reported success and changed nothing, which was worse than not having it. The grants were
-//! still sitting in the profile's `Preferences` afterwards, under `media_stream_mic` and
-//! `media_stream_camera` with `setting: 1` — which is how it was finally proven rather than argued
-//! about. `ICoreWebView2Profile4::SetPermissionState` is the API that actually owns them: setting a
-//! permission back to `DEFAULT` is precisely "ask me next time".
-//!
-//! It is also per origin rather than per profile, so Shiver can now say how many answers it forgot
-//! instead of claiming to have done something. A button that says "Forgotten" having forgotten
-//! nothing is the failure this file exists to stop repeating.
-//!
-//! Screen sharing has no entry here, and that is not an oversight: WebView2 has no permission kind
-//! for display capture, because Chromium never stores an answer for it. `getDisplayMedia` puts up
-//! its picker every time and a refusal is only a refusal of that one attempt.
+//! Each rail entry has its own browser profile, so each is reset through one of its own webviews.
+//! Entries with no page open are reset when their page is next built (`apply_pending_reset`).
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
-// `Manager` is what `get_webview` hangs off, and only the WebView2 implementation below calls it —
-// so on every other platform importing it is an unused import rather than a missing one.
-#[cfg(windows)]
-use tauri::Manager;
+use crate::{
+    error::{Error, Result},
+    store::{RegistryStore, Store},
+    webviews,
+};
 
-use crate::error::{Error, Result};
-
-/// Clears the camera and microphone answers WebView2 has stored, for every origin that has one.
-///
-/// Returns how many were forgotten, which the settings panel reports: nothing stored and nothing
-/// cleared are the same button press, and the user is entitled to know which one happened.
-#[cfg(windows)]
+/// Resets every entry's answers: open pages now, the rest when next opened. Returns how many
+/// answers were forgotten now.
 pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
+    let entries: Vec<String> = app
+        .state::<Store>()
+        .registry()
+        .servers
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect();
+    let mut forgotten = 0;
+    let mut later = Vec::new();
+
+    for entry_id in entries {
+        match page_of(app, &entry_id) {
+            Some(webview) => forgotten += reset_webview(&webview)?,
+            None => later.push(entry_id),
+        }
+    }
+
+    app.state::<Store>().update(|registry| {
+        registry.pending_permission_resets = later;
+
+        Ok(())
+    })?;
+
+    Ok(forgotten)
+}
+
+/// If this entry is waiting for a reset, performs it (off this thread) now that it has a page.
+pub fn apply_pending_reset(app: &AppHandle, entry_id: &str) {
+    let pending = app
+        .state::<Store>()
+        .registry()
+        .pending_permission_resets
+        .iter()
+        .any(|id| id == entry_id);
+
+    if !pending {
+        return;
+    }
+
+    let app = app.clone();
+    let entry_id = entry_id.to_string();
+
+    std::thread::spawn(move || {
+        let Some(webview) = page_of(&app, &entry_id) else {
+            return;
+        };
+
+        match reset_webview(&webview) {
+            Ok(_) => {
+                let _ = app.state::<Store>().update(|registry| {
+                    registry
+                        .pending_permission_resets
+                        .retain(|id| id != &entry_id);
+
+                    Ok(())
+                });
+            }
+            Err(error) => eprintln!("[shiver] could not reset permissions for {entry_id}: {error}"),
+        }
+    });
+}
+
+fn page_of(app: &AppHandle, entry_id: &str) -> Option<tauri::Webview> {
+    app.get_webview(&webviews::webview_label(entry_id))
+        .or_else(|| app.get_webview(&webviews::dm_webview_label(entry_id)))
+}
+
+/// Resets camera and microphone answers in one webview's profile. Returns how many were forgotten.
+///
+/// WebView2 answers through completion handlers on the main thread, so this blocks its own
+/// (non-main) thread on a channel rather than the event loop.
+#[cfg(windows)]
+fn reset_webview(webview: &tauri::Webview) -> Result<usize> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -49,18 +102,10 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
     use windows::Win32::System::Com::CoTaskMemFree;
     use windows_core::Interface;
 
-    // Any webview will do: they share one profile, which is the thing holding the answers. Shiver
-    // configures no per-webview data directory, so there is exactly one. The shell is Shiver's own
-    // page and is always there, unlike a server's.
-    let webview = app
-        .get_webview(crate::webviews::SHELL_WEBVIEW)
-        .ok_or_else(|| Error::Webview("Shiver's own window is not open".into()))?;
-
-    // The answer comes back from a completion handler on the webview's own thread, so it travels by
-    // channel. `Mutex` only because the handler closures must be `Fn` rather than `FnOnce`.
     let (sender, receiver) = std::sync::mpsc::channel::<std::result::Result<usize, String>>();
     let sender = Arc::new(Mutex::new(Some(sender)));
 
+    // answers once; the handler closures must be `Fn`
     let answer = {
         let sender = sender.clone();
 
@@ -85,9 +130,6 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
                     .CoreWebView2()
                     .map_err(|error| error.to_string())?;
 
-                // `Profile` arrived in ICoreWebView2_13 and `SetPermissionState` in Profile4; an
-                // older runtime simply does not have them, and saying so is better than a button
-                // that quietly does nothing — which is the whole history of this file.
                 let versioned: ICoreWebView2_13 = core.cast().map_err(|_| {
                     "This version of the WebView2 runtime cannot reset site permissions".to_string()
                 })?;
@@ -120,9 +162,6 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
                                     return Ok(());
                                 };
 
-                                // Collected first, because the count of things to forget has to be
-                                // known before any of them is forgotten: the last completion is
-                                // what reports, and "last" is meaningless without a total.
                                 let mut targets = Vec::new();
                                 let mut count = 0u32;
 
@@ -153,12 +192,6 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
                                             continue;
                                         }
 
-                                        // **Freed.** `PermissionOrigin` hands back a string
-                                        // WebView2 allocated with `CoTaskMemAlloc`, and releasing
-                                        // it is the caller's job. Reading it and dropping the
-                                        // pointer leaked one string per stored permission per
-                                        // invocation — small, and in the only `unsafe` block in
-                                        // the project, which is the worst place to be casual.
                                         let text = origin.to_string().unwrap_or_default();
 
                                         if !origin.is_null() {
@@ -181,9 +214,6 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
                                 let done = Arc::new(AtomicUsize::new(0));
                                 let failed = Arc::new(Mutex::new(None::<String>));
 
-                                // One slot per call, closed exactly once whether the call
-                                // completed or never started. Written once and shared, because the
-                                // two places that close a slot got out of step when they were not.
                                 let settle = {
                                     let done = done.clone();
                                     let failed = failed.clone();
@@ -196,7 +226,6 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
                                             }
                                         }
 
-                                        // the last one home reports for all of them
                                         if done.fetch_add(1, Ordering::SeqCst) + 1 == total {
                                             let reason =
                                                 failed.lock().ok().and_then(|mut held| held.take());
@@ -230,9 +259,6 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
                                         )
                                     };
 
-                                    // A call that never started has no completion coming, so its
-                                    // slot is closed here — otherwise the tally never reaches the
-                                    // total and the user waits out the timeout for nothing.
                                     if let Err(error) = issued {
                                         settle(Some(error.to_string()));
                                     }
@@ -247,17 +273,12 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
                 Ok::<(), String>(())
             })();
 
-            // Only the failure to *start* is reported from here. Success is the handler's to
-            // report, and reporting it twice would answer with a count nobody counted.
             if let Err(reason) = started {
                 answer(Err(reason));
             }
         })
         .map_err(|error| Error::Webview(error.to_string()))?;
 
-    // `with_webview` hands the closure to the webview's own thread and the completions arrive
-    // there too, so the answer comes back by channel rather than by return. This thread is not that
-    // thread, so blocking here does not stop the completions from being delivered.
     match receiver.recv_timeout(std::time::Duration::from_secs(10)) {
         Ok(Ok(count)) => Ok(count),
         Ok(Err(reason)) => Err(Error::Webview(reason)),
@@ -267,10 +288,10 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
     }
 }
 
-/// Nothing to clear anywhere else: the tests build this crate for the host, which is not WebView2.
+/// WebView2 only.
 #[cfg(not(windows))]
-pub fn clear_media_permissions(_app: &AppHandle) -> Result<usize> {
+fn reset_webview(_webview: &tauri::Webview) -> Result<usize> {
     Err(Error::Webview(
-        "Resetting site permissions is a WebView2 thing, and this is not Windows".to_string(),
+        "Resetting site permissions is only supported with WebView2, on Windows".to_string(),
     ))
 }

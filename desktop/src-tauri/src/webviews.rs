@@ -1,11 +1,14 @@
 //! Window and webview layout.
 //!
-//! Shiver draws one window holding the shell webview (Shiver's own UI, at the app origin) plus one
-//! webview per server, each locked to that server's origin. The shell fills the window and the
-//! active server sits on top of it in the content area, so showing a Shiver panel is just a matter
-//! of hiding the server webview rather than fighting webview z-order.
+//! One window holds the shell webview (Shiver's UI, full-window, drawing the rail on the left), a
+//! webview per open server pinned to that server's origin and inset by the rail, an optional
+//! conversation view per server (inset further by the DM list), the bell overlay and its popup.
+//! Child webviews stack in creation order with no way to raise one, so the bell is rebuilt after
+//! any server webview is created and the popup is built fresh each time it opens.
 
 use std::{
+    collections::HashMap,
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -14,6 +17,7 @@ use std::{
 };
 
 use serde_json::json;
+use shiver_core::LockExt;
 use tauri::{
     webview::{PageLoadEvent, WebviewBuilder},
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl, Window,
@@ -24,310 +28,155 @@ use url::Url;
 use crate::{
     error::{Error, Result},
     model::{is_same_origin, ServerEntry, Settings},
+    store::Store,
 };
 
 pub const MAIN_WINDOW: &str = "main";
 pub const SHELL_WEBVIEW: &str = "shell";
-
-/// Width of the server rail. The shell renders the rail in this strip and Shiver keeps the content
-/// area clear of it, so the two never overlap.
-pub const RAIL_WIDTH: f64 = 72.0;
-
-/// Shiver's notification bell, as a small webview floating over the top-right of the server.
-///
-/// It is its own webview rather than part of the page because it shows a count across *every*
-/// server, and no server may see that. It is not a full-width bar either: the bridge reserves this
-/// much space at the right end of Sharkord's own top bar, so the bell lands inside that bar instead
-/// of stacking a second one above it.
 pub const OVERLAY_WEBVIEW: &str = "overlay";
-const BELL_SIZE: (f64, f64) = (48.0, 48.0);
-
-/// The notification feed, as a webview of its own, anchored under the bell.
-///
-/// Separate from the bell on purpose. One webview doing both meant resizing it on every click, and
-/// a resize is two operations (move, then grow) with a painted frame in between: the bell visibly
-/// jumped. A bell that never changes geometry cannot jump, whatever the popup does.
 pub const POPUP_WEBVIEW: &str = "popup";
-const POPUP_SIZE: (f64, f64) = (380.0, 540.0);
 
-/// Event telling the bell whether its feed is open, so the two never disagree.
+/// Tells the bell whether its popup is open.
 pub const POPUP_EVENT: &str = "shiver://popup";
 
-/// How long after the feed dismisses itself a click on the bell still counts as the click that
-/// dismissed it.
-///
-/// Clicking the bell while the feed is open moves focus to the bell first, and the feed closes on
-/// losing it. The click then arrives at a bell the core believes is closed, and without this it
-/// would reopen the thing the user just clicked to close.
+/// Width of the rail, and of Shiver's DM list (matching Sharkord's `w-72` sidebar).
+pub const RAIL_WIDTH: f64 = 72.0;
+pub const DM_LIST_WIDTH: f64 = 288.0;
+const BELL_SIZE: (f64, f64) = (48.0, 48.0);
+const POPUP_SIZE: (f64, f64) = (380.0, 540.0);
+
+/// A click on the bell this soon after the popup dismissed itself (on losing focus to that same
+/// click) is the click that closed it, not a request to reopen it.
 const POPUP_REOPEN_GUARD: Duration = Duration::from_millis(400);
 
+/// Links one page may open in the browser: per poll/burst, and per window of time.
+const OPEN_PER_TICK: usize = 5;
+const OPEN_PER_WINDOW: usize = 10;
+const OPEN_WINDOW: Duration = Duration::from_secs(10);
+
 const BRIDGE_SOURCE: &str = include_str!("../generated/bridge.js");
-
-/// Which server webview is currently on top, by entry id.
-///
-/// `gate` serialises everything that creates or reorders webviews. Two `select_server` calls can
-/// overlap (a fast double click, or react's development double-render), and without it both see
-/// "no webview yet" and race to create the same label, which fails for whichever loses.
-#[derive(Default)]
-pub struct ActiveServer {
-    current: Mutex<Option<String>>,
-    gate: Mutex<()>,
-    overlay_expanded: Mutex<bool>,
-    /// when the feed last dismissed itself, for `POPUP_REOPEN_GUARD`
-    popup_dismissed_at: Mutex<Option<Instant>>,
-    /// whether a server's own page is the thing on screen, rather than a Shiver panel
-    showing_server: Mutex<bool>,
-    /// Which entry's conversation view is **on screen**, if any.
-    ///
-    /// The DM half of `showing_server`, and it exists for the same reason: reading a conversation
-    /// has to clear that conversation's notifications, and the only honest signal for "the user is
-    /// reading it" is that its view is actually up. A conversation view that merely exists is not
-    /// being read — every entry used to keep one preloaded and hidden, and treating those as read
-    /// would have silently eaten the DM badges for every server at once.
-    dm_on_screen: Mutex<Option<String>>,
-    /// the servers that have a page, most recently shown first.
-    ///
-    /// What `trim_pages` closes from the back of. Recency rather than insertion order, because the
-    /// servers a person alternates between are the ones worth keeping warm.
-    recent: Mutex<Vec<String>>,
-}
-
-impl ActiveServer {
-    pub fn get(&self) -> Option<String> {
-        self.current
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-
-    pub(crate) fn set(&self, value: Option<String>) {
-        *self
-            .current
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
-    }
-
-    /// Whether the active server's page is actually on screen.
-    ///
-    /// `current` alone does not say this: it keeps naming a server while Shiver shows settings, the
-    /// DM inbox or the connecting view over the top of it. The difference matters for treating a
-    /// channel as read — a page that is merely *selected* while hidden is not one being looked at,
-    /// and Sharkord notifies for the selected channel precisely when its window is hidden.
-    pub fn showing_server(&self) -> bool {
-        *self
-            .showing_server
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    /// Which entry's conversation view is on screen.
-    pub fn dm_on_screen(&self) -> Option<String> {
-        self.dm_on_screen
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-
-    fn set_dm_on_screen(&self, value: Option<String>) {
-        *self
-            .dm_on_screen
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
-    }
-
-    /// Moves a server to the front of the keep-warm list.
-    fn touch(&self, entry_id: &str) {
-        let mut recent = self
-            .recent
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-        recent.retain(|held| held != entry_id);
-        recent.insert(0, entry_id.to_string());
-    }
-
-    /// The pages worth closing, oldest first, once the list is over the cap.
-    fn over_cap(&self, keep: usize) -> Vec<String> {
-        self.recent
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .iter()
-            .skip(keep)
-            .rev()
-            .cloned()
-            .collect()
-    }
-
-    fn forget_recent(&self, entry_id: &str) {
-        self.recent
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .retain(|held| held != entry_id);
-    }
-
-    pub(crate) fn set_showing_server(&self, value: bool) {
-        *self
-            .showing_server
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
-    }
-
-    pub fn popup_open(&self) -> bool {
-        *self
-            .overlay_expanded
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn set_popup_open(&self, value: bool) {
-        *self
-            .overlay_expanded
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
-    }
-
-    pub fn note_popup_dismissed(&self) {
-        *self
-            .popup_dismissed_at
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now());
-    }
-
-    fn popup_dismissed_recently(&self) -> bool {
-        self.popup_dismissed_at
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .is_some_and(|at| at.elapsed() < POPUP_REOPEN_GUARD)
-    }
-
-    /// What a click on the bell should do.
-    ///
-    /// Not simply "the opposite of open". Clicking the bell while the feed is up focuses the bell,
-    /// the feed dismisses itself on losing focus, and only then does the click arrive — at a core
-    /// that now believes the feed is closed. Taken at face value that reopens what the user just
-    /// clicked to close, so a dismissal this recent is treated as the feed still being open.
-    pub fn should_open_popup(&self) -> bool {
-        !self.popup_open() && !self.popup_dismissed_recently()
-    }
-}
 
 pub fn webview_label(entry_id: &str) -> String {
     format!("server::{entry_id}")
 }
 
-pub fn main_window<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<tauri::Window<R>> {
-    app.get_window(MAIN_WINDOW)
-        .ok_or_else(|| Error::Webview("The Shiver window is not open".into()))
-}
-
-/// Width of Shiver's cross-server DM list, matching Sharkord's own sidebar (`w-72`) so the two read
-/// as one list.
-pub const DM_LIST_WIDTH: f64 = 288.0;
-
-/// A conversation is rendered by its *own* webview, separate from the one the user browses channels
-/// in. Sharing one webview meant opening a DM from the inbox changed where the server view was
-/// sitting: its DM mode and selected channel are page state, so returning to the server landed on
-/// the conversation instead of the channel the user had left. Two webviews, two independent states.
+/// The conversation view: a second client for the same server, so the server view keeps its channel.
 pub fn dm_webview_label(entry_id: &str) -> String {
     format!("dm::{entry_id}")
-}
-
-/// Whether the page currently on screen has something filling the screen.
-///
-/// Held because the page reports it on every drain tick, and moving webviews around 750ms after
-/// nothing changed is both wasted work and a visible flicker. Only a change is acted on.
-#[derive(Default)]
-pub struct PageFullscreen(std::sync::Mutex<bool>);
-
-impl PageFullscreen {
-    /// Records the new value and says whether it differs from what was held.
-    fn changed(&self, next: bool) -> bool {
-        let mut held = self.0.lock().unwrap_or_else(|e| e.into_inner());
-
-        if *held == next {
-            return false;
-        }
-
-        *held = next;
-
-        true
-    }
-}
-
-/// Takes Shiver's own chrome off the screen while the page is filling it, and puts it back after.
-///
-/// The rail and the bell are separate webviews stacked over the server's, so a page going
-/// fullscreen does not move them — they sit on top of the very thing that asked for the whole
-/// screen. Watching a stream meant watching it with Shiver's rail down one side and its bell in the
-/// corner.
-///
-/// The rail needs no hiding of its own: the shell webview is full-window with the rail drawn at its
-/// left edge, and the server webview normally sits on top of it inset by `RAIL_WIDTH`. Widening the
-/// server webview to the whole window covers the rail with the page itself. The bell is above
-/// everything and is hidden outright.
-///
-/// **Driven by the drain, so it lags by up to one poll (750ms).** The page cannot call the core —
-/// that is the rule that keeps a server out of Shiver — so there is no faster signal short of
-/// WebView2's `ContainsFullScreenElementChanged`, which is Windows-only and a lot more machinery.
-pub fn set_page_fullscreen(app: &AppHandle, entry_id: &str, on: bool) -> Result<()> {
-    if !app.state::<PageFullscreen>().changed(on) {
-        return Ok(());
-    }
-
-    let window = main_window(app)?;
-
-    let Some(webview) = find_server_webview(app, entry_id) else {
-        return Ok(());
-    };
-
-    if on {
-        let scale = window.scale_factor()?;
-        let size = window.inner_size()?.to_logical::<f64>(scale);
-
-        webview.set_position(LogicalPosition::new(0.0, 0.0))?;
-        webview.set_size(LogicalSize::new(size.width, size.height))?;
-    } else {
-        let (position, size) = content_rect(&window)?;
-
-        webview.set_position(position)?;
-        webview.set_size(size)?;
-    }
-
-    // The bell, and the feed if it happens to be open. Both float above everything and neither is
-    // the page's to move. The feed is not reopened on the way out — it is shown only when asked
-    // for, and putting it back over a stream somebody just left would be its own surprise.
-    for other in window.webviews() {
-        match other.label() {
-            OVERLAY_WEBVIEW if on => other.hide()?,
-            OVERLAY_WEBVIEW => other.show()?,
-            POPUP_WEBVIEW if on => other.hide()?,
-            _ => continue,
-        }
-    }
-
-    Ok(())
 }
 
 fn is_shiver_chrome(label: &str) -> bool {
     matches!(label, SHELL_WEBVIEW | OVERLAY_WEBVIEW | POPUP_WEBVIEW)
 }
 
-/// Content area in logical pixels: the window minus the rail.
-fn content_rect(window: &Window) -> Result<(LogicalPosition<f64>, LogicalSize<f64>)> {
-    let scale = window.scale_factor()?;
-    let size = window.inner_size()?.to_logical::<f64>(scale);
-
-    Ok((
-        LogicalPosition::new(RAIL_WIDTH, 0.0),
-        LogicalSize::new((size.width - RAIL_WIDTH).max(0.0), size.height.max(0.0)),
-    ))
+/// The entry a page webview belongs to, from its label.
+fn entry_of(label: &str) -> Option<&str> {
+    label
+        .strip_prefix("server::")
+        .or_else(|| label.strip_prefix("dm::"))
 }
 
-/// Where a conversation is drawn: right of the rail *and* right of Shiver's DM list.
-fn dm_content_rect(window: &Window) -> Result<(LogicalPosition<f64>, LogicalSize<f64>)> {
-    let scale = window.scale_factor()?;
-    let size = window.inner_size()?.to_logical::<f64>(scale);
-    let left = RAIL_WIDTH + DM_LIST_WIDTH;
+#[derive(Default)]
+struct Screen {
+    /// the server selected in the rail
+    current: Option<String>,
+    /// whether that server's page is what is on screen (not a Shiver panel over it)
+    showing_server: bool,
+    /// the entry whose conversation view is on screen
+    dm_on_screen: Option<String>,
+    popup_open: bool,
+    popup_dismissed_at: Option<Instant>,
+    /// servers with a page, most recently shown first (what `trim_pages` closes from the back of)
+    recent: Vec<String>,
+    /// whether the page on screen is fullscreen
+    fullscreen: bool,
+}
+
+/// What is on screen. `gate` serialises webview creation, so overlapping calls cannot race to
+/// create the same label.
+#[derive(Default)]
+pub struct ActiveServer {
+    screen: Mutex<Screen>,
+    gate: Mutex<()>,
+}
+
+impl ActiveServer {
+    pub fn get(&self) -> Option<String> {
+        self.screen.locked().current.clone()
+    }
+
+    pub fn showing_server(&self) -> bool {
+        self.screen.locked().showing_server
+    }
+
+    pub fn dm_on_screen(&self) -> Option<String> {
+        self.screen.locked().dm_on_screen.clone()
+    }
+
+    pub fn note_popup_dismissed(&self) {
+        self.screen.locked().popup_dismissed_at = Some(Instant::now());
+    }
+
+    /// Open unless it is open, or was dismissed by the very click being handled.
+    pub fn should_open_popup(&self) -> bool {
+        let screen = self.screen.locked();
+
+        !screen.popup_open
+            && !screen
+                .popup_dismissed_at
+                .is_some_and(|at| at.elapsed() < POPUP_REOPEN_GUARD)
+    }
+
+    fn update<T>(&self, change: impl FnOnce(&mut Screen) -> T) -> T {
+        change(&mut self.screen.locked())
+    }
+}
+
+/// Recent link openings per entry, so a hostile page cannot flood the browser with tabs.
+#[derive(Default)]
+pub struct Openings(Mutex<HashMap<String, Vec<Instant>>>);
+
+impl Openings {
+    /// Records one opening if the entry is within its allowance.
+    fn allow(&self, entry_id: &str) -> bool {
+        let mut seen = self.0.locked();
+        let recent = seen.entry(entry_id.to_string()).or_default();
+
+        recent.retain(|at| at.elapsed() < OPEN_WINDOW);
+
+        let burst = recent
+            .iter()
+            .filter(|at| at.elapsed() < Duration::from_secs(1))
+            .count();
+
+        if recent.len() >= OPEN_PER_WINDOW || burst >= OPEN_PER_TICK {
+            return false;
+        }
+
+        recent.push(Instant::now());
+
+        true
+    }
+
+    pub fn forget_entry(&self, entry_id: &str) {
+        self.0.locked().remove(entry_id);
+    }
+}
+
+pub fn main_window<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Window<R>> {
+    app.get_window(MAIN_WINDOW)
+        .ok_or_else(|| Error::Webview("The Shiver window is not open".into()))
+}
+
+fn logical_size(window: &Window) -> Result<LogicalSize<f64>> {
+    Ok(window
+        .inner_size()?
+        .to_logical::<f64>(window.scale_factor()?))
+}
+
+/// Everything right of `left`, full height.
+fn rect_from(window: &Window, left: f64) -> Result<(LogicalPosition<f64>, LogicalSize<f64>)> {
+    let size = logical_size(window)?;
 
     Ok((
         LogicalPosition::new(left, 0.0),
@@ -335,11 +184,17 @@ fn dm_content_rect(window: &Window) -> Result<(LogicalPosition<f64>, LogicalSize
     ))
 }
 
-/// Where the bell sits: hard against the top-right of the window, inside the space the bridge
-/// reserves in Sharkord's top bar. Fixed, and never recalculated for the popup.
+fn content_rect(window: &Window) -> Result<(LogicalPosition<f64>, LogicalSize<f64>)> {
+    rect_from(window, RAIL_WIDTH)
+}
+
+fn dm_content_rect(window: &Window) -> Result<(LogicalPosition<f64>, LogicalSize<f64>)> {
+    rect_from(window, RAIL_WIDTH + DM_LIST_WIDTH)
+}
+
+/// The bell, fixed to the top-right corner inside the space the bridge reserves in Sharkord's bar.
 fn bell_rect(window: &Window) -> Result<(LogicalPosition<f64>, LogicalSize<f64>)> {
-    let scale = window.scale_factor()?;
-    let size = window.inner_size()?.to_logical::<f64>(scale);
+    let size = logical_size(window)?;
     let (width, height) = BELL_SIZE;
 
     Ok((
@@ -348,48 +203,46 @@ fn bell_rect(window: &Window) -> Result<(LogicalPosition<f64>, LogicalSize<f64>)
     ))
 }
 
-/// Where the feed sits: directly under the bell, right edges aligned.
+/// The popup, under the bell, clamped to the window.
 fn popup_rect(window: &Window) -> Result<(LogicalPosition<f64>, LogicalSize<f64>)> {
-    let scale = window.scale_factor()?;
-    let size = window.inner_size()?.to_logical::<f64>(scale);
-    let (width, height) = POPUP_SIZE;
-
-    // clamped rather than pushed off-screen, so a small window still shows the whole panel
-    let width = width.min((size.width - RAIL_WIDTH).max(0.0));
-    let top = BELL_SIZE.1;
-    let height = height.min((size.height - top).max(0.0));
+    let size = logical_size(window)?;
+    let width = POPUP_SIZE.0.min((size.width - RAIL_WIDTH).max(0.0));
+    let height = POPUP_SIZE.1.min((size.height - BELL_SIZE.1).max(0.0));
 
     Ok((
-        LogicalPosition::new((size.width - width).max(RAIL_WIDTH), top),
+        LogicalPosition::new((size.width - width).max(RAIL_WIDTH), BELL_SIZE.1),
         LogicalSize::new(width, height),
     ))
 }
 
-/// Creates the window, the shell webview, and the resize handler that keeps everything aligned.
+fn place(
+    webview: &Webview,
+    (position, size): (LogicalPosition<f64>, LogicalSize<f64>),
+) -> Result<()> {
+    webview.set_position(position)?;
+    webview.set_size(size)?;
+
+    Ok(())
+}
+
+/// Creates the window, the shell and the bell, and keeps the layout in step with resizes.
 pub fn create_main_window(app: &AppHandle) -> Result<Window> {
     let window = tauri::window::WindowBuilder::new(app, MAIN_WINDOW)
         .title("Shiver")
         .inner_size(1280.0, 800.0)
         .min_inner_size(720.0, 480.0)
-        // Dark, rather than whatever the desktop is set to. Everything *inside* this window is dark
-        // by default — Shiver's own chrome and Sharkord's — so a light title bar and border was the
-        // one part of the app that followed a setting nobody had made about it, framing a dark app
-        // in white. Windows only draws the frame; there is nothing here to make configurable, and
-        // the colours that are the user's own are in settings already.
+        // everything inside is dark, so the frame is too
         .theme(Some(tauri::Theme::Dark))
         .build()?;
 
-    let scale = window.scale_factor()?;
-    let size = window.inner_size()?.to_logical::<f64>(scale);
+    let size = logical_size(&window)?;
 
+    // native drag-and-drop would swallow the html5 drags the rail is reordered with
     window.add_child(
-        // the native drag-and-drop handler intercepts drags before the page sees them, which stops
-        // html5 dragstart/dragover/drop from firing at all: the rail could not be reordered. Shiver
-        // accepts no dropped files here, so nothing is lost by turning it off.
         WebviewBuilder::new(SHELL_WEBVIEW, WebviewUrl::App("index.html".into()))
             .disable_drag_drop_handler(),
         LogicalPosition::new(0.0, 0.0),
-        LogicalSize::new(size.width, size.height),
+        size,
     )?;
 
     ensure_overlay(app)?;
@@ -405,14 +258,9 @@ pub fn create_main_window(app: &AppHandle) -> Result<Window> {
                 eprintln!("[shiver] could not relayout after a resize: {error}");
             }
 
-            // Minimizing arrives as a resize on Windows rather than an event of its own, so the
-            // window is asked rather than the event read. Pushed on every resize and not only on a
-            // change, because the pages are the ones holding the state and one of them may have
-            // reloaded since the last push — `__SHIVER_SET_HIDDEN__` is idempotent for that reason.
+            // minimising arrives as a resize on Windows; pages cannot see it themselves
             if let Ok(window) = main_window(&handle) {
-                let hidden = window.is_minimized().unwrap_or(false);
-
-                push_visibility(&handle, hidden);
+                push_visibility(&handle, window.is_minimized().unwrap_or(false));
             }
         }
     });
@@ -420,59 +268,80 @@ pub fn create_main_window(app: &AppHandle) -> Result<Window> {
     Ok(window)
 }
 
-/// Resizes the shell to the window, every server webview to the content area, and the bell to its
-/// corner.
+/// Re-places every webview for the current window size. One failure does not stop the rest.
 pub fn relayout(app: &AppHandle) -> Result<()> {
     let window = main_window(app)?;
-    let scale = window.scale_factor()?;
-    let size = window.inner_size()?.to_logical::<f64>(scale);
-    let (position, content) = content_rect(&window)?;
-    let (dm_position, dm_content) = dm_content_rect(&window)?;
-    let (bell_position, bell_size) = bell_rect(&window)?;
-    let (popup_position, popup_size) = popup_rect(&window)?;
+    let full = (LogicalPosition::new(0.0, 0.0), logical_size(&window)?);
+    let fullscreen = app
+        .state::<ActiveServer>()
+        .update(|screen| screen.fullscreen);
+    let current = app
+        .state::<ActiveServer>()
+        .get()
+        .map(|id| webview_label(&id));
 
-    // One webview failing to move is not a reason to leave every webview after it where it was:
-    // a `?` here meant a resize could half-apply and leave two pages overlapping.
     for webview in window.webviews() {
-        let placed = match webview.label() {
-            SHELL_WEBVIEW => webview
-                .set_position(LogicalPosition::new(0.0, 0.0))
-                .and_then(|()| webview.set_size(LogicalSize::new(size.width, size.height))),
-            OVERLAY_WEBVIEW => webview
-                .set_position(bell_position)
-                .and_then(|()| webview.set_size(bell_size)),
-            POPUP_WEBVIEW => webview
-                .set_position(popup_position)
-                .and_then(|()| webview.set_size(popup_size)),
-            // a conversation view is inset by Shiver's DM list, a server view is not
-            label if label.starts_with("dm::") => webview
-                .set_position(dm_position)
-                .and_then(|()| webview.set_size(dm_content)),
-            _ => webview
-                .set_position(position)
-                .and_then(|()| webview.set_size(content)),
+        let label = webview.label();
+        let rect = match label {
+            SHELL_WEBVIEW => full,
+            OVERLAY_WEBVIEW => bell_rect(&window)?,
+            POPUP_WEBVIEW => popup_rect(&window)?,
+            _ if label.starts_with("dm::") => dm_content_rect(&window)?,
+            _ if fullscreen && current.as_deref() == Some(label) => full,
+            _ => content_rect(&window)?,
         };
 
-        if let Err(error) = placed {
-            eprintln!("[shiver] could not lay out {}: {error}", webview.label());
+        if let Err(error) = place(&webview, rect) {
+            eprintln!("[shiver] could not lay out {label}: {error}");
         }
     }
 
     Ok(())
 }
 
-/// Creates the bell overlay, or moves it back on top if it is already there.
+/// Takes Shiver's chrome away while the page on screen is fullscreen: the page is widened over the
+/// rail and the bell (and popup) are hidden. Lags by up to one drain, since pages cannot call in.
 ///
-/// Child webviews stack in creation order and there is no API to raise one, so opening a server for
-/// the first time would bury the bell under it. Rebuilding the overlay afterwards is what keeps it
-/// visible; it is a tiny local page, so this is cheap.
+/// The page decides this, so a page can hide Shiver's chrome at will; Escape or switching away
+/// always restores it (`show_server` resets it).
+pub fn set_page_fullscreen(app: &AppHandle, entry_id: &str, on: bool) -> Result<()> {
+    if app
+        .state::<ActiveServer>()
+        .update(|screen| std::mem::replace(&mut screen.fullscreen, on))
+        == on
+    {
+        return Ok(());
+    }
+
+    let window = main_window(app)?;
+
+    if let Some(webview) = app.get_webview(&webview_label(entry_id)) {
+        place(
+            &webview,
+            if on {
+                (LogicalPosition::new(0.0, 0.0), logical_size(&window)?)
+            } else {
+                content_rect(&window)?
+            },
+        )?;
+    }
+
+    for other in window.webviews() {
+        match other.label() {
+            OVERLAY_WEBVIEW | POPUP_WEBVIEW if on => other.hide()?,
+            // the popup is only reopened when asked for
+            OVERLAY_WEBVIEW => other.show()?,
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+/// Rebuilds the bell on top of everything (and closes the popup, which is rebuilt on demand).
 pub fn ensure_overlay(app: &AppHandle) -> Result<()> {
     let window = main_window(app)?;
 
-    // the popup is torn down with the bell, so it can never end up buried under a server webview.
-    // it goes through `set_popup_open` rather than closing the webview directly because the core
-    // has to agree the feed is gone: leaving the flag set meant the next click on the bell computed
-    // "close" for a popup that was not there, and the feed took two clicks to come back.
     set_popup_open(app, false)?;
 
     if let Some(existing) = app.get_webview(OVERLAY_WEBVIEW) {
@@ -494,24 +363,19 @@ pub fn ensure_overlay(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
-/// Opens the notification feed under the bell, or closes it.
-///
-/// The popup is built fresh each time rather than hidden and reshown: child webviews stack in
-/// creation order with no way to raise one, so creating it last is what keeps it above every
-/// server. The bell is untouched either way, which is the point of them being separate.
+/// Opens or closes the notification popup under the bell, and tells the bell.
 pub fn set_popup_open(app: &AppHandle, open: bool) -> Result<()> {
-    app.state::<ActiveServer>().set_popup_open(open);
+    app.state::<ActiveServer>()
+        .update(|screen| screen.popup_open = open);
 
-    // the bell is a separate webview and cannot see the feed, so it is told: otherwise a feed that
-    // dismissed itself would leave the bell drawn as though it were still open
-    let _ = app.emit_to(
-        OVERLAY_WEBVIEW,
-        POPUP_EVENT,
-        serde_json::json!({ "open": open }),
-    );
+    let _ = app.emit_to(OVERLAY_WEBVIEW, POPUP_EVENT, json!({ "open": open }));
 
     if !open {
-        return close_popup(app);
+        if let Some(popup) = app.get_webview(POPUP_WEBVIEW) {
+            popup.close()?;
+        }
+
+        return Ok(());
     }
 
     if app.get_webview(POPUP_WEBVIEW).is_some() {
@@ -520,17 +384,10 @@ pub fn set_popup_open(app: &AppHandle, open: bool) -> Result<()> {
 
     let window = main_window(app)?;
     let (position, size) = popup_rect(&window)?;
+    let background = startup_color(&app.state::<Store>().registry().settings);
 
-    // read and released before add_child, which blocks on the event loop: no lock is held across it
-    let background = {
-        let store = app.state::<crate::store::Store>();
-        let registry = store.registry();
-
-        startup_color(&registry.settings)
-    };
-
+    // painted before the page loads, so opening does not flash white
     window.add_child(
-        // painted before the page loads, so opening the feed does not flash white first
         WebviewBuilder::new(
             POPUP_WEBVIEW,
             WebviewUrl::App("index.html?view=popup".into()),
@@ -547,19 +404,18 @@ pub fn set_popup_open(app: &AppHandle, open: bool) -> Result<()> {
     Ok(())
 }
 
-fn close_popup(app: &AppHandle) -> Result<()> {
-    if let Some(popup) = app.get_webview(POPUP_WEBVIEW) {
-        popup.close()?;
+/// Hides every webview the predicate does not keep, carrying on past failures.
+fn hide_all_but(window: &Window, keep: impl Fn(&str) -> bool) {
+    for webview in window.webviews() {
+        if !keep(webview.label()) {
+            if let Err(error) = webview.hide() {
+                eprintln!("[shiver] could not hide {}: {error}", webview.label());
+            }
+        }
     }
-
-    Ok(())
 }
 
-fn find_server_webview(app: &AppHandle, entry_id: &str) -> Option<Webview> {
-    app.get_webview(&webview_label(entry_id))
-}
-
-/// Brings `entry`'s webview to the front, creating it on first use.
+/// Brings a server's page to the front, creating it on first use.
 pub fn show_server(
     app: &AppHandle,
     entry: &ServerEntry,
@@ -569,65 +425,53 @@ pub fn show_server(
     voice_locked: bool,
 ) -> Result<()> {
     let active = app.state::<ActiveServer>();
-    let _guard = active
-        .gate
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-
+    let _gate = active.gate.locked();
     let window = main_window(app)?;
-
-    // re-checked inside the gate: a call that queued behind a creation must see its result
-    let created = find_server_webview(app, &entry.id).is_none();
+    let label = webview_label(&entry.id);
+    let created = app.get_webview(&label).is_none();
 
     if created {
-        create_server_webview(&window, entry, settings, token, muted, voice_locked).inspect_err(
-            |error| {
-                eprintln!("[shiver] could not open {}: {error}", entry.origin);
-            },
-        )?;
+        build_page_webview(
+            &window,
+            entry,
+            settings,
+            token,
+            muted,
+            PageRole::Server { voice_locked },
+            content_rect(&window)?,
+        )
+        .inspect_err(|error| eprintln!("[shiver] could not open {}: {error}", entry.origin))?;
     }
 
-    // `is_shiver_chrome` rather than a list spelled out here, which is what this used to be — and
-    // it left `POPUP_WEBVIEW` out. Opening a server with the feed up therefore hid the feed without
-    // anything clearing `overlay_expanded`, so the core went on believing it was open and the next
-    // click on the bell computed "close" for a popup nobody could see. Two clicks to reopen it,
-    // which is the same bug the reopen guard above was written to fix in its other form.
-    hide_all_but(&window, |label| {
-        is_shiver_chrome(label) || label == webview_label(&entry.id)
-    });
+    hide_all_but(&window, |other| is_shiver_chrome(other) || other == label);
 
-    if let Some(webview) = find_server_webview(app, &entry.id) {
-        let (position, size) = content_rect(&window)?;
-
-        webview.set_position(position)?;
-        webview.set_size(size)?;
+    if let Some(webview) = app.get_webview(&label) {
+        place(&webview, content_rect(&window)?)?;
         webview.show()?;
         webview.set_focus()?;
     }
 
-    active.set(Some(entry.id.clone()));
-    active.set_showing_server(true);
-    active.touch(&entry.id);
+    active.update(|screen| {
+        screen.current = Some(entry.id.clone());
+        screen.showing_server = true;
+        screen.dm_on_screen = None;
+        screen.popup_open = false;
+        screen.fullscreen = false;
+        screen.recent.retain(|held| held != &entry.id);
+        screen.recent.insert(0, entry.id.clone());
+    });
 
-    // the loop above hid every other webview, and the conversation views are among them
-    active.set_dm_on_screen(None);
-
-    // a page shown while the DM split is up has to be told, even though the layout did not change:
-    // it may have been preloaded before the split and would otherwise still draw its own sidebar
-
-    // a webview created just now sits above the bell, so the bell has to be rebuilt over it
+    // the bell may have been hidden for a fullscreen page, and a new page sits above it
     if created {
         ensure_overlay(app)?;
+    } else if let Some(bell) = app.get_webview(OVERLAY_WEBVIEW) {
+        bell.show()?;
     }
 
     Ok(())
 }
 
-/// Opens a server's webview without showing it.
-///
-/// This is what makes every server live from launch: a hidden webview still runs the client, holds
-/// its websocket and keeps feeding Shiver notifications and DMs, so the inbox is complete without the
-/// user having visited each server first.
+/// Opens a server's page without showing it.
 pub fn preload_server(
     app: &AppHandle,
     entry: &ServerEntry,
@@ -637,93 +481,66 @@ pub fn preload_server(
     voice_locked: bool,
 ) -> Result<()> {
     let active = app.state::<ActiveServer>();
-    let _guard = active
-        .gate
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _gate = active.gate.locked();
 
-    if find_server_webview(app, &entry.id).is_some() {
+    if app.get_webview(&webview_label(&entry.id)).is_some() {
         return Ok(());
     }
 
     let window = main_window(app)?;
 
-    create_server_webview(&window, entry, settings, token, muted, voice_locked)?;
+    build_page_webview(
+        &window,
+        entry,
+        settings,
+        token,
+        muted,
+        PageRole::Server { voice_locked },
+        content_rect(&window)?,
+    )?;
 
-    // it must not cover whatever the user is already looking at
-    if let Some(webview) = find_server_webview(app, &entry.id) {
-        if active.get().as_deref() != Some(entry.id.as_str()) {
+    if active.get().as_deref() != Some(entry.id.as_str()) {
+        if let Some(webview) = app.get_webview(&webview_label(&entry.id)) {
             webview.hide()?;
         }
     }
 
-    ensure_overlay(app)?;
-
-    Ok(())
+    ensure_overlay(app)
 }
 
-/// Hides every server webview so the shell's own UI is visible across the whole window. Used for
-/// Shiver panels (settings, the notification inbox) and when the rail is empty.
+/// Hides every server page so a Shiver panel can use the whole window.
 pub fn show_shell_only(app: &AppHandle) -> Result<()> {
     let window = main_window(app)?;
 
-    app.state::<ActiveServer>().set_showing_server(false);
+    app.state::<ActiveServer>().update(|screen| {
+        screen.showing_server = false;
+        screen.dm_on_screen = None;
+    });
 
-    // Also hidden by the loop below. The inbox calls this on its way in and *then* shows a
-    // conversation, so clearing here is not a race with that — it is what makes every other panel
-    // stop counting whatever conversation was last up as being read.
-    app.state::<ActiveServer>().set_dm_on_screen(None);
-
-    // the bell belongs to Shiver, not to the server, so it stays up over Shiver's own panels
     hide_all_but(&window, is_shiver_chrome);
 
     Ok(())
 }
 
-/// Hides every webview the predicate does not keep.
-///
-/// A helper rather than three copies of the loop, and it reports failures instead of stopping at
-/// the first. `webview.hide()?` inside the loop meant one webview failing to hide — routine while
-/// something is being torn down — left every webview after it still on screen, which is two server
-/// pages stacked on top of each other.
-fn hide_all_but(window: &Window, keep: impl Fn(&str) -> bool) {
-    for webview in window.webviews() {
-        if keep(webview.label()) {
-            continue;
-        }
-
-        if let Err(error) = webview.hide() {
-            eprintln!("[shiver] could not hide {}: {error}", webview.label());
-        }
-    }
-}
-
-/// Closes the server pages past the user's `pages_kept`, oldest first.
-///
-/// This number is what the whole socket change exists to make small. A WebView2 running a Sharkord
-/// client costs on the order of a hundred megabytes, and Shiver used to hold one — two, counting
-/// the preloaded conversation view — for **every** server in the rail. Someone in thirty servers
-/// was paying gigabytes for twenty-nine clients they were not looking at.
-///
-/// It is a setting rather than a constant because the right answer is a trade only the person
-/// making it can price: a kept page switches back instantly, and a closed one has to start its
-/// client again. What a closed page does *not* cost is anything in the inbox — `watch.rs` holds a
-/// socket to every server without one, and a socket reports the same messages, conversations and
-/// unread for a rounding error of the memory.
-///
-/// Never the server on screen, and **never one holding a call** — a closed page is a dropped call,
-/// and a person who joined voice on one server and went to read another expects to still be in it.
+/// Closes pages beyond `pages_kept`, oldest first — never the one on screen, never one in a call —
+/// and lets the sockets take over for them.
 pub fn trim_pages(app: &AppHandle) {
-    let keep = app
-        .state::<crate::store::Store>()
-        .registry()
-        .settings
-        .pages_kept();
-    let active = app.state::<ActiveServer>();
-    let showing = active.get();
+    let keep = app.state::<Store>().registry().settings.pages_kept();
+    let (showing, excess) = app.state::<ActiveServer>().update(|screen| {
+        (
+            screen.current.clone(),
+            screen
+                .recent
+                .iter()
+                .skip(keep)
+                .rev()
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    });
     let in_call = app.state::<crate::voice::VoiceState>().holder();
 
-    for entry_id in active.over_cap(keep) {
+    for entry_id in excess {
         if Some(&entry_id) == showing.as_ref() || Some(&entry_id) == in_call.as_ref() {
             continue;
         }
@@ -732,196 +549,217 @@ pub fn trim_pages(app: &AppHandle) {
             eprintln!("[shiver] could not close the page for {entry_id}: {error}");
         }
 
-        // the conversation view is a second client for the same server, and costs the same again
         close_dm_view(app, &entry_id);
     }
 
-    // and the sockets pick up whatever just lost its page
     crate::watch::sync(app);
 }
 
-/// Tears a server's webview down. The webview owns the session, so closing it is also what ends
-/// the signed-in session for that entry.
+/// Closes a server's page. The call it may have held ends with it.
 pub fn close_server(app: &AppHandle, entry_id: &str) -> Result<()> {
-    if let Some(webview) = find_server_webview(app, entry_id) {
+    if let Some(webview) = app.get_webview(&webview_label(entry_id)) {
         webview.close()?;
     }
 
-    let active = app.state::<ActiveServer>();
+    app.state::<ActiveServer>().update(|screen| {
+        if screen.current.as_deref() == Some(entry_id) {
+            screen.current = None;
+        }
 
-    if active.get().as_deref() == Some(entry_id) {
-        active.set(None);
-    }
-
-    // a server with no page is not one of the pages being kept warm
-    active.forget_recent(entry_id);
+        screen.recent.retain(|held| held != entry_id);
+    });
+    app.state::<crate::voice::VoiceState>()
+        .forget_entry(entry_id);
 
     Ok(())
 }
 
-fn create_server_webview(
-    window: &Window,
-    entry: &ServerEntry,
-    settings: &Settings,
-    token: Option<&str>,
-    muted: &[i64],
-    voice_locked: bool,
-) -> Result<()> {
-    let (position, size) = content_rect(window)?;
+/* ── browser profiles ── */
 
-    build_page_webview(
-        window,
-        entry,
-        settings,
-        token,
-        muted,
-        &webview_label(&entry.id),
-        false,
-        None,
-        voice_locked,
-        position,
-        size,
-    )
+fn profiles_root(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_local_data_dir()
+        .ok()
+        .map(|dir| dir.join("webviews"))
 }
 
-/// Where one rail entry's browser profile lives.
-///
-/// **A directory per entry, and that is the whole of what keeps two accounts apart.** WebView2 keys
-/// its storage by origin, and Tauri keys a web context by this path
-/// (`WebContextStore = HashMap<Option<PathBuf>, WebContext>`), so every webview left on the default
-/// shared one profile. Two rail entries pointing at the *same* server therefore shared a
-/// `localStorage` — including `sharkord-auto-login-token`, which `seedAutoLogin` writes — so the
-/// second entry's seed overwrote the first's, and on the next launch both pages signed in as
-/// whichever account was written last. Adding a server twice for two accounts is a feature Shiver
-/// advertises, and it quietly did not work.
-///
-/// It is also why the badge doubled: two pages signed into one account report that account's
-/// notifications twice, and the feed has no way to tell them apart.
-///
-/// Keyed by entry id rather than by origin, so two entries are two profiles even on one server, and
-/// a server's conversation view shares its own entry's profile rather than opening a second login.
-///
-/// Falling back to the shared profile when the directory cannot be resolved is deliberate: that is
-/// the behaviour Shiver had, and a server that opens signed into the wrong account is better than a
-/// server that does not open.
-fn profile_directory(app: &AppHandle, entry_id: &str) -> Option<std::path::PathBuf> {
-    match app.path().app_local_data_dir() {
-        Ok(dir) => Some(dir.join("webviews").join(entry_id)),
-        Err(error) => {
-            eprintln!(
-                "[shiver] no local data directory for {entry_id}'s browser profile ({error}),                  so it shares the default one"
-            );
-
-            None
-        }
+/// The directory name of an entry's current browser profile. Each entry has its own profile (two
+/// accounts on one server must not share `localStorage`), and logging out moves to a new one.
+fn profile_name(entry: &ServerEntry) -> String {
+    match &entry.profile {
+        Some(generation) => format!("{}-{generation}", entry.id),
+        None => entry.id.clone(),
     }
 }
 
-/// Builds one webview holding a server's own client, pinned to its origin.
+/// Deletes profile directories in the background, retrying while WebView2 releases its files.
+/// Anything still left is removed by `prune_profiles` on the next launch.
+fn delete_dirs_later(dirs: Vec<PathBuf>) {
+    if dirs.is_empty() {
+        return;
+    }
+
+    std::thread::spawn(move || {
+        for _ in 0..20 {
+            let remaining: Vec<&PathBuf> = dirs
+                .iter()
+                .filter(|dir| match std::fs::remove_dir_all(dir) {
+                    Ok(()) => false,
+                    Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+                })
+                .collect();
+
+            if remaining.is_empty() {
+                return;
+            }
+
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    });
+}
+
+/// Every profile directory belonging to an entry (current and older generations).
+fn profile_dirs_of(app: &AppHandle, entry_id: &str, keep: Option<&str>) -> Vec<PathBuf> {
+    let Some(root) = profiles_root(app) else {
+        return Vec::new();
+    };
+
+    std::fs::read_dir(&root)
+        .into_iter()
+        .flatten()
+        .filter_map(|dir| dir.ok())
+        .map(|dir| dir.file_name().to_string_lossy().into_owned())
+        .filter(|name| {
+            (name == entry_id || name.starts_with(&format!("{entry_id}-")))
+                && Some(name.as_str()) != keep
+        })
+        .map(|name| root.join(name))
+        .collect()
+}
+
+/// Discards all of an entry's browser storage (cookies, localStorage, cache). Its pages must be
+/// closed first.
+pub fn discard_profiles(app: &AppHandle, entry_id: &str, keep: Option<&ServerEntry>) {
+    let keep = keep.map(profile_name);
+
+    delete_dirs_later(profile_dirs_of(app, entry_id, keep.as_deref()));
+}
+
+/// At launch, deletes profiles that belong to no current entry (removed servers, old generations,
+/// deletions that did not finish last time).
+pub fn prune_profiles(app: &AppHandle) {
+    let Some(root) = profiles_root(app) else {
+        return;
+    };
+
+    let current: std::collections::HashSet<String> = app
+        .state::<Store>()
+        .registry()
+        .servers
+        .iter()
+        .map(profile_name)
+        .collect();
+
+    let stale = std::fs::read_dir(&root)
+        .into_iter()
+        .flatten()
+        .filter_map(|dir| dir.ok())
+        .filter(|dir| !current.contains(dir.file_name().to_string_lossy().as_ref()))
+        .map(|dir| dir.path())
+        .collect();
+
+    delete_dirs_later(stale);
+}
+
+#[derive(Clone, Copy)]
+enum PageRole<'a> {
+    /// the page the user browses channels in
+    Server { voice_locked: bool },
+    /// the conversation view: hides its sidebar, reports only which DM is open
+    Dm { open: Option<&'a str> },
+}
+
+/// Builds one page webview pinned to the entry's origin, in the entry's own profile.
 ///
-/// `dm_role` marks the conversation view: that page hides its own sidebar and reports neither
-/// notifications nor DMs, because the server view for the same entry is already doing both and two
-/// pages reporting would double every notification and fight over the inbox.
-#[allow(clippy::too_many_arguments)]
+/// Navigation stays on the origin; a link out of it (after the first load) and every new-window
+/// request go to the browser, subject to the entry's opening allowance. An off-origin redirect
+/// before the first load is refused rather than opened.
 fn build_page_webview(
     window: &Window,
     entry: &ServerEntry,
     settings: &Settings,
     token: Option<&str>,
     muted: &[i64],
-    label: &str,
-    dm_role: bool,
-    open_dm: Option<&str>,
-    voice_locked: bool,
-    position: LogicalPosition<f64>,
-    size: LogicalSize<f64>,
+    role: PageRole<'_>,
+    (position, size): (LogicalPosition<f64>, LogicalSize<f64>),
 ) -> Result<()> {
     let url = Url::parse(&entry.origin)
         .map_err(|_| Error::InvalidOrigin(format!("'{}' is not a valid address", entry.origin)))?;
+    let label = match role {
+        PageRole::Server { .. } => webview_label(&entry.id),
+        PageRole::Dm { .. } => dm_webview_label(&entry.id),
+    };
 
-    let origin = entry.origin.clone();
-    let handle = window.app_handle().clone();
-
-    // whether a page on the pinned origin has actually finished loading. an off-origin navigation
-    // before that is the server redirecting its own entry point, not the user following a link, and
-    // must not be thrown at the browser: Sharkord in dev mode 302s '/' to its client's dev server,
-    // which would otherwise pop a browser tab on every launch.
+    let app = window.app_handle().clone();
     let loaded = Arc::new(AtomicBool::new(false));
     let loaded_for_page = loaded.clone();
-    let origin_for_nav = origin.clone();
+    let origin = entry.origin.clone();
+    let entry_id = entry.id.clone();
+    let (nav_app, nav_id) = (app.clone(), entry_id.clone());
 
-    let mut builder = WebviewBuilder::new(label.to_string(), WebviewUrl::External(url))
-        // Off for the same reason as the shell's, with the opposite motive. Tauri's native handler
-        // takes a drag before the page can see it, so `dragover` and `drop` never fire — and
-        // Sharkord uploads by listening for exactly those (`hooks/use-upload-files.ts`). Left on,
-        // dragging a file onto a server does nothing at all. Shiver has no use for the drop itself:
-        // the file belongs to the server's own uploader, and this gets out of its way.
+    let mut builder = WebviewBuilder::new(label, WebviewUrl::External(url))
+        // Sharkord uploads by listening for dragover/drop, which the native handler would swallow
         .disable_drag_drop_handler()
-        .initialization_script(bridge_script(
-            entry,
-            settings,
-            token,
-            muted,
-            dm_role,
-            open_dm,
-            voice_locked,
-        ))
-    .on_page_load(move |_webview, payload| {
-        if matches!(payload.event(), PageLoadEvent::Finished) {
-            loaded_for_page.store(true, Ordering::Relaxed);
-        }
-    })
-    .on_navigation(move |target| {
-        if is_same_origin(&origin_for_nav, target) {
-            return true;
-        }
+        .initialization_script(bridge_script(entry, settings, token, muted, role))
+        .on_page_load(move |_webview, payload| {
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                loaded_for_page.store(true, Ordering::Relaxed);
+            }
+        })
+        .on_navigation(move |target| {
+            if is_same_origin(&origin, target) {
+                return true;
+            }
 
-        if !loaded.load(Ordering::Relaxed) {
-            eprintln!(
-                "[shiver] {origin_for_nav} redirected to {target} before it finished loading, so it was not opened"
-            );
+            if loaded.load(Ordering::Relaxed) {
+                open_for_page(&nav_app, &nav_id, target);
+            } else {
+                eprintln!("[shiver] {origin} redirected to {target} before it finished loading; not opened");
+            }
 
-            return false;
-        }
-
-        // a link out of Sharkord, followed from a page that is already up. it opens in the user's
-        // browser so a server can never navigate its own webview somewhere Shiver still treats as
-        // that server.
-        open_externally(&handle, target);
-
-        false
-    })
-    .on_new_window({
-        let handle = window.app_handle().clone();
-
-        // Sharkord opens files and links with `target="_blank"`, which is a *new window* rather
-        // than a navigation — so none of it reached the handler above, and wry's own default for an
-        // unhandled request is `Deny`. Clicking an attachment or any link in a message did nothing
-        // at all, silently, on both clients.
-        //
-        // Shiver has no second window to put it in, and it would not want one: a file or an outside
-        // link belongs to the browser, which is where every other link out of Sharkord already
-        // goes. So it is handed over and the request itself is refused.
-        move |url, _features| {
-            open_externally(&handle, &url);
+            false
+        })
+        .on_new_window(move |url, _features| {
+            open_for_page(&app, &entry_id, &url);
 
             tauri::webview::NewWindowResponse::Deny
-        }
-    });
+        });
 
-    // Applied after the chain rather than in it, because it is the one setting here that may have
-    // nothing to apply — see `profile_directory`.
-    if let Some(directory) = profile_directory(window.app_handle(), &entry.id) {
-        builder = builder.data_directory(directory);
+    if let Some(root) = profiles_root(window.app_handle()) {
+        builder = builder.data_directory(root.join(profile_name(entry)));
+    } else {
+        eprintln!(
+            "[shiver] no local data directory; {} shares the default browser profile",
+            entry.id
+        );
     }
 
     window.add_child(builder, position, size)?;
 
+    crate::permissions::apply_pending_reset(window.app_handle(), &entry.id);
+
     Ok(())
 }
 
-pub fn open_externally(app: &AppHandle, url: &Url) {
+/// Opens a link from a page in the user's browser (http/https only), within the entry's allowance.
+pub fn open_for_page(app: &AppHandle, entry_id: &str, url: &Url) {
     if !matches!(url.scheme(), "http" | "https") {
+        return;
+    }
+
+    if !app.state::<Openings>().allow(entry_id) {
+        eprintln!("[shiver] {entry_id} is opening links too quickly; {url} was not opened");
+
         return;
     }
 
@@ -932,14 +770,8 @@ pub fn open_externally(app: &AppHandle, url: &Url) {
     }
 }
 
-/// The bridge runs in every server page. Its config is inlined ahead of it so the script itself
-/// stays generic, and it carries only this entry's own data: nothing about any other server ever
-/// reaches a server's page.
-/// Shows the conversation view for one entry, beside Shiver's DM list, creating it on first use.
-///
-/// This is a *second* client for that server, dedicated to DMs. It costs an extra connection while
-/// the inbox is open, and buys the thing the shared webview could not give: the server view keeps
-/// whatever channel the user left it on.
+/// Shows an entry's conversation view beside Shiver's DM list, creating it if needed. Returns
+/// whether it was created (a new page opens `open_dm` itself; an existing one must be told).
 pub fn show_dm_view(
     app: &AppHandle,
     entry: &ServerEntry,
@@ -948,51 +780,33 @@ pub fn show_dm_view(
     open_dm: &str,
 ) -> Result<bool> {
     let active = app.state::<ActiveServer>();
-    let _guard = active
-        .gate
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-
+    let _gate = active.gate.locked();
     let window = main_window(app)?;
     let label = dm_webview_label(&entry.id);
     let created = app.get_webview(&label).is_none();
 
     if created {
-        let (position, size) = dm_content_rect(&window)?;
-
-        // the conversation travels in the page's own config, because nothing can be evaluated in a
-        // webview that has not loaded yet
         build_page_webview(
             &window,
             entry,
             settings,
             token,
             &[],
-            &label,
-            true,
-            Some(open_dm),
-            // the conversation view hides Sharkord's own sidebar, so it has no voice controls to
-            // lock and never reports a session of its own
-            false,
-            position,
-            size,
+            PageRole::Dm {
+                open: Some(open_dm),
+            },
+            dm_content_rect(&window)?,
         )?;
     }
 
-    active.set_showing_server(false);
-
-    // only ever one conversation view at a time, and no server view visible behind it
+    active.update(|screen| screen.showing_server = false);
     hide_all_but(&window, |other| is_shiver_chrome(other) || other == label);
 
     if let Some(webview) = app.get_webview(&label) {
-        let (position, size) = dm_content_rect(&window)?;
-
-        webview.set_position(position)?;
-        webview.set_size(size)?;
+        place(&webview, dm_content_rect(&window)?)?;
         webview.show()?;
         webview.set_focus()?;
-
-        active.set_dm_on_screen(Some(entry.id.clone()));
+        active.update(|screen| screen.dm_on_screen = Some(entry.id.clone()));
     }
 
     if created {
@@ -1002,14 +816,7 @@ pub fn show_dm_view(
     Ok(created)
 }
 
-/// Opens a server's conversation view without showing it.
-///
-/// The same idea as `preload_server`, applied to the second client each entry keeps for DMs: the
-/// page is up and signed in before the user asks for a conversation, so opening one is a matter of
-/// showing a webview and naming the conversation rather than waiting on a fresh client to connect.
-///
-/// It carries no conversation of its own. `show_dm_view` handed one over in the page's config
-/// precisely because the page did not exist yet; a preloaded page does, so it is simply told.
+/// Opens an entry's conversation view hidden, so opening a DM later is instant.
 pub fn preload_dm_view(
     app: &AppHandle,
     entry: &ServerEntry,
@@ -1017,11 +824,7 @@ pub fn preload_dm_view(
     token: Option<&str>,
 ) -> Result<()> {
     let active = app.state::<ActiveServer>();
-    let _guard = active
-        .gate
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-
+    let _gate = active.gate.locked();
     let label = dm_webview_label(&entry.id);
 
     if app.get_webview(&label).is_some() {
@@ -1029,7 +832,6 @@ pub fn preload_dm_view(
     }
 
     let window = main_window(app)?;
-    let (position, size) = dm_content_rect(&window)?;
 
     build_page_webview(
         &window,
@@ -1037,25 +839,17 @@ pub fn preload_dm_view(
         settings,
         token,
         &[],
-        &label,
-        true,
-        None,
-        // the conversation view hides Sharkord's own sidebar, so it has no voice controls to lock
-        false,
-        position,
-        size,
+        PageRole::Dm { open: None },
+        dm_content_rect(&window)?,
     )?;
 
     if let Some(webview) = app.get_webview(&label) {
         webview.hide()?;
     }
 
-    ensure_overlay(app)?;
-
-    Ok(())
+    ensure_overlay(app)
 }
 
-/// Closes one entry's conversation view, so it can be rebuilt on a new session.
 pub fn close_dm_view(app: &AppHandle, entry_id: &str) {
     if let Some(webview) = app.get_webview(&dm_webview_label(entry_id)) {
         if let Err(error) = webview.close() {
@@ -1063,112 +857,63 @@ pub fn close_dm_view(app: &AppHandle, entry_id: &str) {
         }
     }
 
-    let active = app.state::<ActiveServer>();
-
-    if active.dm_on_screen().as_deref() == Some(entry_id) {
-        active.set_dm_on_screen(None);
-    }
+    app.state::<ActiveServer>().update(|screen| {
+        if screen.dm_on_screen.as_deref() == Some(entry_id) {
+            screen.dm_on_screen = None;
+        }
+    });
 }
 
-/// Hides every conversation view, for when the user leaves the inbox.
-///
-/// They are hidden rather than closed. Closing them is what the on-demand version did, and it threw
-/// away a connected client every time the user stepped out of the inbox, so the next conversation
-/// waited on a fresh sign-in. The cost of keeping them is honest and it is the point of preloading:
-/// an entry in the rail is two running clients, not one.
+/// Hides (does not close) every conversation view, for leaving the inbox.
 pub fn hide_dm_views(app: &AppHandle) -> Result<()> {
-    let window = main_window(app)?;
-
-    for webview in window.webviews() {
-        if webview.label().starts_with("dm::") {
-            if let Err(error) = webview.hide() {
-                eprintln!("[shiver] could not hide {}: {error}", webview.label());
-            }
-        }
-    }
-
-    // hidden is not being read, so whatever it is still showing stops counting as seen
-    app.state::<ActiveServer>().set_dm_on_screen(None);
+    hide_all_but(&main_window(app)?, |label| !label.starts_with("dm::"));
+    app.state::<ActiveServer>()
+        .update(|screen| screen.dm_on_screen = None);
 
     Ok(())
 }
 
-/// Tells every server page whether the window can actually be seen.
-///
-/// **A minimized Shiver is not a visible one, and the page has no way to know that.** A wry webview
-/// is a child window of Shiver's own; minimizing the top level does not change the WebView2
-/// controller's visibility, so `document.hidden` stays `false` and the page goes on believing the
-/// user is looking at it.
-///
-/// That matters because of what Sharkord does with it. In `messages/actions.ts` it reads
-/// `document?.hidden` and sends a notification when the window is hidden *or* the channel is not on
-/// screen — so a minimized Shiver sitting in a channel got no notification at all, and the message
-/// arrived nowhere the user would see it. Shiver's own feed is built out of the notifications
-/// Sharkord composes, so this is not only Sharkord's own badge that goes quiet: it is the bell.
-///
-/// What this does **not** fix is the other half of the same report. Sharkord marks the selected
-/// channel read on arrival whenever that channel is on screen, and that decision does not consult
-/// the window at all — it is three lines below the one that does. Being minimized therefore still
-/// marks messages read; the notification is what comes back. Suppressing the read itself means
-/// intercepting a call to somebody else's server, and that is a different trade to make
-/// deliberately rather than as a side effect of this.
+/// Evaluates `script` in every server and conversation page.
+fn eval_in_pages(app: &AppHandle, script: &str) {
+    let Ok(window) = main_window(app) else {
+        return;
+    };
+
+    for webview in window.webviews() {
+        if entry_of(webview.label()).is_some() {
+            let _ = webview.eval(script);
+        }
+    }
+}
+
+/// Tells pages whether the window is minimised; WebView2 does not change `document.hidden` for it,
+/// and Sharkord only notifies for the selected channel when the page is hidden.
 pub fn push_visibility(app: &AppHandle, hidden: bool) {
-    let Ok(window) = main_window(app) else {
-        return;
-    };
-
-    for webview in window.webviews() {
-        if is_shiver_chrome(webview.label()) {
-            continue;
-        }
-
-        let _ = webview.eval(format!(
-            "window.__SHIVER_SET_HIDDEN__ && window.__SHIVER_SET_HIDDEN__({hidden})"
-        ));
-    }
+    eval_in_pages(
+        app,
+        &format!("window.__SHIVER_SET_HIDDEN__ && window.__SHIVER_SET_HIDDEN__({hidden})"),
+    );
 }
 
-/// Repaints every open server and conversation page in the user's colours, without reloading them.
+/// Repaints every page in the user's colours and applies the sound and attachment settings, in place.
 pub fn push_theme(app: &AppHandle, settings: &Settings) {
-    let Ok(window) = main_window(app) else {
-        return;
-    };
-
     let theme = theme_payload(settings);
+    let volume = settings.sound_volume.min(crate::model::MAX_SOUND_VOLUME);
+    let minimise = settings.minimise_attachments;
 
-    for webview in window.webviews() {
-        if is_shiver_chrome(webview.label()) {
-            continue;
-        }
-
-        let _ = webview.eval(format!(
-            "window.__SHIVER_SET_THEME__ && window.__SHIVER_SET_THEME__({theme})"
-        ));
-
-        // Loudness moves with the same save, and waiting for a reload to hear it would make the
-        // slider feel broken — it is the one setting whose whole point is to be adjusted by ear.
-        let volume = settings.sound_volume.min(crate::model::MAX_SOUND_VOLUME);
-
-        let _ = webview.eval(format!(
-            "window.__SHIVER_SET_SOUND_VOLUME__ && window.__SHIVER_SET_SOUND_VOLUME__({volume})"
-        ));
-
-        let minimise = settings.minimise_attachments;
-
-        let _ = webview.eval(format!(
-            "window.__SHIVER_SET_ATTACHMENT_CARDS__ && window.__SHIVER_SET_ATTACHMENT_CARDS__({minimise})"
-        ));
-    }
+    eval_in_pages(
+        app,
+        &format!(
+            "window.__SHIVER_SET_THEME__ && window.__SHIVER_SET_THEME__({theme});\
+             window.__SHIVER_SET_SOUND_VOLUME__ && window.__SHIVER_SET_SOUND_VOLUME__({volume});\
+             window.__SHIVER_SET_ATTACHMENT_CARDS__ && window.__SHIVER_SET_ATTACHMENT_CARDS__({minimise});"
+        ),
+    );
 }
 
-/// The colour a Shiver webview paints before its own stylesheet has loaded.
-///
-/// Without it the webview starts white, which reads as a flash when the notification feed opens.
-/// It follows the user's chosen background, so a themed Shiver does not flash the default grey
-/// either.
+/// The colour a Shiver webview paints before its stylesheet loads, from the user's background.
 fn startup_color(settings: &Settings) -> tauri::webview::Color {
     let hex = settings.theme_color.trim_start_matches('#');
-
     let channel = |index: usize| {
         hex.get(index..index + 2)
             .and_then(|part| u8::from_str_radix(part, 16).ok())
@@ -1178,102 +923,94 @@ fn startup_color(settings: &Settings) -> tauri::webview::Color {
     tauri::webview::Color(channel(0), channel(2), channel(4), 255)
 }
 
-/// `null` while the user is on Sharkord's own colours, so a stock Shiver restyles nothing.
+/// `null` on the default colours (pages are left untouched); otherwise sanitised colours only,
+/// since the bridge turns them into CSS.
 fn theme_payload(settings: &Settings) -> serde_json::Value {
+    use crate::model::{
+        sanitised_color, sanitised_optional_color, DEFAULT_ACCENT_COLOR, DEFAULT_THEME_COLOR,
+    };
+
     if settings.uses_default_colors() {
         return serde_json::Value::Null;
     }
 
-    // Checked here as well as at the door. The bridge puts these into a `<style>` element, so the
-    // last thing that touches them before they become CSS is the right place for the guarantee to
-    // be unconditional rather than dependent on which path the settings arrived by.
     json!({
-        "themeColor": crate::model::sanitised_color(&settings.theme_color, crate::model::DEFAULT_THEME_COLOR),
-        "accentColor": crate::model::sanitised_color(&settings.accent_color, crate::model::DEFAULT_ACCENT_COLOR),
-        "textColor": crate::model::sanitised_optional_color(settings.text_color.as_deref()),
+        "themeColor": sanitised_color(&settings.theme_color, DEFAULT_THEME_COLOR),
+        "accentColor": sanitised_color(&settings.accent_color, DEFAULT_ACCENT_COLOR),
+        "textColor": sanitised_optional_color(settings.text_color.as_deref()),
     })
 }
 
-/// Tells one page whether a call is running on some other server.
-///
-/// A locked page refuses to join voice. It is told only that, never which server holds the call:
-/// server A learning that the user is in a call is unavoidable if the join is to be refused there,
-/// but learning anything identifying about server B is not, so nothing else crosses.
+fn eval_in(app: &AppHandle, label: &str, script: &str) {
+    if let Some(webview) = app.get_webview(label) {
+        let _ = webview.eval(script);
+    }
+}
+
+/// Tells one page whether a call is running elsewhere (never where).
 pub fn push_voice_lock(app: &AppHandle, entry_id: &str, locked: bool) {
-    let Some(webview) = app.get_webview(&webview_label(entry_id)) else {
-        return;
-    };
-
-    let _ = webview.eval(format!(
-        "window.__SHIVER_SET_VOICE_LOCK__ && window.__SHIVER_SET_VOICE_LOCK__({locked})"
-    ));
+    eval_in(
+        app,
+        &webview_label(entry_id),
+        &format!("window.__SHIVER_SET_VOICE_LOCK__ && window.__SHIVER_SET_VOICE_LOCK__({locked})"),
+    );
 }
 
-/// Works one of Sharkord's own voice controls in a page, on the user's behalf.
-///
-/// This is how Shiver's rail controls act: the client keeps `ownVoiceState` and its toggles in redux
-/// and React context, so there is nothing to call, and the buttons are the public surface.
+/// Clicks one of Sharkord's own voice controls in a page.
 pub fn run_voice_action(app: &AppHandle, entry_id: &str, action: &str) {
-    let Some(webview) = app.get_webview(&webview_label(entry_id)) else {
-        return;
-    };
-
-    let payload = json!(action);
-
-    let _ = webview.eval(format!(
-        "window.__SHIVER_VOICE__ && window.__SHIVER_VOICE__({payload})"
-    ));
+    eval_in(
+        app,
+        &webview_label(entry_id),
+        &format!(
+            "window.__SHIVER_VOICE__ && window.__SHIVER_VOICE__({})",
+            json!(action)
+        ),
+    );
 }
 
-/// Asks a page to mark every one of its text channels read.
 pub fn mark_all_read(app: &AppHandle, entry_id: &str) {
-    let Some(webview) = app.get_webview(&webview_label(entry_id)) else {
-        return;
-    };
-
-    let _ = webview.eval("window.__SHIVER_MARK_ALL_READ__ && window.__SHIVER_MARK_ALL_READ__()");
+    eval_in(
+        app,
+        &webview_label(entry_id),
+        "window.__SHIVER_MARK_ALL_READ__ && window.__SHIVER_MARK_ALL_READ__()",
+    );
 }
 
-/// Tells one page its mute list changed, so the channel list redraws without a reload.
+/// Tells one page its mute list changed.
 pub fn push_muted(app: &AppHandle, entry_id: &str, muted: &[i64]) {
-    let Some(webview) = app.get_webview(&webview_label(entry_id)) else {
-        return;
-    };
-
-    let payload = json!(muted);
-
-    let _ = webview.eval(format!(
-        "window.__SHIVER_SET_MUTED__ && window.__SHIVER_SET_MUTED__({payload})"
-    ));
+    eval_in(
+        app,
+        &webview_label(entry_id),
+        &format!(
+            "window.__SHIVER_SET_MUTED__ && window.__SHIVER_SET_MUTED__({})",
+            json!(muted)
+        ),
+    );
 }
 
+/// The bridge, preceded by this entry's own config. Nothing about any other server goes in.
 fn bridge_script(
     entry: &ServerEntry,
     settings: &Settings,
     token: Option<&str>,
     muted: &[i64],
-    dm_role: bool,
-    open_dm: Option<&str>,
-    voice_locked: bool,
+    role: PageRole<'_>,
 ) -> String {
-    // `theme` is null while the user is on the default colours, and the bridge then restyles
-    // nothing at all: an untouched Shiver has to leave Sharkord looking like Sharkord
-    let theme = theme_payload(settings);
+    let (role_name, open_dm, voice_locked) = match role {
+        PageRole::Server { voice_locked } => ("server", None, voice_locked),
+        PageRole::Dm { open } => ("dm", open, false),
+    };
 
     let config = json!({
         "entryId": entry.id,
         "origin": entry.origin,
-        "theme": theme,
+        "theme": theme_payload(settings),
         "token": token,
         "muted": muted,
-        "role": if dm_role { "dm" } else { "server" },
+        "role": role_name,
         "openDm": open_dm,
-        // Clamped here rather than trusted: the page never sets it, but the settings file is a file,
-        // and a gain of four hundred is a way to hurt somebody wearing headphones.
         "soundVolume": settings.sound_volume.min(crate::model::MAX_SOUND_VOLUME),
         "minimiseAttachments": settings.minimise_attachments,
-        // handed over at creation rather than pushed afterwards, so a page opened while a call is
-        // already up refuses a join from its very first frame instead of from the next drain
         "voiceLocked": voice_locked,
     });
 
@@ -1285,45 +1022,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_bell_opens_the_feed_when_it_is_closed() {
+    fn the_bell_toggles_but_ignores_the_click_that_dismissed_it() {
         let state = ActiveServer::default();
 
         assert!(state.should_open_popup());
-    }
 
-    #[test]
-    fn the_bell_closes_the_feed_when_it_is_open() {
-        let state = ActiveServer::default();
-
-        state.set_popup_open(true);
-
+        state.update(|screen| screen.popup_open = true);
         assert!(!state.should_open_popup());
-    }
-
-    /// The click that dismissed the feed must not then reopen it: focus moves to the bell first,
-    /// so by the time the click lands the feed has already closed itself.
-    #[test]
-    fn the_click_that_dismissed_the_feed_does_not_reopen_it() {
-        let state = ActiveServer::default();
-
-        state.set_popup_open(true);
-
-        // losing focus to the bell
-        state.note_popup_dismissed();
-        state.set_popup_open(false);
-
-        assert!(!state.should_open_popup());
-    }
-
-    #[test]
-    fn a_dismissal_stops_counting_once_the_guard_has_passed() {
-        let state = ActiveServer::default();
 
         state.note_popup_dismissed();
-        state.set_popup_open(false);
+        state.update(|screen| screen.popup_open = false);
+        assert!(!state.should_open_popup());
 
         std::thread::sleep(POPUP_REOPEN_GUARD + Duration::from_millis(50));
-
         assert!(state.should_open_popup());
+    }
+
+    #[test]
+    fn a_page_cannot_open_links_faster_than_its_allowance() {
+        let openings = Openings::default();
+        let allowed = (0..50).filter(|_| openings.allow("a")).count();
+
+        assert_eq!(allowed, OPEN_PER_TICK, "a burst stops at the per-tick cap");
+        assert!(openings.allow("b"), "per entry");
+    }
+
+    #[test]
+    fn labels_map_back_to_their_entry() {
+        assert_eq!(entry_of(&webview_label("x")), Some("x"));
+        assert_eq!(entry_of(&dm_webview_label("x")), Some("x"));
+        assert_eq!(entry_of(SHELL_WEBVIEW), None);
     }
 }

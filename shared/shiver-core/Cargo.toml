@@ -1,23 +1,18 @@
 [package]
 name = "shiver-core"
-version = "0.1.4"
-description = "The pieces of Shiver both clients need to agree on: origin rules and the registry store"
-edition = "2021"
-rust-version = "1.77.2"
+description = "What both Shiver clients share: origin rules, the registry store, http, sign-in and probing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
-# Shared by both clients on purpose, for the same reason `sharkord-client` is.
-#
-# `normalize_origin` and `is_same_origin` were byte-identical copies in `desktop/` and `mobile/`,
-# each with its own copy of the tests, and `model.rs` calls the second of them "the whole of
-# Shiver's origin pinning" — two copies of that is two things to keep in step and one of them will
-# eventually be the one somebody forgets. `store.rs` was the same file in both crates apart from a
-# test helper.
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "2"
-url = "2"
-# `http.rs`: the same two rules — no redirect followed, no unbounded body — that both clients were
-# each enforcing in their own byte-identical copy of it.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

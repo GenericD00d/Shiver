@@ -1,10 +1,10 @@
 [package]
 name = "shiver"
-version = "0.1.4"
 description = "A multi-server desktop client for Sharkord"
 authors = ["Shiver"]
-edition = "2021"
-rust-version = "1.77.2"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 [lib]
 # the _lib suffix keeps the library name from colliding with the binary name on windows
@@ -12,52 +12,30 @@ name = "shiver_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build.workspace = true
 
 [dependencies]
-# `unstable` is what exposes Window::add_child, the multiwebview api Shiver's server rail is built on
-tauri = { version = "2", features = ["unstable"] }
-# checking GitHub for a newer release, and verifying its minisign signature before running it
+# `unstable` exposes Window::add_child, the multi-webview api the rail is built on
+tauri = { workspace = true, features = ["unstable"] }
 tauri-plugin-updater = "2"
-tauri-plugin-opener = "2"
+tauri-plugin-opener.workspace = true
 tauri-plugin-global-shortcut = "2"
-# the Sharkord protocol itself, shared with mobile so there is one transcription of it
-sharkord-client = { path = "../../shared/sharkord-client" }
-# the origin rules and the registry store, shared so there is one copy of each rather than two
-shiver-core = { path = "../../shared/shiver-core" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-# streaming an http body so a bounded amount of it can be read — see `src/http.rs`
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
-url = "2"
-uuid = { version = "1", features = ["v4"] }
-# the password crosses ipc as a String and is copied on the way to the server; this is what
-# clears those copies rather than leaving them in freed heap for a core dump to pick up
-zeroize = { version = "1", features = ["derive"] }
-thiserror = "2"
+sharkord-client.workspace = true
+shiver-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+url.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
 
-# the os credential store has no android/ios backend, so secrets are keychain-backed on desktop only
+# the os credential store; there is no android/ios backend
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = "s"
-panic = "abort"
-strip = true
-
-# Only for resetting the camera and microphone permissions WebView2 remembers per site. Tauri hands
-# out the `ICoreWebView2Controller` and nothing above it exposes the profile those live on, so this
-# is the one place Shiver talks to WebView2 directly. Versions match what Tauri already resolves, so
-# no second copy of the bindings is pulled in.
+# WebView2 profile access, only for resetting camera/microphone permissions
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
 windows-core = "0.61"
-# `CoTaskMemFree`, to release the origin string `PermissionOrigin` hands back. It is not in
-# `windows-core` — only in that crate's private `imp` module — and reaching for it there is how
-# this failed to compile once already. Already in the tree via `webview2-com`, so this pins no new
-# version; the feature is the one module it is needed from.
 windows = { version = "0.61", features = ["Win32_System_Com"] }

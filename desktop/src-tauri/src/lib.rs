@@ -6,10 +6,8 @@ mod error;
 mod feed;
 mod hotkey;
 mod jwt;
-mod login;
 mod model;
 mod permissions;
-mod probe;
 mod secrets;
 mod session;
 mod store;
@@ -25,21 +23,12 @@ use crate::{
     watch::Watcher, webviews::ActiveServer,
 };
 
-/// Says why Shiver could not start, rather than vanishing.
-///
-/// The release profile is `panic = "abort"` with `strip = true`, and on Windows there is no console
-/// attached — so a failure to create the config directory or the window used to be an app that
-/// disappeared with the reason written nowhere at all. Everything else in this codebase reports its
-/// failures carefully; the one at startup did not.
+/// Shows why Shiver could not start (a Windows GUI app has no console for stderr), then exits.
 fn report_failed_start(error: tauri::Error) -> ! {
     let message = format!("Shiver could not start: {error}");
 
     eprintln!("[shiver] {message}");
 
-    // Windows is the case that actually needs this: a bundled app has no console attached, so
-    // stderr goes nowhere a user will ever look. `MessageBoxW` is in `user32`, which every windows
-    // process already has loaded — declared here rather than pulling in a dialog plugin for one
-    // call on a path that by definition has no app to hang a plugin off.
     #[cfg(windows)]
     unsafe {
         #[link(name = "user32")]
@@ -59,9 +48,7 @@ fn report_failed_start(error: tauri::Error) -> ! {
                 .chain(std::iter::once(0))
                 .collect::<Vec<u16>>()
         };
-
-        let text = wide(&message);
-        let caption = wide("Shiver");
+        let (text, caption) = (wide(&message), wide("Shiver"));
 
         MessageBoxW(
             std::ptr::null_mut(),
@@ -141,8 +128,7 @@ pub fn run() {
             app.manage(Readiness::default());
             app.manage(Recovery::default());
             app.manage(drain::Broadcast::default());
-            app.manage(drain::Openings::default());
-            app.manage(webviews::PageFullscreen::default());
+            app.manage(webviews::Openings::default());
             app.manage(update::Announced::default());
             app.manage(update::Available::default());
             app.manage(Watcher::default());
@@ -151,28 +137,21 @@ pub fn run() {
             app.manage(watch::Reported::default());
             app.manage(watch::ReadStates::default());
 
-            // registered from the settings Shiver just loaded, so the shortcut works from launch
-            // rather than from the first time the settings screen is opened
             let mute_hotkey = app.state::<Store>().registry().settings.mute_hotkey.clone();
 
             hotkey::apply(handle, mute_hotkey.as_deref());
 
             webviews::create_main_window(handle)?;
+            webviews::prune_profiles(handle);
             drain::spawn(handle);
-
-            // off the main thread: creating a webview blocks on the event loop, and setup *is* the
-            // event loop. it also lets the window paint before the servers start connecting.
-            let preload = handle.clone();
-
-            tauri::async_runtime::spawn(commands::connect_all_servers(preload));
+            commands::connect_all_servers(handle);
 
             update::start(handle);
 
             Ok(())
         })
         .on_menu_event(|app, event| {
-            // the rail's native context menu encodes its target in the item id, so the shell is
-            // told what was chosen and performs it through the same commands the ui already uses
+            // native menu item ids are `action:entry`; the shell performs the action
             let id = event.id().0.as_str();
 
             let Some((action, entry_id)) = id.split_once(':') else {

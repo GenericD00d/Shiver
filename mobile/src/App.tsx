@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, errorMessage } from './api';
 import { AddServer } from './components/AddServer';
 import { BackgroundNotifications } from './components/BackgroundNotifications';
-import { Boot } from './components/Boot';
+import { Boot, type BootState } from './components/Boot';
 import { DirectMessages } from './components/DirectMessages';
 import { UpdateNotice } from './components/UpdateNotice';
 import type { SettingsSection } from './components/SettingsScreen';
@@ -21,13 +21,7 @@ import {
   type Settings
 } from './types';
 
-/**
- * Shiver's own screens.
- *
- * `boot` is where the app starts and where it returns: it opens the last server used rather than
- * showing a menu. The other two are destinations the rail navigates to and back out of, so there is
- * no home screen — a switcher whose front page is a list of one server was a step in the way.
- */
+/** Shiver's own screens. `boot` opens the last server used; there is no home screen. */
 type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms';
 
 /** The settings sections, in the order they are listed. */
@@ -61,26 +55,21 @@ const TITLES: Record<Exclude<Screen, 'boot'>, string> = {
 };
 
 /**
- * What the fragment on Shiver's own url is allowed to ask for.
- *
- * The rail drawn inside a server's page cannot call Shiver — a page on a server's origin has no
- * Tauri IPC, which is the rule that keeps a server from reaching anything Shiver knows. So a tap on
- * that rail is a *navigation* back here carrying a fragment, and this is where it is read. It is
- * parsed rather than trusted: `open` is looked up in the registry Shiver already holds, so the worst
- * a bad fragment can name is a server the user already added.
+ * What a fragment on Shiver's own URL may ask for. The rail inside a server's page has no IPC, so
+ * its taps navigate here; any page can do that, so ids are looked up in the registry and
+ * destructive actions are confirmed by the user on this page.
  */
 type Intent =
   | { kind: 'open'; id: string; dmUser?: string }
   | { kind: 'screen'; screen: Screen }
-  /** an action from the rail's long-press menu inside a server's page, which cannot call Shiver */
   | { kind: 'do'; action: 'refresh' | 'remove' | 'forgetpw'; id: string }
   | null;
 
 const readIntent = (hash: string): Intent => {
   const value = hash.replace(/^#/, '');
 
+  // `open=<id>`, optionally `&dm=<name>` for the conversation to land on
   if (value.startsWith('open=')) {
-    // `open=<id>` on its own, or with the conversation to land on: `open=<id>&dm=<name>`
     const [id, ...rest] = value.slice('open='.length).split('&');
     const dm = rest.find((part) => part.startsWith('dm='));
 
@@ -93,7 +82,6 @@ const readIntent = (hash: string): Intent => {
 
   if (value === 'add') return { kind: 'screen', screen: 'add' };
   if (value === 'settings') return { kind: 'screen', screen: 'settings' };
-  // the rail's panel, asking for the conversations it deliberately no longer holds itself
   if (value === 'dms') return { kind: 'screen', screen: 'dms' };
 
   if (value.startsWith('do=')) {
@@ -107,17 +95,16 @@ const readIntent = (hash: string): Intent => {
   return null;
 };
 
-/** What the boot screen is currently doing. */
-type BootState =
-  | { kind: 'waiting' }
-  | { kind: 'connecting'; server: ServerEntry }
-  | { kind: 'failed'; server: ServerEntry }
-  | { kind: 'empty' };
+/** The server Shiver reopens: the last one used, or the first. */
+const lastUsed = (registry: Registry) => {
+  const ordered = [...registry.servers].sort((a, b) => a.position - b.position);
+
+  return ordered.find((server) => server.id === registry.settings.lastServerId) ?? ordered[0];
+};
 
 export const App = () => {
   const [registry, setRegistry] = useState<Registry>(EMPTY);
   const [screen, setScreen] = useState<Screen>('boot');
-  /** which group of settings is showing; reset is deliberate, so leaving and coming back starts over */
   const [settingsSection, setSettingsSection] = useState<SettingsSection | 'servers'>('appearance');
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   /** the server the sign-in screen is for */
@@ -139,82 +126,79 @@ export const App = () => {
     return next;
   }, []);
 
-  /** Stores the rail's new order after a drag, then re-reads it so every tile agrees. */
-  const reorderRail = useCallback(
-    async (ordered: RailRef[]) => {
-      try {
-        await api.reorderRail(ordered);
-        await refresh();
-      } catch (problem) {
-        setError(String(problem));
-      }
-    },
-    [refresh]
-  );
-
-  /** Runs a change to the rail's folders and re-reads the registry, which is what redraws it. */
-  const folderAction = useCallback(
+  /** Runs a change, then re-reads the registry (which redraws everything). */
+  const change = useCallback(
     async (run: () => Promise<unknown>) => {
       try {
         await run();
         await refresh();
-      } catch (problem) {
-        setError(String(problem));
+      } catch (cause) {
+        setError(errorMessage(cause));
       }
     },
     [refresh]
   );
 
-  const open = useCallback(async (id: string, dms = false, dmUser?: string) => {
+  /**
+   * Hands the webview to a server once `/info` answers (a failed load would be a dead end: Shiver's
+   * chrome is drawn by the server's page). `dmUser` asks the bridge to open that conversation.
+   */
+  const connect = useCallback(async (server: ServerEntry, dmUser?: string) => {
+    setScreen('boot');
+    setBoot({ kind: 'connecting', server });
+
     try {
-      // from here the webview belongs to the server until its rail brings the user back
-      await api.selectServer(id, dms, dmUser);
+      await api.probeServer(server.origin);
+    } catch {
+      setBoot({ kind: 'failed', server });
+
+      return;
+    }
+
+    try {
+      await api.selectServer(server.id, false, dmUser);
     } catch (cause) {
       setError(errorMessage(cause));
     }
   }, []);
 
-  /**
-   * Opens a server, once it has answered.
-   *
-   * The reachability check is the difference between a spinner that resolves and a webview showing
-   * the system's own "page could not be loaded" — which on mobile is a dead end, because Shiver's own
-   * chrome is drawn *by* the page that failed to load. `/info` needs no session and is the same
-   * request that added the server.
-   */
-  const connect = useCallback(
-    async (server: ServerEntry, dmUser?: string) => {
-      setScreen('boot');
-      setBoot({ kind: 'connecting', server });
+  /** Back to the last server used (Shiver's own pages are not somewhere to be left standing). */
+  const resume = useCallback(
+    async (registry?: Registry) => {
+      const target = lastUsed(registry ?? (await refresh().catch(() => EMPTY)));
 
-      try {
-        await api.probeServer(server.origin);
-      } catch {
-        setBoot({ kind: 'failed', server });
+      if (target) {
+        await connect(target);
+      } else {
+        setScreen('boot');
+        setBoot({ kind: 'empty' });
+      }
+    },
+    [connect, refresh]
+  );
 
-        return;
+  /** Answers a `confirm` boot state. */
+  const confirmAction = useCallback(
+    async (confirmed: boolean) => {
+      if (boot.kind !== 'confirm') return;
+
+      if (confirmed) {
+        const { action, server } = boot;
+
+        try {
+          await (action === 'remove' ? api.removeServer(server.id) : api.forgetPassword(server.id));
+        } catch (cause) {
+          setError(errorMessage(cause));
+        }
       }
 
-      // `dmUser` set means the user tapped a conversation in the rail's list rather than the server
-      // itself, so the bridge is told to land them on it once that server's client is up
-      await open(server.id, false, dmUser);
+      await resume();
     },
-    [open]
+    [boot, resume]
   );
 
-  /** The server Shiver reopens: the last one used, or the first if there is no last. */
-  const lastUsed = useCallback(
-    (next: Registry) => {
-      const ordered = [...next.servers].sort((a, b) => a.position - b.position);
-
-      return ordered.find((server) => server.id === next.settings.lastServerId) ?? ordered[0];
-    },
-    []
-  );
-
-  // Runs once. The fragment is read *before* anything is opened and cleared as it is read, because
-  // arriving here from the rail's settings tile must not be answered by reopening the server the
-  // user just left — and a reload must not repeat whatever the fragment asked for.
+  // Runs once. The fragment is cleared as it is read, so a reload does not repeat it and arriving
+  // from the rail's settings tile does not reopen the server just left.
   const started = useRef(false);
 
   useEffect(() => {
@@ -244,25 +228,20 @@ export const App = () => {
         return;
       }
 
-      // a menu action, performed here because the rail that asked for it has no way to call Shiver
       if (intent?.kind === 'do') {
-        try {
-          if (intent.action === 'refresh') await api.refreshServerInfo(intent.id);
-          if (intent.action === 'remove') await api.removeServer(intent.id);
-          if (intent.action === 'forgetpw') await api.forgetPassword(intent.id);
-        } catch (cause) {
-          setError(errorMessage(cause));
+        const server = next.servers.find((candidate) => candidate.id === intent.id);
+
+        if (server && intent.action !== 'refresh') {
+          setBoot({ kind: 'confirm', action: intent.action, server });
+
+          return;
         }
 
-        const after = await refresh().catch(() => next);
-        const target = lastUsed(after);
-
-        // back to a server, since Shiver's own pages are not somewhere to be left standing
-        if (target) {
-          await connect(target);
-        } else {
-          setBoot({ kind: 'empty' });
+        if (server) {
+          await api.refreshServerInfo(server.id).catch((cause) => setError(errorMessage(cause)));
         }
+
+        await resume();
 
         return;
       }
@@ -277,24 +256,15 @@ export const App = () => {
         }
       }
 
-      const target = lastUsed(next);
-
-      if (!target) {
-        setBoot({ kind: 'empty' });
-
-        return;
-      }
-
-      await connect(target);
+      await resume(next);
     })();
-  }, [connect, lastUsed, refresh]);
+  }, [connect, refresh, resume]);
 
   useEffect(() => {
     applyTheme(registry.settings);
   }, [registry.settings]);
 
-  // the core counts unread over its own connections to the servers with no page on screen, which
-  // on mobile is every server but one. it is asked once and then pushes.
+  // unread counts from the core's own connections: read once, then pushed
   useEffect(() => {
     api.unreadCounts().then(setUnread).catch(() => undefined);
 
@@ -305,19 +275,11 @@ export const App = () => {
     };
   }, []);
 
-  /**
-   * Which servers are waiting to be signed in, and which Shiver can sign in by itself.
-   *
-   * Re-read whenever the counts change, because that is the moment the core publishes: a session it
-   * could not renew shows up as one of these. Until this existed a refused session was silent —
-   * the server simply stopped reporting, and the direct-message list quietly lost it.
-   */
+  // session state per server, re-read whenever the counts change (which is when the core publishes)
   const [signedOut, setSignedOut] = useState<string[]>([]);
   const [problems, setProblems] = useState<Record<string, string>>({});
-
   const [remembered, setRemembered] = useState<string[]>([]);
-
-  /** what each connected server said about the companion plugin; see `PluginStatus` */
+  /** companion plugin version per connected server */
   const [plugins, setPlugins] = useState<Record<string, string | null>>({});
 
   const signingInServer = servers.find((server) => server.id === signingIn) ?? null;
@@ -341,14 +303,7 @@ export const App = () => {
 
   useEffect(readSessions, [readSessions, unread]);
 
-  /**
-   * Keeps the settings screen honest while it is open.
-   *
-   * Whether Shiver can watch a server is answered by the watch loop's next attempt, thirty seconds
-   * away — not by anything the screen does. Without this the red line under a server stays after
-   * the problem is gone, and appears late when a new one starts, because the effect above only runs
-   * when an unread count moves and a server nobody is talking on never moves one.
-   */
+  // while settings is open, problems can appear or clear without any count moving
   useEffect(() => {
     if (screen !== 'settings') return;
 
@@ -357,86 +312,29 @@ export const App = () => {
     return () => window.clearInterval(timer);
   }, [screen, readSessions]);
 
-  /**
-   * Lets one server send messages of any size, or takes that back.
-   *
-   * The problem line is not cleared here, deliberately: Shiver finds out whether this worked by
-   * connecting, which is at most thirty seconds away, and the effect above re-reads the problems
-   * when it does — so the row stops complaining because the server is being watched again, not
-   * because a button was pressed.
-   */
-  const handleAcceptAnySize = useCallback(
-    async (id: string, accept: boolean) => {
-      try {
-        await api.setAcceptAnySize(id, accept);
-        await refresh();
-      } catch (cause) {
-        setError(errorMessage(cause));
-      }
+  const openById = useCallback(
+    (id: string, dmUser?: string) => {
+      const server = servers.find((candidate) => candidate.id === id);
+
+      if (server) void connect(server, dmUser);
     },
-    [refresh]
+    [connect, servers]
   );
 
-  /**
-   * Direct messages, from Shiver's own screens.
-   *
-   * It used to open the last server used and ask that server's client to show its own dm list,
-   * there being nothing for Shiver to show. There is now: the cross-server list moved here when it
-   * stopped being handed to server pages, so the tile shows it rather than delegating.
-   */
-  const handleDms = useCallback(() => setScreen('dms'), []);
-
-  /** Leaving Shiver's own screens means going back to a server, there being nowhere else to go. */
-  const handleBack = useCallback(() => {
-    const target = lastUsed(registry);
-
-    if (!target) {
-      setScreen('boot');
-      setBoot({ kind: 'empty' });
-
-      return;
-    }
-
-    void connect(target);
-  }, [connect, lastUsed, registry]);
-
+  /** Straight into a server just added. */
   const handleAdded = useCallback(async () => {
     const next = await refresh();
     const added = [...next.servers].sort((a, b) => a.position - b.position).at(-1);
 
-    // straight into what was just added, which is what adding a server was for
     if (added) {
       await connect(added);
-
-      return;
+    } else {
+      setScreen('boot');
     }
-
-    setScreen('boot');
   }, [connect, refresh]);
 
-  const handleRemove = useCallback(
-    async (id: string) => {
-      try {
-        await api.removeServer(id);
-        await refresh();
-      } catch (cause) {
-        setError(errorMessage(cause));
-      }
-    },
-    [refresh]
-  );
-
-  const handleSettings = useCallback(
-    async (settings: Settings) => {
-      try {
-        await api.updateSettings(settings);
-        await refresh();
-      } catch (cause) {
-        setError(errorMessage(cause));
-      }
-    },
-    [refresh]
-  );
+  const handleRemove = useCallback((id: string) => void change(() => api.removeServer(id)), [change]);
+  const handleSettings = useCallback((settings: Settings) => void change(() => api.updateSettings(settings)), [change]);
 
   return (
     <div className="app">
@@ -445,32 +343,19 @@ export const App = () => {
         activeId={null}
         screen={screen}
         unread={unread}
-        onOpen={(id) => {
-          const server = servers.find((candidate) => candidate.id === id);
-
-          if (server) void connect(server);
-        }}
-        onOpenDms={handleDms}
+        onOpen={openById}
+        onOpenDms={() => setScreen('dms')}
         onAdd={() => setScreen('add')}
         onSettings={() => setScreen('settings')}
-        onRefresh={(id) => {
-          void api
-            .refreshServerInfo(id)
-            .then(() => refresh())
-            .catch((cause) => setError(errorMessage(cause)));
-        }}
-        onRemove={(id) => void handleRemove(id)}
-        onReorder={(ordered) => void reorderRail(ordered)}
+        onRefresh={(id) => void change(() => api.refreshServerInfo(id))}
+        onRemove={handleRemove}
+        onReorder={(ordered: RailRef[]) => void change(() => api.reorderRail(ordered))}
         folders={registry.folders}
-        onSetFolder={(id, folderId) => void folderAction(() => api.setServerFolder(id, folderId))}
-        onCreateFolder={(memberIds) =>
-          void folderAction(() => api.createFolderWith('New folder', memberIds))
-        }
-        onRenameFolder={(id, name) => void folderAction(() => api.renameFolder(id, name))}
-        onDeleteFolder={(id) => void folderAction(() => api.deleteFolder(id))}
-        onToggleFolder={(id, expanded) =>
-          void folderAction(() => api.setFolderExpanded(id, expanded))
-        }
+        onSetFolder={(id, folderId) => void change(() => api.setServerFolder(id, folderId))}
+        onCreateFolder={(memberIds) => void change(() => api.createFolderWith('New folder', memberIds))}
+        onRenameFolder={(id, name) => void change(() => api.renameFolder(id, name))}
+        onDeleteFolder={(id) => void change(() => api.deleteFolder(id))}
+        onToggleFolder={(id, expanded) => void change(() => api.setFolderExpanded(id, expanded))}
       />
 
       <div className="main">
@@ -490,7 +375,7 @@ export const App = () => {
 
             <h1>{TITLES[screen]}</h1>
 
-            <button type="button" className="ghost" onClick={handleBack}>
+            <button type="button" className="ghost" onClick={() => void resume(registry)}>
               Back
             </button>
           </header>
@@ -499,25 +384,21 @@ export const App = () => {
         {error ? <p className="error">{error}</p> : null}
 
         <main className="content">
-          {/* on Shiver's own screens, which is where a launch lands */}
           <UpdateNotice />
 
           {screen === 'boot' ? (
-            <Boot state={boot} onRetry={connect} onAdd={() => setScreen('add')} />
+            <Boot
+              state={boot}
+              onRetry={connect}
+              onAdd={() => setScreen('add')}
+              onConfirm={(confirmed) => void confirmAction(confirmed)}
+            />
           ) : null}
 
           {screen === 'add' ? <AddServer onAdded={handleAdded} /> : null}
 
           {screen === 'dms' ? (
-            <DirectMessages
-              onOpen={(entryId, userName) => {
-                const server = servers.find((candidate) => candidate.id === entryId);
-
-                // the same landing the rail's own rows used: open that server, and tell its client
-                // which conversation to select once it is up
-                if (server) void connect(server, userName);
-              }}
-            />
+            <DirectMessages onOpen={openById} />
           ) : null}
 
           {screen === 'signIn' && signingInServer ? (
@@ -534,9 +415,7 @@ export const App = () => {
 
           {screen === 'settings' ? (
             <>
-              {/* The sections as a drawer behind the header's menu button, which is what Sharkord's
-                  own settings do on a phone: the same list it shows beside the content on a wide
-                  screen, slid in over a scrim rather than shrunk to fit. */}
+              {/* sections in a drawer over a scrim, as Sharkord's own settings do on a phone */}
               {settingsDrawerOpen ? (
                 <div
                   className="settings-scrim"
@@ -567,7 +446,6 @@ export const App = () => {
                 ))}
               </nav>
 
-              {/* which section is showing, since the drawer is closed most of the time */}
               <h2 className="section">
                 {SETTINGS_SECTIONS.find((entry) => entry.id === settingsSection)?.label}
               </h2>
@@ -588,8 +466,6 @@ export const App = () => {
                     section="notifications"
                   />
 
-                  {/* the other half of being told about messages: not what Shiver holds, but who
-                      tells it when it is not running at all */}
                   <h2 className="section">While Shiver is closed</h2>
 
                   <BackgroundNotifications />
@@ -602,16 +478,12 @@ export const App = () => {
             <>
               <ServerList
                 servers={servers}
-                onOpen={(id) => {
-                  const server = servers.find((candidate) => candidate.id === id);
-
-                  if (server) void connect(server);
-                }}
+                onOpen={openById}
                 onRemove={handleRemove}
                 onAdd={() => setScreen('add')}
                 signedOut={signedOut}
                 problems={problems}
-                onAcceptAnySize={(id, accept) => void handleAcceptAnySize(id, accept)}
+                onAcceptAnySize={(id, accept) => void change(() => api.setAcceptAnySize(id, accept))}
                 remembered={remembered}
                 plugins={plugins}
                 onSignIn={(id: string) => {
@@ -620,8 +492,6 @@ export const App = () => {
                 }}
               />
 
-              {/* said plainly, because Shiver holding a session for every server is not something a
-                  user would guess from the badges it produces */}
               <h2 className="section">Background sessions</h2>
 
               <Sessions onCleared={readSessions} />

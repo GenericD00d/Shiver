@@ -2,12 +2,14 @@ use serde::{Serialize, Serializer};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Errors that reach the frontend. Messages are user-facing, so they name what to do about the
-/// problem and never leak a token, a password or a filesystem path.
+/// Errors that reach the frontend. Messages are user-facing and never carry a token, password or path.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
     InvalidOrigin(String),
+
+    #[error("{0}")]
+    InvalidInput(String),
 
     #[error("That server is not in your list")]
     UnknownServer,
@@ -21,8 +23,7 @@ pub enum Error {
     #[error("{0} does not look like a Sharkord server")]
     NotSharkord(String),
 
-    /// A server answered and said no. The message is the server's own words, already written for
-    /// a person to read, so it is passed through rather than replaced.
+    /// The server said no; the message is its own.
     #[error("{0}")]
     Refused(String),
 
@@ -42,13 +43,16 @@ impl Serialize for Error {
     }
 }
 
-/// The shared crate raises only the two kinds it knows about, and each maps straight onto one of
-/// this client's own.
 impl From<shiver_core::Error> for Error {
     fn from(value: shiver_core::Error) -> Self {
+        use shiver_core::Error as Core;
+
         match value {
-            shiver_core::Error::InvalidOrigin(message) => Error::InvalidOrigin(message),
-            shiver_core::Error::Storage(message) => Error::Storage(message),
+            Core::InvalidOrigin(message) => Error::InvalidOrigin(message),
+            Core::Storage(message) => Error::Storage(message),
+            Core::Unreachable(message) => Error::Unreachable(message),
+            Core::NotSharkord(message) => Error::NotSharkord(message),
+            Core::Refused(message) => Error::Refused(message),
         }
     }
 }

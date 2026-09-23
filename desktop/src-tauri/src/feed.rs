@@ -1,9 +1,7 @@
-//! The unified notification and DM feed.
+//! The unified notification and DM feed, filled from page drains and from core sockets.
 //!
-//! Every live server webview queues events for Shiver inside the page; the core drains those queues
-//! on a timer with `eval_with_callback` and merges them here. Nothing is pushed *from* a page: a
-//! Sharkord page has no Tauri IPC at all, so this is the only way data crosses out of an origin,
-//! and it crosses into the core rather than into another server.
+//! Everything in it came from a server and is bounded on the way in: field lengths, entries per
+//! server, and entries overall.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -12,63 +10,33 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use shiver_core::LockExt;
 
 use crate::voice::VoiceSnapshot;
 
-/// Enough history to scroll through, small enough to keep in memory and to serialise cheaply.
+/// Entries kept overall, and per server, so one noisy server cannot evict everyone else's.
 const MAX_ENTRIES: usize = 300;
+const MAX_PER_SERVER: usize = 100;
 
-/// How long a notification's fields may be, in characters.
-///
-/// `MAX_ENTRIES` caps how *many* notifications Shiver keeps and said nothing about how large one may
-/// be, so a hostile server could push a single ten-megabyte "message" — three hundred of which Shiver
-/// would hold in memory and serialise to the feed on every change — or a five-thousand-character
-/// username, which wrecks the list it is drawn in. A name is a name and a preview is a preview:
-/// neither needs more than this, and the feed is a preview of a message rather than the message.
 const MAX_AUTHOR: usize = 100;
 const MAX_BODY: usize = 500;
 const MAX_CHANNEL_NAME: usize = 100;
-
-/// How close together two identical-looking notifications must be to count as one message.
-///
-/// **Deliberately short.** There is no id in common to match on — the two copies arrive by
-/// different routes, one off the socket and one out of the page, and only one of those carries a
-/// message id at all. So the match is on who said what, and that is also true of a person sending
-/// the same word twice. Thirty seconds covers the race that causes this (a page connecting while
-/// its server's socket is still up, both announcing what arrives in between) and leaves somebody
-/// repeating themselves a minute later with the two lines they deserve.
-const DUPLICATE_WINDOW_MS: u64 = 30 * 1000;
-/// A url is longer than a name but not unbounded; this is past every real one.
 const MAX_URL: usize = 2048;
-
-/// How many conversations one server may contribute to the unified list.
 const MAX_DMS: usize = 500;
 
-/// Shortens a string from a server to `limit` characters.
-///
-/// By characters and not bytes, deliberately: `String` slicing is by byte offset and panics on a
-/// boundary inside a codepoint, so `&text[..limit]` on anything non-ascii is a crash a server could
-/// choose to cause. Returns the original untouched when it is already short enough, which is every
-/// real message.
-fn clamp(text: String, limit: usize) -> String {
-    if text.chars().count() <= limit {
-        return text;
-    }
+/// Two identical notifications from one server this close together are one message arriving by two
+/// routes (socket and page). Short, so someone repeating themselves later still gets two lines.
+const DUPLICATE_WINDOW_MS: u64 = 30 * 1000;
 
-    // an ellipsis rather than a bare cut, so a truncated preview reads as truncated
-    text.chars().take(limit).collect::<String>() + "…"
+/// Shortens by characters (never splitting a codepoint), marking the cut with an ellipsis.
+fn clamp(text: String, limit: usize) -> String {
+    match text.char_indices().nth(limit) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text,
+    }
 }
 
-/// Milliseconds as they arrive from a page.
-///
-/// A webview hands its numbers back as doubles, and serde_json writes a large one in exponential
-/// form — `1.769871194e+12` — which `u64` refuses outright. Timestamps are the only values Shiver
-/// takes from a page that are big enough to hit this.
-///
-/// It has to be tolerated rather than avoided, because the failure is not confined to the field:
-/// one unparseable number fails the whole `DrainResult`, the tick is dropped, and notifications,
-/// DMs and mutes go with it. That is exactly what happened once the message cache started sending a
-/// timestamp, and it is why anything crossing this boundary accepts both forms.
+/// Milliseconds from a page, where numbers are doubles (possibly in exponent form).
 pub fn optional_millis<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -83,7 +51,6 @@ where
     Ok(
         Option::<Millis>::deserialize(deserializer)?.and_then(|value| match value {
             Millis::Int(millis) => Some(millis),
-            // a negative or non-finite timestamp is not a time, and is dropped rather than wrapped
             Millis::Float(millis) if millis.is_finite() && millis >= 0.0 => {
                 Some(millis.round() as u64)
             }
@@ -92,32 +59,14 @@ where
     )
 }
 
-/// One item in the bell feed.
-/// An icon url a page asked Shiver to draw, if it is one Shiver is willing to fetch.
-///
-/// **A page chooses this string, and Shiver's own chrome is what loads it.** Nothing checked it:
-/// the popup rendered `<img src={entry.iconUrl}>` for whatever arrived, so a server could point it
-/// anywhere and get a request from Shiver's origin every time the bell was opened — a beacon, and
-/// over plain http at that, on a client whose headline rule is https only.
-///
-/// So it has to be https and it has to be on the server that sent it, which is the same rule
-/// `probe.rs`'s `logo_url` already applies to a server's own logo. A notification's icon is that
-/// server's avatar; there is no legitimate reason for it to live anywhere else.
+/// An icon url from a page, kept only if it is https on the server that sent it.
 fn safe_icon_url(url: &str, origin: Option<&str>) -> Option<String> {
-    let origin = origin?;
     let parsed = url::Url::parse(url).ok()?;
 
-    if parsed.scheme() != "https" {
-        return None;
-    }
-
-    if !crate::model::is_same_origin(origin, &parsed) {
-        return None;
-    }
-
-    Some(clamp(url.to_string(), MAX_URL))
+    crate::model::is_same_origin(origin?, &parsed).then(|| clamp(url.to_string(), MAX_URL))
 }
 
+/// One item in the bell feed.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Notification {
@@ -132,15 +81,12 @@ pub struct Notification {
     pub is_dm: bool,
     pub at: u64,
     pub read: bool,
-    /// The version on offer, when this entry is Shiver rather than a server.
-    ///
-    /// A separate field rather than a magic `entry_id`, because the popup has to draw this one
-    /// differently — with a button — and "is this a message" should not be a guess about a string.
+    /// set on Shiver's own "new version" entry, which the popup draws with a button
     #[serde(default)]
     pub update: Option<String>,
 }
 
-/// A direct message conversation, as reported by one server's page.
+/// A DM conversation as reported by one server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DmChannel {
@@ -148,14 +94,11 @@ pub struct DmChannel {
     pub name: String,
     #[serde(default)]
     pub icon_url: Option<String>,
-    /// when Shiver last saw a message here. null until one arrives while Shiver is running: the plugin
-    /// store exposes channels but not their messages, so there is no history to read on connect.
     #[serde(default, deserialize_with = "optional_millis")]
     pub last_message_at: Option<u64>,
 }
 
-/// A DM conversation plus which rail entry (and therefore which account) it belongs to, which is
-/// what lets the inbox say who the user is messaging *as*.
+/// A conversation plus the rail entry (account) it belongs to.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DmEntry {
@@ -165,40 +108,34 @@ pub struct DmEntry {
     pub channel: DmChannel,
 }
 
-/// What a page hands back when drained.
+/// What a page hands back when drained. Every field is the page's claim, not a fact.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DrainResult {
     #[serde(default)]
     pub notifications: Vec<RawNotification>,
-    /// absent when the page has nothing new to say about its DM list
+    /// absent when nothing changed
     #[serde(default)]
     pub dms: Option<Vec<DmChannel>>,
-    /// mutes toggled from Sharkord's own channel context menu
+    /// mutes toggled from Sharkord's channel menu
     #[serde(default)]
     pub mutes: Vec<QueuedMute>,
-    /// the Shiver plugin's reconciled mute list, sent once per connect when the plugin is installed
+    /// the plugin's reconciled mute list, once per connect
     #[serde(default)]
     pub synced_mutes: Option<Vec<i64>>,
-    /// a conversation Shiver asked the page to open and it could not find
     #[serde(default)]
     pub open_dm_failed: Option<String>,
-    /// addresses the page tried to open in a new window, which is Shiver's to hand to the browser
+    /// links the page wants opened in the browser
     #[serde(default)]
     pub open: Vec<String>,
-    /// the client has connected and is showing the server, so Shiver can stop covering it
     #[serde(default)]
     pub ready: bool,
-    /// the client gave up on the seeded session and is asking for credentials
     #[serde(default)]
     pub signed_out: bool,
-    /// something in the page is filling the screen, so Shiver's own chrome must get out of the way
     #[serde(default)]
     pub fullscreen: bool,
-    /// the user's voice session on this server, absent when they are not in one
     #[serde(default)]
     pub voice: Option<VoiceSnapshot>,
-    /// the channel this page is showing, whether or not its messages changed
     #[serde(default)]
     pub viewing_channel_id: Option<i64>,
 }
@@ -229,6 +166,7 @@ pub struct RawNotification {
 
 #[derive(Default)]
 struct FeedState {
+    /// newest first
     notifications: VecDeque<Notification>,
     dms: Vec<DmEntry>,
     next_id: u64,
@@ -244,17 +182,39 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-impl Feed {
-    fn state(&self) -> std::sync::MutexGuard<'_, FeedState> {
-        self.0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+impl FeedState {
+    fn insert(&mut self, notification: Notification) {
+        let entry_id = notification.entry_id.clone();
+
+        self.notifications.push_front(notification);
+
+        // drop the oldest of this server's entries beyond its share, then the oldest overall
+        let mut seen = 0;
+
+        self.notifications.retain(|entry| {
+            if entry.entry_id != entry_id {
+                return true;
+            }
+
+            seen += 1;
+
+            seen <= MAX_PER_SERVER
+        });
+        self.notifications.truncate(MAX_ENTRIES);
     }
 
-    /// Adds one notification. Returns false when it was dropped because the channel is muted.
+    fn next_id(&mut self) -> u64 {
+        self.next_id += 1;
+
+        self.next_id
+    }
+}
+
+impl Feed {
+    /// Adds one notification. Returns false when it was muted or a duplicate.
     ///
-    /// `origin` is the server this notification came from, and it is what any icon url in it has to
-    /// belong to — see `safe_icon_url`. `None` for Shiver's own entries, which carry no icon.
+    /// A duplicate (same server, author and body within `DUPLICATE_WINDOW_MS`) is merged, keeping
+    /// whichever copy knows its channel, since only that one can be cleared by reading the channel.
     pub fn push(
         &self,
         entry_id: &str,
@@ -267,90 +227,63 @@ impl Feed {
             return false;
         }
 
-        let mut state = self.state();
-
         let author = clamp(raw.author, MAX_AUTHOR);
         let body = clamp(raw.body, MAX_BODY);
+        let channel_name = raw.channel_name.map(|name| clamp(name, MAX_CHANNEL_NAME));
+        let now = now_ms();
+        let mut state = self.0.locked();
 
-        // **The same message can be announced twice**, and it was. A server Shiver is watching over
-        // a socket announces what arrives there; opening that server builds a page, and the page
-        // announces what Sharkord's own client raises — which, for something still unread, is the
-        // very same message. The badge went from 1 to 2 by being clicked on.
-        //
-        // Worse than the number: the two copies are not equally clearable. The socket's carries the
-        // channel id, so reading that channel clears it; the page resolves a direct message's
-        // channel by looking the author up in the store, which is empty for the first moments after
-        // it connects, so its copy has no channel and `mark_channel_read` will not touch it. One
-        // unread entry that nothing could ever clear.
-        //
-        // Matched on who said what rather than on an id, because there is no id in common: these
-        // arrive by different routes from different halves of the same server. The window keeps a
-        // person who really does send the same word twice from having the second one swallowed.
         if let Some(existing) = state.notifications.iter_mut().find(|entry| {
             !entry.read
                 && entry.entry_id == entry_id
                 && entry.author == author
                 && entry.body == body
-                && now_ms().saturating_sub(entry.at) < DUPLICATE_WINDOW_MS
+                && now.saturating_sub(entry.at) < DUPLICATE_WINDOW_MS
         }) {
-            // Keep whichever copy knows its channel, so the survivor is the clearable one. The
-            // socket's copy usually arrives first and has it; this is for when the order is
-            // reversed.
             if existing.channel_id.is_none() {
                 existing.channel_id = raw.channel_id;
-                existing.channel_name = raw.channel_name.map(|name| clamp(name, MAX_CHANNEL_NAME));
+                existing.channel_name = channel_name;
             }
 
             return false;
         }
 
-        let id = state.next_id;
+        let id = state.next_id();
 
-        state.next_id += 1;
-
-        // Everything below this line came from a server and is bounded on the way in. Doing it here
-        // rather than at the edge covers every route into the feed with one check.
-        state.notifications.push_front(Notification {
+        state.insert(Notification {
             id,
             entry_id: entry_id.to_string(),
             server_name: server_name.to_string(),
             channel_id: raw.channel_id,
-            channel_name: raw.channel_name.map(|name| clamp(name, MAX_CHANNEL_NAME)),
+            channel_name,
             author,
             body,
             icon_url: raw.icon_url.and_then(|url| safe_icon_url(&url, origin)),
             is_dm: raw.is_dm,
-            at: now_ms(),
+            at: now,
             read: false,
             update: None,
         });
 
-        state.notifications.truncate(MAX_ENTRIES);
-
         true
     }
 
-    /// Drops any offer of a new version, for one the user has turned down.
     pub fn forget_updates(&self) {
-        self.state()
+        self.0
+            .locked()
             .notifications
             .retain(|entry| entry.update.is_none());
     }
 
-    /// Offers a new version, replacing any offer already in the list.
-    ///
-    /// Replaced rather than added: the check runs every few hours for as long as Shiver is open,
-    /// and a feed that collected one of these per check would bury the messages it exists for.
+    /// Offers a new version, replacing any earlier offer.
     pub fn push_update(&self, version: &str) {
-        let mut state = self.state();
+        let mut state = self.0.locked();
 
         state.notifications.retain(|entry| entry.update.is_none());
 
-        let id = state.next_id;
+        let id = state.next_id();
 
-        state.next_id += 1;
-
-        state.notifications.push_front(Notification {
+        state.insert(Notification {
             id,
             entry_id: String::new(),
             server_name: "Shiver".into(),
@@ -364,12 +297,9 @@ impl Feed {
             read: false,
             update: Some(clamp(version.to_string(), MAX_AUTHOR)),
         });
-
-        state.notifications.truncate(MAX_ENTRIES);
     }
 
-    /// Replaces everything known about one entry's DM list. Called with that page's full list, so
-    /// a conversation that disappeared server-side disappears here too.
+    /// Replaces one entry's whole DM list (bounded).
     pub fn set_dms(
         &self,
         entry_id: &str,
@@ -378,15 +308,12 @@ impl Feed {
         origin: Option<&str>,
         channels: Vec<DmChannel>,
     ) {
-        let mut state = self.state();
+        let mut state = self.0.locked();
 
         state.dms.retain(|dm| dm.entry_id != entry_id);
-
-        // bounded on the way in for the same reason notifications are: the name is a name, and it
-        // arrives from a page. The list itself is capped too — a page reporting thousands of
-        // conversations is not a list anyone can use, and every one of them is held and serialised.
-        for channel in channels.into_iter().take(MAX_DMS) {
-            state.dms.push(DmEntry {
+        state
+            .dms
+            .extend(channels.into_iter().take(MAX_DMS).map(|channel| DmEntry {
                 entry_id: entry_id.to_string(),
                 server_name: server_name.to_string(),
                 account_label: account_label.to_string(),
@@ -395,36 +322,33 @@ impl Feed {
                     icon_url: channel.icon_url.and_then(|url| safe_icon_url(&url, origin)),
                     ..channel
                 },
-            });
-        }
+            }));
     }
 
     pub fn notifications(&self) -> Vec<Notification> {
-        self.state().notifications.iter().cloned().collect()
+        self.0.locked().notifications.iter().cloned().collect()
     }
 
     pub fn dms(&self) -> Vec<DmEntry> {
-        self.state().dms.clone()
+        self.0.locked().dms.clone()
     }
 
     pub fn unread_count(&self) -> usize {
-        self.state()
+        self.0
+            .locked()
             .notifications
             .iter()
             .filter(|entry| !entry.read)
             .count()
     }
 
-    /// Unread per rail entry, for the badges on the server icons.
-    ///
-    /// Half of that badge — what arrived while Shiver was *running*, so every one of these has a
-    /// message behind it. The other half is `watch::Missed`, which is what arrived while it was
-    /// closed. Servers with nothing unread are absent rather than zero, so the rail can default.
+    /// Unread per entry; entries with none are absent.
     pub fn unread_by_entry(&self) -> HashMap<String, usize> {
-        let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut counts = HashMap::new();
 
         for entry in self
-            .state()
+            .0
+            .locked()
             .notifications
             .iter()
             .filter(|entry| !entry.read)
@@ -435,54 +359,44 @@ impl Feed {
         counts
     }
 
-    /// Marks one channel's notifications read, for a channel the user is looking at.
-    ///
-    /// Notifications with no channel are left alone: an unresolved channel could be any of them,
-    /// and clearing those on the strength of a guess would drop something unread.
-    pub fn mark_channel_read(&self, entry_id: &str, channel_id: i64) -> bool {
+    /// Marks matching unread entries read; returns whether any changed.
+    fn mark_read(&self, matches: impl Fn(&Notification) -> bool) -> bool {
         let mut changed = false;
 
-        for entry in self.state().notifications.iter_mut() {
-            if entry.entry_id == entry_id && entry.channel_id == Some(channel_id) && !entry.read {
-                entry.read = true;
-                changed = true;
-            }
+        for entry in self
+            .0
+            .locked()
+            .notifications
+            .iter_mut()
+            .filter(|entry| !entry.read && matches(entry))
+        {
+            entry.read = true;
+            changed = true;
         }
 
         changed
     }
 
-    /// Marks one server's notifications read. Returns whether anything actually changed.
-    ///
-    /// This is what opening a server means: the badge on its icon is a claim that there is
-    /// something there the user has not seen, and going to look at it settles that claim.
+    /// One channel's notifications (those with no known channel are left alone).
+    pub fn mark_channel_read(&self, entry_id: &str, channel_id: i64) -> bool {
+        self.mark_read(|entry| entry.entry_id == entry_id && entry.channel_id == Some(channel_id))
+    }
+
     pub fn mark_entry_read(&self, entry_id: &str) -> bool {
-        let mut changed = false;
-
-        for entry in self.state().notifications.iter_mut() {
-            if entry.entry_id == entry_id && !entry.read {
-                entry.read = true;
-                changed = true;
-            }
-        }
-
-        changed
+        self.mark_read(|entry| entry.entry_id == entry_id)
     }
 
     pub fn mark_all_read(&self) {
-        for entry in self.state().notifications.iter_mut() {
-            entry.read = true;
-        }
+        self.mark_read(|_| true);
     }
 
     pub fn clear(&self) {
-        self.state().notifications.clear();
+        self.0.locked().notifications.clear();
     }
 
-    /// Drops everything belonging to one rail entry, so removing a server also removes every trace
-    /// of it from the inbox.
+    /// Drops everything belonging to one entry.
     pub fn forget_entry(&self, entry_id: &str) {
-        let mut state = self.state();
+        let mut state = self.0.locked();
 
         state
             .notifications
@@ -495,333 +409,126 @@ impl Feed {
 mod tests {
     use super::*;
 
-    /// How many of one entry's notifications are still unread, as the feed sees it.
-    ///
-    /// The feed keeps this — it is what the bell's list is drawn from — but it is no longer what
-    /// the rail badge counts: that asks the server what is unread rather than counting what Shiver
-    /// happened to collect. So this lives here, where the feed's own behaviour is what is under
-    /// test, rather than as a method nothing in the app calls.
-    fn unread_for(feed: &Feed, entry_id: &str) -> Option<usize> {
-        let count = feed
-            .notifications()
-            .iter()
-            .filter(|entry| entry.entry_id == entry_id && !entry.read)
-            .count();
-
-        (count > 0).then_some(count)
+    fn raw(channel_id: Option<i64>, author: &str, body: &str) -> RawNotification {
+        RawNotification {
+            channel_id,
+            channel_name: None,
+            author: author.into(),
+            body: body.into(),
+            icon_url: None,
+            is_dm: false,
+        }
     }
 
-    fn dm(feed: &Feed, entry_id: &str, channel_id: Option<i64>, author: &str, body: &str) -> bool {
-        feed.push(
-            entry_id,
-            "server",
-            None,
-            RawNotification {
-                channel_id,
-                channel_name: None,
-                author: author.into(),
-                body: body.into(),
-                icon_url: None,
-                is_dm: true,
-            },
-            false,
-        )
+    fn unread_for(feed: &Feed, entry_id: &str) -> usize {
+        feed.unread_by_entry().get(entry_id).copied().unwrap_or(0)
     }
 
-    /// A notification, with a body of its own so it is a distinct message rather than a repeat.
-    fn note(feed: &Feed, entry_id: &str) {
-        note_in(feed, entry_id, None)
-    }
-
-    /// One message announced twice must be one line, not two.
-    ///
-    /// The socket announces what arrives on a server Shiver is watching; opening that server builds
-    /// a page, and the page announces the same still-unread message again. The badge went from 1 to
-    /// 2 by being clicked on, which is how it was reported.
     #[test]
-    fn the_same_message_announced_twice_is_one_entry() {
+    fn a_message_announced_twice_is_one_entry_and_keeps_its_channel() {
         let feed = Feed::default();
 
-        assert!(
-            dm(&feed, "a", Some(7), "Smiddy", "hello"),
-            "the first is news"
-        );
-        assert!(
-            !dm(&feed, "a", Some(7), "Smiddy", "hello"),
-            "the second is the same message by another route"
-        );
+        assert!(feed.push("a", "s", None, raw(None, "Smiddy", "hello"), false));
+        assert!(!feed.push("a", "s", None, raw(Some(7), "Smiddy", "hello"), false));
+        assert!(feed.push("a", "s", None, raw(Some(7), "Smiddy", "another"), false));
+        assert!(feed.push("b", "s", None, raw(Some(7), "Smiddy", "hello"), false));
 
+        assert!(feed.mark_channel_read("a", 7));
         assert_eq!(feed.unread_count(), 1);
     }
 
-    /// And the survivor must be the one that can be cleared.
-    ///
-    /// The page resolves a direct message's channel by looking the author up in a store that is
-    /// empty for the first moments after it connects, so its copy can arrive with no channel at
-    /// all — and `mark_channel_read` will not touch one of those. If that copy is the one kept, the
-    /// badge can never be got rid of.
     #[test]
-    fn a_duplicate_with_no_channel_does_not_cost_the_one_with_a_channel() {
+    fn reading_is_scoped_to_the_channel_or_server() {
         let feed = Feed::default();
 
-        // the page got there first, without a channel
-        assert!(dm(&feed, "a", None, "Smiddy", "hello"));
-        // then the socket, which knows it
-        assert!(!dm(&feed, "a", Some(7), "Smiddy", "hello"));
+        feed.push("a", "s", None, raw(Some(1), "x", "1"), false);
+        feed.push("a", "s", None, raw(Some(2), "x", "2"), false);
+        feed.push("a", "s", None, raw(None, "x", "3"), false);
+        feed.push("b", "s", None, raw(Some(1), "x", "4"), false);
 
-        assert!(
-            feed.mark_channel_read("a", 7),
-            "reading that conversation must clear it"
-        );
+        assert!(feed.mark_channel_read("a", 2));
+        assert!(!feed.mark_channel_read("a", 2));
+        assert_eq!((unread_for(&feed, "a"), unread_for(&feed, "b")), (2, 1));
+
+        assert!(feed.mark_entry_read("a"));
+        assert_eq!((unread_for(&feed, "a"), unread_for(&feed, "b")), (0, 1));
+
+        feed.forget_entry("b");
         assert_eq!(feed.unread_count(), 0);
     }
 
     #[test]
-    fn a_different_message_from_the_same_person_is_still_news() {
+    fn a_muted_channel_never_reaches_the_feed() {
         let feed = Feed::default();
 
-        assert!(dm(&feed, "a", Some(7), "Smiddy", "hello"));
-        assert!(dm(&feed, "a", Some(7), "Smiddy", "and another thing"));
-
-        assert_eq!(feed.unread_count(), 2);
+        assert!(!feed.push("a", "s", None, raw(Some(1), "x", "y"), true));
+        assert!(feed.notifications().is_empty());
     }
 
     #[test]
-    fn the_same_words_on_a_different_server_are_not_a_duplicate() {
+    fn one_server_cannot_evict_another() {
         let feed = Feed::default();
 
-        assert!(dm(&feed, "a", Some(7), "Smiddy", "hello"));
-        assert!(dm(&feed, "b", Some(7), "Smiddy", "hello"));
+        feed.push("quiet", "s", None, raw(None, "x", "keep me"), false);
 
-        assert_eq!(feed.unread_count(), 2);
-    }
+        for index in 0..1000 {
+            feed.push(
+                "noisy",
+                "s",
+                None,
+                raw(None, "x", &index.to_string()),
+                false,
+            );
+        }
 
-    /// The rail badge's running half. Losing this is what made every badge vanish: the rail was
-    /// switched to the server's own read states alone, which depend on delta events arriving and on
-    /// the floor being right, where this depends only on a message turning up.
-    #[test]
-    fn the_feed_still_counts_per_server_for_the_rail() {
-        let feed = Feed::default();
-
-        note(&feed, "a");
-        note(&feed, "b");
-        note(&feed, "b");
-
-        let counts = feed.unread_by_entry();
-
-        assert_eq!(counts.get("a"), Some(&1));
-        assert_eq!(counts.get("b"), Some(&2));
-        assert_eq!(counts.get("never-seen"), None, "absent rather than zero");
+        assert_eq!(unread_for(&feed, "quiet"), 1);
+        assert_eq!(unread_for(&feed, "noisy"), MAX_PER_SERVER);
     }
 
     #[test]
-    fn unread_is_counted_per_server() {
-        let feed = Feed::default();
-
-        note(&feed, "a");
-        note(&feed, "a");
-        note(&feed, "b");
-
-        assert_eq!(unread_for(&feed, "a"), Some(2));
-        assert_eq!(unread_for(&feed, "b"), Some(1));
-        // a server with nothing unread reads as absent rather than zero
-        assert_eq!(unread_for(&feed, "c"), None);
-    }
-
-    #[test]
-    fn a_muted_channel_never_reaches_a_badge() {
+    fn fields_are_bounded_by_characters() {
         let feed = Feed::default();
 
         feed.push(
             "a",
-            "server",
+            "s",
             None,
-            RawNotification {
-                channel_id: Some(1),
-                channel_name: None,
-                author: "someone".into(),
-                body: "hi".into(),
-                icon_url: None,
-                is_dm: false,
-            },
-            true,
-        );
-
-        assert!(feed.notifications().is_empty());
-    }
-
-    /// Opening a server is reading it, and must not read anything else.
-    #[test]
-    fn opening_one_server_clears_only_its_own_badge() {
-        let feed = Feed::default();
-
-        note(&feed, "a");
-        note(&feed, "b");
-
-        assert!(feed.mark_entry_read("a"));
-
-        assert_eq!(unread_for(&feed, "a"), None);
-        assert_eq!(unread_for(&feed, "b"), Some(1));
-        assert_eq!(feed.unread_count(), 1);
-    }
-
-    #[test]
-    fn reading_a_server_with_nothing_unread_changes_nothing() {
-        let feed = Feed::default();
-
-        note(&feed, "a");
-        feed.mark_entry_read("a");
-
-        // the second read reports no change, so the rail is not told to redraw for nothing
-        assert!(!feed.mark_entry_read("a"));
-        assert!(!feed.mark_entry_read("never-seen"));
-    }
-
-    /// Each call is a *different* message, because that is what these tests mean. The feed now
-    /// collapses the same message announced twice, on purpose, so a shared body would quietly turn
-    /// "two notifications arrived" into "one did".
-    fn note_in(feed: &Feed, entry_id: &str, channel_id: Option<i64>) {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-
-        feed.push(
-            entry_id,
-            "server",
-            None,
-            RawNotification {
-                channel_id,
-                channel_name: None,
-                author: "someone".into(),
-                body: format!("message {}", NEXT.fetch_add(1, Ordering::Relaxed)),
-                icon_url: None,
-                is_dm: false,
-            },
+            raw(None, &"é".repeat(500), &"x".repeat(5000)),
             false,
         );
-    }
 
-    /// Reading one channel leaves the rest of the server's unread on the badge.
-    #[test]
-    fn reading_a_channel_clears_only_that_channel() {
-        let feed = Feed::default();
+        let entry = &feed.notifications()[0];
 
-        note_in(&feed, "a", Some(1));
-        note_in(&feed, "a", Some(2));
-        note_in(&feed, "a", Some(2));
-
-        assert!(feed.mark_channel_read("a", 2));
-        assert_eq!(unread_for(&feed, "a"), Some(1));
+        assert_eq!(entry.author.chars().count(), MAX_AUTHOR + 1);
+        assert_eq!(entry.body.chars().count(), MAX_BODY + 1);
     }
 
     #[test]
-    fn reading_a_channel_does_not_touch_another_server() {
-        let feed = Feed::default();
-
-        note_in(&feed, "a", Some(1));
-        note_in(&feed, "b", Some(1));
-
-        feed.mark_channel_read("a", 1);
-
-        assert_eq!(unread_for(&feed, "a"), None);
-        assert_eq!(unread_for(&feed, "b"), Some(1));
-    }
-
-    /// A notification whose channel could not be resolved could be any channel, so reading one
-    /// must not clear it on a guess.
-    #[test]
-    fn reading_a_channel_leaves_notifications_with_no_channel() {
-        let feed = Feed::default();
-
-        note_in(&feed, "a", None);
-        note_in(&feed, "a", Some(1));
-
-        assert!(feed.mark_channel_read("a", 1));
-        assert_eq!(unread_for(&feed, "a"), Some(1));
+    fn icons_must_be_https_on_the_sending_server() {
+        assert!(safe_icon_url("https://a.example/x.png", Some("https://a.example")).is_some());
+        assert!(safe_icon_url("https://b.example/x.png", Some("https://a.example")).is_none());
+        assert!(safe_icon_url("http://a.example/x.png", Some("https://a.example")).is_none());
+        assert!(safe_icon_url("https://a.example/x.png", None).is_none());
     }
 
     #[test]
-    fn reading_an_already_read_channel_reports_no_change() {
-        let feed = Feed::default();
-
-        note_in(&feed, "a", Some(1));
-        feed.mark_channel_read("a", 1);
-
-        assert!(!feed.mark_channel_read("a", 1));
-        assert!(!feed.mark_channel_read("a", 99));
-    }
-
-    #[test]
-    fn removing_a_server_takes_its_badge_with_it() {
-        let feed = Feed::default();
-
-        note(&feed, "a");
-        note(&feed, "b");
-        feed.forget_entry("a");
-
-        assert_eq!(unread_for(&feed, "a"), None);
-        assert_eq!(unread_for(&feed, "b"), Some(1));
-    }
-
-    /// The shape that actually came back from a webview, exponent and all.
-    ///
-    /// A webview returns its numbers as doubles, so a millisecond timestamp arrives as
-    /// `1.7698e+12`, which `u64` refuses — and one unreadable field failed the *whole* payload,
-    /// taking notifications and mutes with it.
-    #[test]
-    fn a_timestamp_in_exponential_form_still_parses() {
-        let raw = r#"{
-            "notifications": [],
-            "mutes": [],
-            "dms": [{ "channelId": 3, "name": "friend", "lastMessageAt": 1.769871194e+12 }],
-            "syncedMutes": null,
-            "openDmFailed": null,
-            "ready": true,
-            "voice": null
-        }"#;
-
-        let result: DrainResult = serde_json::from_str(raw).expect("the drain to parse");
-        let dms = result.dms.expect("dms");
-
-        assert_eq!(dms[0].last_message_at, Some(1_769_871_194_000));
-    }
-
-    /// The whole tick used to be lost to this, not just the timestamp.
-    #[test]
-    fn a_bad_timestamp_does_not_cost_the_rest_of_the_drain() {
-        let raw = r#"{
-            "notifications": [{ "author": "someone", "body": "hi", "isDm": false }],
-            "mutes": [],
-            "ready": true,
-            "dms": [{ "channelId": 3, "name": "friend", "lastMessageAt": 1.7698e+12 }]
-        }"#;
-
-        let result: DrainResult = serde_json::from_str(raw).expect("the drain to parse");
+    fn timestamps_in_exponent_form_still_parse() {
+        let result: DrainResult = serde_json::from_str(
+            r#"{ "notifications": [{ "author": "a", "body": "b" }],
+                 "dms": [{ "channelId": 3, "name": "friend", "lastMessageAt": 1.769871194e+12 }] }"#,
+        )
+        .unwrap();
 
         assert_eq!(result.notifications.len(), 1);
         assert_eq!(
-            result.dms.expect("dms")[0].last_message_at,
-            Some(1_769_800_000_000)
+            result.dms.unwrap()[0].last_message_at,
+            Some(1_769_871_194_000)
         );
-    }
 
-    #[test]
-    fn a_plain_integer_timestamp_is_unchanged() {
-        let raw = r#"{ "channelId": 3, "name": "friend", "lastMessageAt": 1769871194000 }"#;
-        let dm: DmChannel = serde_json::from_str(raw).expect("a dm");
+        let dm: DmChannel =
+            serde_json::from_str(r#"{ "channelId": 3, "name": "f", "lastMessageAt": null }"#)
+                .unwrap();
 
-        assert_eq!(dm.last_message_at, Some(1_769_871_194_000));
-    }
-
-    #[test]
-    fn a_missing_or_null_timestamp_is_none() {
-        let missing: DmChannel =
-            serde_json::from_str(r#"{ "channelId": 3, "name": "friend" }"#).expect("a dm");
-        let null: DmChannel =
-            serde_json::from_str(r#"{ "channelId": 3, "name": "friend", "lastMessageAt": null }"#)
-                .expect("a dm");
-
-        assert_eq!(missing.last_message_at, None);
-        assert_eq!(null.last_message_at, None);
+        assert_eq!(dm.last_message_at, None);
     }
 }
