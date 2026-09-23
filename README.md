@@ -20,8 +20,7 @@ What that means in practice:
   your password. Both go in the OS keychain — or `EncryptedSharedPreferences` on Android — never in
   a file, but read the code before you trust it with either. A full internal review of the source
   has been done and its findings are fixed in the current tree; that is not the same as an outside
-  audit and is not offered as one. [`SECURITY.md`](SECURITY.md) says how to report anything you
-  find.
+  audit and is not offered as one.
 - **The installers are unsigned**, so Windows SmartScreen will warn on first run. Desktop updates
   are checked against a signing key built into the binary and will not install without it, so
   losing control of the GitHub account is not enough to ship code to anyone; Windows still has no
@@ -43,10 +42,7 @@ will serve you perfectly well.
   Sharkord's last seven days and cannot be refreshed. **Forget my password** in a server's menu
   removes it
 - **HTTPS only.** Shiver refuses to add a server, sign in to one, or open a socket over `http://`,
-  with no exemption for localhost or a private address. Certificates are checked against Mozilla's
-  root set rather than the operating system's, so a server behind a **private or corporate CA will
-  not connect** even on a machine that trusts it — worth knowing, because it presents as the server
-  being unreachable
+  with no exemption for localhost or a private address.
 - **Unread badges per server**, cleared by opening it, with per-channel mutes excluded
 - **A direct message inbox across servers**, ordered by when the last message arrived and labelled
   with the server it is on. It lives on Shiver's own screen rather than inside a server's page,
