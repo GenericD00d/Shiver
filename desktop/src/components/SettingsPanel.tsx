@@ -20,14 +20,7 @@ type Props = {
   onClose: () => void;
 };
 
-/**
- * The sections, in the order they are listed.
- *
- * Grouped by what a person came here to change rather than by what the code calls things. Shiver's
- * settings are few enough that one list was readable for a while, but it had grown to eight
- * unrelated controls in a column — the colours, a keyboard shortcut and a memory dial all in the
- * same run — and the only way to find anything was to read all of it.
- */
+/** The settings sections, grouped by what the user came to change. */
 const SECTIONS = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'notifications', label: 'Notifications' },

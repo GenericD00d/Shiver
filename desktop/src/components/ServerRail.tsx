@@ -29,13 +29,7 @@ type RailItem =
   | { kind: 'server'; id: string; position: number; server: ServerEntry }
   | { kind: 'folder'; id: string; position: number; folder: Folder; contents: ServerEntry[] };
 
-/**
- * Where a drop would land relative to the tile under the pointer.
- *
- * `into` is the centre of a tile: onto a server it makes a folder of the two, onto a folder it
- * moves the server in. The edges reorder instead. Without these zones every drop onto a server
- * merged, and the rail could not be reordered at all.
- */
+/** Where a drop lands: before/after reorder; `into` makes a folder or moves into one. */
 type DropZone = 'before' | 'after' | 'into';
 
 /** What a drag is carrying, and what it is hovering. */
@@ -45,14 +39,7 @@ type DragState = {
   zone: DropZone;
 } | null;
 
-/**
- * Height of the band at a slot's centre that merges instead of reordering.
- *
- * A fixed 14px rather than a fraction, so it stays the same size on the 48px top-level tiles and
- * the 40px ones inside a folder. Reordering is the common action and gets everything else:
- * proportionally this is a quarter of a slot, where an earlier 30% edge split left 40% merging and
- * made accidental folders easy.
- */
+/** The fixed band at a slot's centre that merges rather than reorders (same on 48px and 40px tiles). */
 const MERGE_BAND_PX = 14;
 
 const zoneFor = (event: React.DragEvent, allowInto: boolean): DropZone => {
@@ -79,16 +66,7 @@ const FOLDER_PREVIEW_COUNT = 4;
 /** Matches the bell, which is the other place Shiver counts unread. */
 const badgeLabel = (count: number) => (count > 99 ? '99+' : String(count));
 
-/**
- * Drawn over a server that is not answering, and nothing at all for one that is.
- *
- * A permanent green dot on every icon is a light that is on when nothing is wrong, which is most of
- * the time — so it stops being read. This only appears when something needs attention.
- *
- * The mark is cut *out* of the red rather than drawn on top of it, so the server's own icon shows
- * through the exclamation and the tile is still recognisable as that server. The mask id is per
- * server because SVG ids are global to the document and there is one of these per rail tile.
- */
+/** A red mark over a server that is not answering (cut out, so its icon shows through; per-server mask id). */
 const OfflineOverlay = ({ id }: { id: string }) => {
   const maskId = `shiver-offline-${id}`;
 

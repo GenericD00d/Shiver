@@ -31,13 +31,7 @@ export const NotificationList = ({ notifications, onChanged, onOpen }: Props) =>
     [onChanged]
   );
 
-  /**
-   * What the install button is doing, so it can say so.
-   *
-   * On success nothing is ever set: the installer takes over and Shiver exits mid-click. Only a
-   * failure comes back, and it is put where the button was rather than swallowed — a button that
-   * does nothing is how this feature would earn its distrust.
-   */
+  /** The install button's state; only a failure ever comes back (success exits Shiver). */
   const [installing, setInstalling] = useState<string | null>(null);
 
   const handleInstall = useCallback(async () => {

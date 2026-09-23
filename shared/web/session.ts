@@ -12,7 +12,7 @@
 
 export const AUTO_LOGIN = 'sharkord-auto-login';
 export const AUTO_LOGIN_TOKEN = 'sharkord-auto-login-token';
-export const LIVE_TOKEN = 'sharkord-token';
+const LIVE_TOKEN = 'sharkord-token';
 
 type Shim = { seed: (token: string | null) => void; active: () => boolean };
 

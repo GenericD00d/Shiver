@@ -45,13 +45,7 @@ const mainKey = (event: KeyboardEvent) => {
 const isModifierOnly = (event: KeyboardEvent) =>
   ['Control', 'Alt', 'Shift', 'Meta'].includes(event.key);
 
-/**
- * Records a system-wide shortcut by listening for one.
- *
- * Typing an accelerator by hand means knowing how Tauri spells one, so the field takes the key
- * combination instead. It insists on a modifier: a shortcut is registered with the operating
- * system, so a bare letter would swallow that key in every other application on the machine.
- */
+/** Records a global shortcut by listening for one; a modifier is required so no bare key is taken system-wide. */
 export const HotkeyField = ({ value, onChange }: Props) => {
   const [recording, setRecording] = useState(false);
   const [hint, setHint] = useState<string | null>(null);

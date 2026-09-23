@@ -28,7 +28,7 @@ export type SharkordState = {
   currentVoiceChannelId?: number | null;
 };
 
-export type SharkordStore = {
+type SharkordStore = {
   getState: () => SharkordState;
   subscribe?: (listener: () => void) => () => void;
   /** plugin-facing actions; these take the plugin id as an argument, unlike `executePluginAction` */
@@ -51,7 +51,7 @@ export const SIDEBAR = '[data-testid="left-sidebar"]';
 export const CHANNEL_ITEM = '[data-testid="channel-item"]';
 export const DM_ITEM = '[data-testid="dm-item"]';
 export const DM_TOGGLE = '[data-testid="dm-toggle"]';
-export const UNREAD_COUNT = '[data-testid="unread-count"]';
+const UNREAD_COUNT = '[data-testid="unread-count"]';
 export const MESSAGE_ITEM = '[data-testid="message-item"]';
 export const MEMBER_ITEM = '[data-testid="member-item"]';
 export const SETTINGS_TRIGGER = '[data-testid="user-settings-trigger"]';
@@ -64,7 +64,7 @@ export const REPLY_AUTHOR = '[class~="max-w-40"][class~="truncate"][class~="font
 /** `<span class="mention">@Name</span>` inside a message */
 export const MENTION_CHIP = 'span.mention';
 /** a reaction pill the user is part of (Sharkord marks it with only a 1px border) */
-export const REACTED_PILL = '[class~="h-9"][class~="border-border"]';
+const REACTED_PILL = '[class~="h-9"][class~="border-border"]';
 /** a file card: an anchor to the file with its icon, name, size and sometimes a delete button */
 export const FILE_CARD = 'a[class~="max-w-sm"][class~="rounded-lg"][class~="border-border"]';
 
@@ -146,8 +146,8 @@ export function markAllChannelsRead() {
   if (typeof selectedChannelId === 'number') selectChannel(selectedChannelId);
 }
 
-export const MUTE_CLASS = 'shiver-muted-channel';
-export const SHIVER_MENU_ITEM = 'shiver-menu-item';
+const MUTE_CLASS = 'shiver-muted-channel';
+const SHIVER_MENU_ITEM = 'shiver-menu-item';
 
 /**
  * Styles muted channel rows (dimmed, unread pill hidden), Shiver's item in Sharkord's menus, and

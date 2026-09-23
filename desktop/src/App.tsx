@@ -46,12 +46,7 @@ const VOICE_EVENT = 'shiver://voice';
 const STATUS_EVENT = 'shiver://status';
 const SIGNED_OUT_EVENT = 'shiver://signed-out';
 
-/**
- * How long a server gets to come up before Shiver shows a spinner over it.
- *
- * A server that was about to be ready anyway would otherwise flash a spinner for a few frames on
- * the way, which is worse than the wait it is meant to cover.
- */
+/** How long a server may take before the spinner shows (avoids a flash for fast servers). */
 const SPINNER_DELAY_MS = 400;
 
 /** How long Shiver waits before it says the server did not answer. */
@@ -95,12 +90,8 @@ export const App = () => {
   const [ready, setReady] = useState(false);
 
   /**
-   * The server Shiver is waiting on, in a ref rather than in state.
-   *
-   * `shiver://server-ready` arrives from a listener registered once, so reading this from state there
-   * would compare against whatever was pending when the listener was created. It is also what says
-   * the swap is still wanted: opening settings or another server clears it, and a ready event for a
-   * server the user has since navigated away from is then ignored rather than yanking them back.
+   * The server being waited on, in a ref so the once-registered ready listener sees the current
+   * value; navigating elsewhere clears it, so a late ready event is ignored.
    */
   const pendingRef = useRef<string | null>(null);
 
@@ -168,13 +159,8 @@ export const App = () => {
   }, [cancelWaiting]);
 
   /**
-   * Opens a server, covering it with Shiver's own view until its client is connected.
-   *
-   * A server that is already up is shown straight away. That is the common case for the handful of
-   * servers Shiver keeps a live page for — the one on screen and the last few before it — so going
-   * back to a server you were just in waits on nothing. Every *other* server is connected from the
-   * core over a socket rather than kept in a browser, which is what the cover is for: its client
-   * has to start when you open it.
+   * Opens a server: at once if its page is already connected (the kept-alive pages), otherwise
+   * behind Shiver's connecting view until it is.
    */
   const openServer = useCallback(
     async (id: string) => {
@@ -477,13 +463,7 @@ export const App = () => {
     };
   }, []);
 
-  /**
-   * Shiver could not sign a server in and its page is asking for credentials.
-   *
-   * Collecting them here rather than letting the page's own form through is the point: a password
-   * typed into the server's own login page never reaches Shiver, so it could not sign in next time
-   * either, and the user would meet that form again on every launch.
-   */
+  /** A server's page is asking for credentials: collect them here, so Shiver can renew the session. */
   useEffect(() => {
     const pending = listen<{ entryId: string }>(SIGNED_OUT_EVENT, (event) => {
       const { entryId } = event.payload;

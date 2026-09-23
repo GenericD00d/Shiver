@@ -4,7 +4,7 @@ import { addedMenu, ensureStyle, openMenuOnScreen } from '../../shared/web/bridg
 import { addMuteItem, CHANNEL_ITEM, channelOfRow, DM_ITEM, DM_TOGGLE, MESSAGE_ITEM, type SharkordChannel } from '../../shared/web/bridge/sharkord';
 import { CLICK_GRACE_MS, HOLD_MS, HOLD_SLOP, openDrawer } from './rail';
 
-export type Mutes = { has: (channelId: number) => boolean; toggle: (channelId: number) => void };
+type Mutes = { has: (channelId: number) => boolean; toggle: (channelId: number) => void };
 
 const MESSAGE_ACTIONS_CLASS = 'shiver-message-actions';
 /** how long after a press Sharkord's own menu (it has one for channel managers) may still arrive */

@@ -14,12 +14,8 @@ type Props = {
 };
 
 /**
- * Signs an existing rail entry in.
- *
- * The counterpart to logging out, and to a server added without credentials. Shiver holds the session
- * itself so the server opens straight into the app, which it can only do if it is the one that
- * signed in — signing in on the server's own page inside the webview works, but Shiver never sees the
- * password, so it cannot renew the session later or sign back in when one is refused.
+ * Signs a rail entry in through Shiver, so it holds the session and can renew it (a sign-in on the
+ * server's own page never gives Shiver the password).
  */
 export const SignInPanel = ({ server, onSignIn, onCancel }: Props) => {
   // Shiver usually knows who the entry is for, and is only missing the password

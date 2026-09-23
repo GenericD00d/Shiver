@@ -36,7 +36,7 @@ const pendingCreates: RailCreate[] = [];
 let home = '';
 
 /** Leaves for Shiver's own page, carrying at most an entry id in `hash`. */
-export function goHome(hash: string) {
+function goHome(hash: string) {
   if (home) window.location.assign(home.replace(/#.*$/, '') + hash);
 }
 

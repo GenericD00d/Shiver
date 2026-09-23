@@ -12,14 +12,7 @@ type Props = {
   error: string | null;
 };
 
-/**
- * The unified DM inbox.
- *
- * Deliberately shaped like Sharkord's own per-server DM list (`left-sidebar/direct-messages`): the
- * same 288px sidebar column, the same row metrics, the same muted-then-accent hover. The one thing
- * it adds is which account a conversation belongs to, since the same person can be reachable from
- * more than one server.
- */
+/** The unified DM inbox, shaped like Sharkord's own DM list, plus which account each row belongs to. */
 export const DirectMessagesPanel = ({ dms, onOpen, onClose, openedKey, error }: Props) => {
   const [query, setQuery] = useState('');
 

@@ -14,12 +14,7 @@ import type {
   Settings
 } from './types';
 
-/**
- * Every call into the rust core.
- *
- * Only Shiver's own pages can make these. A server's page is on its own origin and has no Tauri IPC,
- * which is what stops a server reaching anything Shiver knows — the same rule as on desktop.
- */
+/** Calls into the core. Only Shiver's own pages have IPC; server pages cannot make these. */
 export const api = {
   listRegistry: () => invoke<Registry>('list_registry'),
 
@@ -36,12 +31,7 @@ export const api = {
     rememberPassword = false
   ) => invoke<ServerEntry>('add_server', { origin, identity, password, rememberPassword }),
 
-  /**
-   * Signs an existing server in again.
-   *
-   * The way back from a session Shiver could not renew: Sharkord's last a week and cannot be
-   * refreshed, so a server Shiver holds no password for eventually needs this once.
-   */
+  /** Signs an existing server in again (sessions last a week and cannot be refreshed). */
   signInServer: (id: string, identity: string, password: string, rememberPassword: boolean) =>
     invoke<void>('sign_in_server', { id, identity, password, rememberPassword }),
 
@@ -98,24 +88,13 @@ export const api = {
 
   logOutServer: (id: string) => invoke<void>('log_out_server', { id }),
 
-  /**
-   * Drops every session and password Shiver is holding, for every server.
-   *
-   * The way to say no to Shiver watching servers in the background. Each server's own client keeps
-   * its own sign-in, which this leaves alone — that one is the user's, set up on the server's page.
-   */
+  /** Forgets every session and password Shiver holds; pages' own sign-ins are left alone. */
   forgetSessions: () => invoke<void>('forget_sessions'),
 
   /** unread per server, counted by the core over its own connections */
   unreadCounts: () => invoke<Record<string, number>>('unread_counts'),
 
-  /**
-   * Every server's conversations, gathered in one list.
-   *
-   * Lives here rather than in the rail a server's page draws, because only Shiver's own pages have
-   * IPC — which is what stops one server reading who the user messages on all the others. The
-   * server currently on screen is absent: its own page shows its conversations itself.
-   */
+  /** Every server's conversations; only Shiver's own pages can see them. */
   listDms: () => invoke<DmEntry[]>('list_dms'),
 
   /** distributors installed, and how many servers can be woken through the chosen one */

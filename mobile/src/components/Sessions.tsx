@@ -8,16 +8,8 @@ type Props = {
 };
 
 /**
- * What Shiver is holding, said out loud, and the way to end it.
- *
- * Shiver watches the servers you are not looking at over its own connections, which it needs a
- * session for — so it borrows the one your own sign-in produced and keeps it encrypted, master key
- * in the Android Keystore. That is what makes the unread badges and notifications work at all, and
- * what makes them work from a cold start rather than only after you have opened each server.
- *
- * It is worth saying plainly rather than leaving to be discovered, and worth being refusable. A
- * session found only in the page's `sessionStorage` — someone who did not tick Sharkord's own
- * "Login automatically" — is already used for the run and never stored; this is for the rest.
+ * Explains that Shiver keeps each server's session (encrypted, Keystore key) to watch servers in
+ * the background, and offers to forget them all.
  */
 export const Sessions = ({ onCleared }: Props) => {
   const [busy, setBusy] = useState(false);

@@ -1,7 +1,7 @@
 /** Colour helpers shared by both clients' UI and both bridges. */
 
 /** Whether dark text reads better than light on `hex` (relative luminance). Non-`#rrggbb` is "light". */
-export const isLightColor = (hex: string) => {
+const isLightColor = (hex: string) => {
   const value = hex.replace('#', '');
 
   if (value.length !== 6) return true;

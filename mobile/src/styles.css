@@ -667,15 +667,8 @@ button {
   border-radius: inherit;
 }
 
-/* Kept in step with `.badge` in `mobile/bridge/index.ts` — the same badge, drawn twice.
- *
- * Mobile has two rails and has to: this one is React on Shiver's own pages, the other is vanilla
- * dom in a **closed shadow root** inside a server's page, where there is no IPC and where Sharkord's
- * Tailwind preflight would restyle anything Shiver rendered. Neither can reach the other's styles,
- * which is exactly how they came to disagree — this one was `--shiver-danger`, a red reserved for
- * things that have gone wrong, against the other's white.
- *
- * `scripts/check-rails.py` fails if they drift again. */
+/* Must match `.badge` in `mobile/bridge/rail.ts` (the bridge's rail, in a closed shadow root);
+   `scripts/check-rails.py` checks it. */
 .rail-badge {
   position: absolute;
   top: -2px;

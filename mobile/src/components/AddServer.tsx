@@ -8,36 +8,14 @@ type Props = {
 };
 
 /**
- * Adds a server, signing in on the way.
- *
- * **Two steps, as desktop has always had.** This was one step for a while, on the reasoning that a
- * button whose only job is to prove the address works earns nothing — adding checks the address
- * anyway, and a server that does not answer still fails. What changed is what the first step is
- * *for*: it now shows the server's own name and logo before any credentials are typed, so the
- * person can see they are about to hand a password to the server they meant. That is worth a tap.
- *
- * What it still cannot tell them is whether Shiver's companion plugin is installed. Nothing says so
- * without a session — `/info` does not mention plugins and `plugins.get` answers only an admin — so
- * the answer arrives on the first connection and is shown in the server list instead.
- *
- * The password goes to the server named above it and nowhere else, and what comes back is a session
- * kept in Android's encrypted store. Leaving both fields empty is a real choice rather than a lapse:
- * it adds the server and lets the user sign in on its own page, which is the only thing that works
- * for a server behind an identity provider.
+ * Adds a server in two steps: the address is checked first and the server's own name and logo
+ * shown, so the user sees who they are giving a password to. Leaving the credentials empty adds the
+ * server for signing in on its own page (needed behind an identity provider).
  */
 export const AddServer = ({ onAdded }: Props) => {
   const [address, setAddress] = useState('');
   const [identity, setIdentity] = useState('');
   const [password, setPassword] = useState('');
-  /**
-   * Whether Shiver may keep the password for this server.
-   *
-   * Off by default, and worth understanding either way. Sharkord signs a session for seven days and
-   * has no way to refresh one, so Shiver's own connection to a server dies weekly: with no password
-   * it goes quiet until the server is opened again, and with one it signs itself back in. The cost
-   * is a second secret at rest, encrypted under a key the Android Keystore holds and Shiver cannot
-   * extract — the same protection the session itself already gets.
-   */
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** what the server said about itself, once checked; null until then */

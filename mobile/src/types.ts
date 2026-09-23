@@ -16,13 +16,7 @@ export type ServerEntry = {
   position: number;
 };
 
-/**
- * One conversation, and which server and account it belongs to.
- *
- * Only Shiver's own screens ever see this. A server's page is handed no conversation list at all —
- * it draws its own from Sharkord's store — so that one server never learns who the user privately
- * messages on the others. Mirrors `DmEntry` in `inbox.rs`.
- */
+/** One conversation and its server and account (mirrors `DmEntry` in `inbox.rs`); never sent to server pages. */
 export type DmEntry = {
   entryId: string;
   serverName: string;
@@ -103,13 +97,7 @@ export type Settings = {
   /** shrink the file card under a picture down to its icon; see `minimise_attachments` in model.rs */
   minimiseAttachments: boolean;
   lastServerId: string | null;
-  /**
-   * Which servers may wake the phone while Shiver is closed, by rail entry id.
-   *
-   * Owned by the background-notifications screen, not the settings one — but declared here because
-   * saving settings sends this whole object back, and a field missing from the object is a field
-   * cleared in the registry.
-   */
+  /** entries allowed to wake the phone while Shiver is closed; kept here because settings are saved whole */
   pushServers: string[];
 };
 

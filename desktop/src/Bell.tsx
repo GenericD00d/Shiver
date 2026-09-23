@@ -10,12 +10,7 @@ const FEED_EVENT = 'shiver://feed';
 const SETTINGS_EVENT = 'shiver://settings';
 const POPUP_EVENT = 'shiver://popup';
 
-/**
- * The notification bell.
- *
- * Its webview is a fixed 48x48 that never moves or resizes, so the bell cannot shift on screen no
- * matter what the feed does. The feed is a separate webview that opens beneath it.
- */
+/** The notification bell, in a fixed 48x48 webview; the feed opens in a separate webview below it. */
 export const Bell = () => {
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);

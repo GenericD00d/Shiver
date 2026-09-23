@@ -9,12 +9,7 @@ import type { Notification } from './types';
 const FEED_EVENT = 'shiver://feed';
 const SETTINGS_EVENT = 'shiver://settings';
 
-/**
- * The unified notification feed, in its own webview anchored under the bell.
- *
- * Entirely separate from the bell: it is created when opened and closed when dismissed, so the bell
- * never has to change shape to accommodate it.
- */
+/** The unified notification feed, in its own webview under the bell. */
 export const NotificationsPopup = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
@@ -49,15 +44,7 @@ export const NotificationsPopup = () => {
     api.closePopup().catch(() => undefined);
   }, []);
 
-  /**
-   * Dismisses the feed when the user clicks away from it, or presses Escape.
-   *
-   * A click outside lands in a different webview — a server's page, or the shell — and nothing in
-   * one webview can see a click in another, so there is no outside-click handler to write. Losing
-   * focus is the same event seen from this side, and it is the only signal this page gets.
-   *
-   * It fires for the window losing focus too, which is the behaviour a popover should have anyway.
-   */
+  /** Closes on Escape or on losing focus (a click in another webview is only visible as blur). */
   useEffect(() => {
     const dismiss = () => api.dismissPopup().catch(() => undefined);
 

@@ -12,14 +12,8 @@ type Props = {
 };
 
 /**
- * Signing an existing server in again.
- *
- * The way back from a session Shiver could not renew. Sharkord signs one for seven days and offers no
- * way to refresh it, so a server Shiver holds no password for eventually stops reporting — no badge,
- * no messages, nothing in the direct-message list — and this is what the user does about it.
- *
- * Ticking the box means it is the last time: Shiver keeps the password and signs in again by itself.
- * Unticking it on a server that has one throws that password away.
+ * Signs a server in again after a session Shiver could not renew (Sharkord's last seven days).
+ * Keeping the password lets Shiver renew it itself next time; unticking forgets a stored one.
  */
 export const SignInServer = ({ server, remembered, onDone, onCancel }: Props) => {
   const [identity, setIdentity] = useState(server.identity ?? '');

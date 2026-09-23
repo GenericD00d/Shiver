@@ -51,12 +51,7 @@ const HOLD_SLOP = 10;
 /** How long after a press ends its own click may still arrive and need ignoring. */
 const CLICK_GRACE_MS = 700;
 
-/**
- * A long press, standing in for desktop's right-click.
- *
- * Its own timer rather than `onContextMenu`: Android fires that inconsistently on elements that are
- * not text or links, and brings the system's own selection menu with it.
- */
+/** A long press (its own timer: `contextmenu` is unreliable on touch and brings the selection menu). */
 const useLongPress = (
   onHold: (id: string, at: number) => void,
   drag: {
@@ -70,13 +65,7 @@ const useLongPress = (
 ) => {
   const timer = useRef(0);
   const from = useRef({ x: 0, y: 0 });
-  /**
-   * When a press was last used for something other than a tap.
-   *
-   * A timestamp rather than a flag. A press that ends in a menu or a drag has to stop the click
-   * behind it opening the server, but a flag set and never cleared swallows the *next* tap instead
-   * — which is exactly what happened: after a drag the following tap on a tile did nothing.
-   */
+  /** When a press last ended in a menu or drag, so its click is ignored (a time, never a stale flag). */
   const consumedAt = useRef(0);
   const lifted = useRef<string | null>(null);
   const moved = useRef(false);
@@ -168,15 +157,8 @@ const useLongPress = (
 };
 
 /**
- * The server rail, on Shiver's own pages.
- *
- * The same component, order and dimensions the bridge draws inside a server's page, so the rail
- * does not change shape when the webview crosses between Shiver and a server — which on mobile is
- * every time a server is opened, there being one webview to share.
- *
- * `iconUrl` here rather than the inlined `iconData` the bridge is given: this page is Shiver's own
- * origin and may fetch from a server directly. A server's page may not, which is the whole reason
- * those two fields both exist.
+ * The server rail on Shiver's own pages, matching the one the bridge draws in a server's page. It
+ * may load `iconUrl` directly; server pages only get the inlined `iconData`.
  */
 export const Rail = ({
   servers,
@@ -201,13 +183,7 @@ export const Rail = ({
     kind: 'server' | 'folder';
     id: string;
     at: number;
-    /**
-     * When it opened.
-     *
-     * The press that opens a menu is followed by a synthesised click, and that click lands on the
-     * scrim this menu just put on screen — closing it again before anyone sees it. The scrim
-     * ignores anything arriving within a press of opening.
-     */
+    /** the opening press's synthesised click lands on the scrim, which ignores it for a moment */
     openedAt: number;
   } | null>(null);
   /** the folder being renamed, and the text so far */
@@ -221,29 +197,12 @@ export const Rail = ({
   const carriedBy = useRef(0);
   /** the box each open folder draws its servers in, so a drag can tell when one has left */
   const groups = useRef(new Map<string, HTMLDivElement>());
-  /**
-   * The folder a drag has been pulled clear of, waiting for the drop to make it true.
-   *
-   * Nothing is committed while the finger is still down: taking a server out writes to the store
-   * and redraws the rail, which would pull the tile out from under the finger halfway through the
-   * gesture. So the leaving is noticed here and acted on at the end.
-   */
+  /** the folder a drag was pulled out of, applied on drop so the rail does not redraw mid-gesture */
   const pulledOut = useRef<string | null>(null);
 
   /**
-   * Keeps the held tile under the finger.
-   *
-   * Measured against where the layout would have put it rather than accumulated from the last
-   * touch, so it survives a reorder: passing another tile moves this one, and a running total would
-   * leave it standing a whole tile away from the finger. Reading the box back each time and taking
-   * off what has already been applied gives the distance afresh.
-   *
-   * Written on the node rather than through state. React redraws the rail as the order changes,
-   * and a transform that went through a render would arrive a frame late, which is exactly the lag
-   * a finger notices.
-   *
-   * The lift is the one carry that is not `instant`: the tile travels to the finger on the lifted
-   * class's own easing, so being picked up reads as a movement rather than a flicker.
+   * Keeps the held tile under the finger, measured from its layout position (so reorders do not
+   * drift) and written to the node directly (a render would lag a frame). Only the lift animates.
    */
   const carry = useCallback((key: string | null, y: number, instant = false) => {
     if (!key) {
@@ -283,21 +242,11 @@ export const Rail = ({
     ontoRef.current = key;
     setOntoState(key);
   };
-  /**
-   * The order the rail is showing, which during a drag is ahead of the stored one.
-   *
-   * Kept here so the tiles move under the finger rather than jumping into place on release, and
-   * reset from `servers` whenever the stored order catches up.
-   */
+  /** the order on screen, ahead of the stored one during a drag */
   const [order, setOrder] = useState<string[]>([]);
   const tiles = useRef(new Map<string, HTMLButtonElement>());
 
-  /**
-   * The rail's top level: folders and the servers that are not in one, in stored order.
-   *
-   * Servers inside a folder are not part of this — they are drawn under their folder when it is
-   * open, and keep their own order relative to each other.
-   */
+  /** folders and loose servers in stored order (folder members keep their own order) */
   const top = useMemo(
     () =>
       [

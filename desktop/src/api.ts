@@ -122,15 +122,7 @@ export const api = {
 
   showShell: () => invoke<void>('show_shell'),
 
-  /** which build this is, for the settings screen and for answering "what are you running" */
-  /** Forgets the camera and microphone answers WebView2 remembers, for every server. */
-  /** forgets the stored camera and microphone answers; resolves with how many there were */
-  /**
-   * Downloads the new version and installs it, which ends this process.
-   *
-   * Never resolves on success: the installer takes over and Shiver exits. A rejection is a real
-   * failure and is worth showing.
-   */
+  /** Downloads and installs the new version; on success the installer takes over and Shiver exits. */
   installUpdate: () => invoke<void>('install_update'),
   /** the newer version Shiver has found, or null when there is none worth mentioning */
   availableUpdate: () => invoke<string | null>('available_update'),
@@ -143,14 +135,10 @@ export const api = {
   /** takes back the stored password for one server; the session is left alone */
   forgetPassword: (id: string) => invoke<void>('forget_password', { id }),
 
-  /**
-   * Lets one server past the default message-size limit, or puts it back.
-   *
-   * Offered in the rail's menu only for a server that has tripped the limit, since that is the only
-   * case where raising it is a considered choice rather than a protection turned off for nothing.
-   */
+  /** Lets one server past the message-size limit (offered only once it has hit it), or puts it back. */
   setAcceptAnySize: (id: string, accept: boolean) =>
     invoke<void>('set_accept_any_size', { id, accept }),
+  /** forgets the camera and microphone answers WebView2 stored; resolves with how many there were */
   resetMediaPermissions: () => invoke<number>('reset_media_permissions'),
   appVersion: () => invoke<string>('app_version'),
 

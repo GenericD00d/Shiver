@@ -29,12 +29,7 @@ const initials = (name: string) =>
     .map((word) => word[0]?.toUpperCase() ?? '')
     .join('') || '?';
 
-/**
- * Managing the list of servers.
- *
- * Not a switcher any more — the rail is that, and Shiver opens the last server used rather than
- * showing a front page. This lives under settings, which is where the things you do rarely go.
- */
+/** Managing the server list, under settings (the rail is the switcher). */
 export const ServerList = ({
   servers,
   onOpen,

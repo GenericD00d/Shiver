@@ -10,13 +10,7 @@ type Props = {
 
 const initial = (name: string) => name.trim()[0]?.toUpperCase() ?? '?';
 
-/**
- * How long ago, in as few characters as fit beside a server name.
- *
- * Shown because the list is *ordered* by it: an order the reader cannot see the reason for looks
- * arbitrary, and this is what makes it obviously not. Coarse on purpose — the exact minute of a
- * conversation from March is not why anyone is looking at this screen.
- */
+/** A coarse "how long ago", shown because the list is ordered by it. */
 const when = (at: number | null) => {
   if (at === null) return '';
 
@@ -31,43 +25,14 @@ const when = (at: number | null) => {
 };
 
 /**
- * Every server's conversations, on Shiver's own screen.
- *
- * This list used to be drawn inside whichever server's page was on screen, because Android gives a
- * window one webview and the rail has to live somewhere. That handed one server the display name of
- * everyone the user privately messages on every *other* server they had added. A page on a server's
- * origin has no Tauri IPC, so moving the list here is what makes it unreadable to that page — there
- * is no way to hide data from a page that has to render it.
- *
- * Ordered by when the last message arrived and by nothing else — see `collect_dms`. It used to be
- * grouped by server in rail order, which meant the list reshuffled every time the user switched
- * servers, so the same conversation was never twice in the same place. Which server a conversation
- * is on is written on the row; that is not a reason to sort by it.
- *
- * The server currently on screen appears from whatever Shiver last knew of it, since the core drops
- * its socket to that one — its own page reports for itself. So its timestamps here can lag by a
- * visit, while the panel inside that page is live.
+ * Every server's conversations, newest first (`collect_dms`). Drawn here rather than in a server's
+ * page so no server learns who the user talks to elsewhere.
  */
 export const DirectMessages = ({ onOpen }: Props) => {
   const [dms, setDms] = useState<DmEntry[] | null>(null);
   const [query, setQuery] = useState('');
 
-  /**
-   * Loaded on arrival and again whenever the core hears from a server.
-   *
-   * Once was not enough, and this is why the list looked broken: Shiver holds no socket to the
-   * server it is *showing*, so leaving that server for this screen is the moment its connection
-   * starts — and connecting means a websocket, `connectionParams`, a handshake, `joinServer` and
-   * then `dms.get`. All of that lands well after this screen has mounted. Fetching once on mount
-   * therefore asked for the list at the one moment it was guaranteed to be least complete, and
-   * nothing ever asked again: a screen that said "no conversations" while the conversations were
-   * arriving behind it.
-   *
-   * `onUnread` fires from the same `publish` that follows a server being read — see the watch loop,
-   * where `remember_dms` is immediately followed by `recount`. So every server that finishes
-   * connecting brings this list up to date as it arrives, rather than the user having to leave and
-   * come back.
-   */
+  /** Reloaded whenever the core publishes, since servers connect after this screen mounts. */
   useEffect(() => {
     let live = true;
 
