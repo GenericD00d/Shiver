@@ -1,4 +1,5 @@
 import type { ServerEntry } from '../types';
+import { initials } from '../../../shared/web/rail';
 
 type Props = {
   servers: ServerEntry[];
@@ -21,13 +22,6 @@ type Props = {
   onSignIn: (id: string) => void;
 };
 
-const initials = (name: string) =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase() ?? '')
-    .join('') || '?';
 
 /** Managing the server list, under settings (the rail is the switcher). */
 export const ServerList = ({

@@ -6,6 +6,7 @@
  */
 
 import { defineHook } from '../../shared/web/bridge/dom';
+import { byPosition, initials, membersOf } from '../../shared/web/rail';
 import { markAllChannelsRead, SERVER_VIEW, SIDEBAR } from '../../shared/web/bridge/sharkord';
 import type { RailCreate, RailEntry, RailFolder, RailMove, ShiverConfig } from './types';
 
@@ -78,12 +79,11 @@ export function mountRail(shiver: ShiverConfig): Rail {
 
   scrim.addEventListener('click', () => setOpen(false));
 
-  const membersOf = (folderId: string) =>
-    shiver.rail.filter((entry) => entry.folderId === folderId).sort((a, b) => a.position - b.position);
+  const folderMembers = (folderId: string) => membersOf(shiver.rail, folderId);
 
   /** Drops folders holding fewer than two servers, as the core does, so the rail agrees at once. */
   const dissolveThinFolders = () => {
-    const doomed = new Set(shiver.folders.filter((folder) => membersOf(folder.id).length < 2).map((folder) => folder.id));
+    const doomed = new Set(shiver.folders.filter((folder) => folderMembers(folder.id).length < 2).map((folder) => folder.id));
 
     if (!doomed.size) return;
 
@@ -98,10 +98,10 @@ export function mountRail(shiver: ShiverConfig): Rail {
 
   /** Folders and loose servers, in rail order (computed on every draw, since moves change it). */
   const topItems = () =>
-    [
+    byPosition([
       ...shiver.folders.map((folder) => ({ kind: 'folder' as const, folder, position: folder.position })),
       ...shiver.rail.filter((entry) => !entry.folderId).map((entry) => ({ kind: 'server' as const, entry, position: entry.position }))
-    ].sort((a, b) => a.position - b.position);
+    ]);
 
   const paintBadges = (unread: Record<string, number>) => {
     counts = unread;
@@ -164,7 +164,7 @@ export function mountRail(shiver: ShiverConfig): Rail {
       }
 
       const { folder } = item;
-      const members = membersOf(folder.id);
+      const members = folderMembers(folder.id);
       const isOpen = openFolders.has(folder.id);
       const button = tile({
         label: folder.name,
@@ -798,18 +798,6 @@ function image(src: string) {
   img.draggable = false;
 
   return img;
-}
-
-/** Matches the React rail's fallback. */
-function initials(name: string) {
-  return (
-    name
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((word) => word[0]?.toUpperCase() ?? '')
-      .join('') || '?'
-  );
 }
 
 function svg(paths: string) {

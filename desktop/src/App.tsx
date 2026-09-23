@@ -23,6 +23,7 @@ import {
   type Settings,
   type VoiceStatus
 } from './types';
+import { byPosition } from '../../shared/web/rail';
 
 /**
  * Which Shiver surface owns the content area. Anything other than `server` means the active server's
@@ -107,7 +108,7 @@ export const App = () => {
   const timeoutTimer = useRef<number | null>(null);
 
   const servers = useMemo(
-    () => [...registry.servers].sort((a, b) => a.position - b.position),
+    () => byPosition(registry.servers),
     [registry.servers]
   );
 

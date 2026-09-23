@@ -20,6 +20,7 @@ import {
   type ServerEntry,
   type Settings
 } from './types';
+import { byPosition } from '../../shared/web/rail';
 
 /** Shiver's own screens. `boot` opens the last server used; there is no home screen. */
 type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms';
@@ -97,7 +98,7 @@ const readIntent = (hash: string): Intent => {
 
 /** The server Shiver reopens: the last one used, or the first. */
 const lastUsed = (registry: Registry) => {
-  const ordered = [...registry.servers].sort((a, b) => a.position - b.position);
+  const ordered = byPosition(registry.servers);
 
   return ordered.find((server) => server.id === registry.settings.lastServerId) ?? ordered[0];
 };
@@ -114,7 +115,7 @@ export const App = () => {
   const [error, setError] = useState<string | null>(null);
 
   const servers = useMemo(
-    () => [...registry.servers].sort((a, b) => a.position - b.position),
+    () => byPosition(registry.servers),
     [registry.servers]
   );
 
@@ -326,7 +327,7 @@ export const App = () => {
   /** Straight into a server just added. */
   const handleAdded = useCallback(async () => {
     const next = await refresh();
-    const added = [...next.servers].sort((a, b) => a.position - b.position).at(-1);
+    const added = byPosition(next.servers).at(-1);
 
     if (added) {
       await connect(added);

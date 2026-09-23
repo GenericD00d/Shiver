@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 
 import { MessagesIcon, PlusIcon, SettingsIcon } from './icons';
 import type { Folder, ServerEntry } from '../types';
+import { byPosition, initials, membersOf } from '../../../shared/web/rail';
 
 type Props = {
   servers: ServerEntry[];
@@ -33,13 +34,6 @@ type Props = {
 /** One row of the rail's top level. */
 export type RailRef = { kind: 'server' | 'folder'; id: string };
 
-const initials = (name: string) =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase() ?? '')
-    .join('') || '?';
 
 /** Matches the desktop rail, which is the other place Shiver counts unread. */
 const badgeLabel = (count: number) => (count > 99 ? '99+' : String(count));
@@ -249,12 +243,12 @@ export const Rail = ({
   /** folders and loose servers in stored order (folder members keep their own order) */
   const top = useMemo(
     () =>
-      [
+      byPosition([
         ...folders.map((folder) => ({ kind: 'folder' as const, id: folder.id, position: folder.position })),
         ...servers
           .filter((server) => !server.folderId)
           .map((server) => ({ kind: 'server' as const, id: server.id, position: server.position }))
-      ].sort((a, b) => a.position - b.position),
+      ]),
     [folders, servers]
   );
 
@@ -394,10 +388,6 @@ export const Rail = ({
     return true;
   };
 
-  const membersOf = (folderId: string) =>
-    servers
-      .filter((server) => server.folderId === folderId)
-      .sort((a, b) => a.position - b.position);
 
   const ordered = order
     .map((key) => {
@@ -469,7 +459,7 @@ export const Rail = ({
         if (item.kind === 'server') return serverTile(item.server, false);
 
         const folder = item.folder;
-        const members = membersOf(folder.id);
+        const members = membersOf(servers, folder.id);
         const key = `folder:${folder.id}`;
 
         return (

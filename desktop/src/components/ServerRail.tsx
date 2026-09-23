@@ -4,6 +4,7 @@ import { api } from '../api';
 import { MessagesIcon, PlusIcon, SettingsIcon } from './icons';
 import { VoiceTile } from './VoiceTile';
 import type { Folder, ServerEntry, ServerStatus, VoiceStatus } from '../types';
+import { byPosition, initials, membersOf } from '../../../shared/web/rail';
 
 type Props = {
   servers: ServerEntry[];
@@ -52,13 +53,6 @@ const zoneFor = (event: React.DragEvent, allowInto: boolean): DropZone => {
   return offset < middle ? 'before' : 'after';
 };
 
-const initials = (name: string) =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase() ?? '')
-    .join('') || '?';
 
 /** The four shown in a collapsed folder's tile. */
 const FOLDER_PREVIEW_COUNT = 4;
@@ -128,13 +122,11 @@ export const ServerRail = ({
         id: folder.id,
         position: folder.position,
         folder,
-        contents: servers
-          .filter((server) => server.folderId === folder.id)
-          .sort((a, b) => a.position - b.position)
+        contents: membersOf(servers, folder.id)
       });
     }
 
-    return rows.sort((a, b) => a.position - b.position);
+    return byPosition(rows);
   }, [folders, servers]);
 
   const handleContextMenu = useCallback((event: React.MouseEvent, serverId: string) => {
