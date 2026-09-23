@@ -57,6 +57,31 @@ pub fn uses_default_colors(theme: &str, accent: &str, text: Option<&str>) -> boo
         && text.is_none()
 }
 
+/// The red, green and blue of a `#rrggbb` colour.
+pub fn rgb(value: &str) -> Option<[u8; 3]> {
+    if !is_hex_color(value) {
+        return None;
+    }
+
+    let channel = |at: usize| u8::from_str_radix(&value[at..at + 2], 16).ok();
+
+    Some([channel(1)?, channel(3)?, channel(5)?])
+}
+
+/// The theme handed to server pages: `null` on Sharkord's own colours (pages are left untouched),
+/// otherwise sanitised colours only, since the bridge turns them into CSS.
+pub fn theme_payload(theme: &str, accent: &str, text: Option<&str>) -> serde_json::Value {
+    if uses_default_colors(theme, accent, text) {
+        return serde_json::Value::Null;
+    }
+
+    serde_json::json!({
+        "themeColor": sanitised_color(theme, DEFAULT_THEME_COLOR),
+        "accentColor": sanitised_color(accent, DEFAULT_ACCENT_COLOR),
+        "textColor": sanitised_optional_color(text),
+    })
+}
+
 /// Channel ids muted on one entry.
 pub fn muted_for(muted: &[MutedChannel], entry_id: &str) -> Vec<i64> {
     muted
@@ -94,6 +119,24 @@ pub fn set_muted_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_six_digit_hex_colours_have_channels() {
+        assert_eq!(rgb("#0a0A0f"), Some([10, 10, 15]));
+
+        for bad in ["", "0a0a0a", "#abc", "#zzzzzz", "#0a0a0a0a", "#+1234a"] {
+            assert_eq!(rgb(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn default_colours_restyle_nothing() {
+        assert!(theme_payload(DEFAULT_THEME_COLOR, DEFAULT_ACCENT_COLOR, None).is_null());
+        assert_eq!(
+            theme_payload("#FFFFFF", "bad", None)["accentColor"],
+            DEFAULT_ACCENT_COLOR
+        );
+    }
 
     #[test]
     fn only_six_digit_hex_colours_survive() {

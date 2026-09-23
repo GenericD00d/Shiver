@@ -91,14 +91,6 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn uses_default_colors(&self) -> bool {
-        shiver_core::model::uses_default_colors(
-            &self.theme_color,
-            &self.accent_color,
-            self.text_color.as_deref(),
-        )
-    }
-
     /// Every field held to a valid, safe value; applied on the way in and out of the file.
     pub fn sanitised(mut self) -> Self {
         self.theme_color = sanitised_color(&self.theme_color, DEFAULT_THEME_COLOR);

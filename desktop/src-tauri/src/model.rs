@@ -124,15 +124,6 @@ impl Settings {
     pub fn pages_kept(&self) -> usize {
         self.pages_kept.clamp(MIN_PAGES_KEPT, MAX_PAGES_KEPT) as usize
     }
-
-    /// While on Sharkord's own colours, Shiver injects no css into server pages.
-    pub fn uses_default_colors(&self) -> bool {
-        shiver_core::model::uses_default_colors(
-            &self.theme_color,
-            &self.accent_color,
-            self.text_color.as_deref(),
-        )
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

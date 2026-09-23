@@ -7,13 +7,15 @@
 //! is never written to the webview's storage. The bridge runs after load; anything it reads back
 //! out of a page is a request, never trusted state.
 
-use std::{collections::HashMap, sync::Mutex, time::Duration, time::Instant};
+use std::{collections::HashMap, sync::Mutex};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 use shiver_core::LockExt;
 use tauri::{window::Color, AppHandle, Manager, Url, WebviewWindow};
 use tauri_plugin_shiver_secrets::SecretsExt;
+
+pub use shiver_core::limit::Openings;
 
 use crate::{
     error::{Error, Result},
@@ -38,32 +40,6 @@ const MAX_CREATES_PER_POLL: usize = 5;
 use shiver_core::rail::MAX_FOLDER_NAME;
 const MAX_FOLDER_ID: usize = 64;
 const DEFAULT_FOLDER_NAME: &str = "Folder";
-
-/// Rate limit on links a page asks the core to open in the browser (they arrive by poll, not by a
-/// user gesture): at most `OPEN_PER_TICK` per poll and `OPEN_PER_WINDOW` per `OPEN_WINDOW`.
-#[derive(Default)]
-pub struct Openings(Mutex<Vec<Instant>>);
-
-const OPEN_PER_TICK: usize = 5;
-const OPEN_PER_WINDOW: usize = 10;
-const OPEN_WINDOW: Duration = Duration::from_secs(10);
-
-impl Openings {
-    /// Reserves up to `wanted` openings now and returns how many were granted.
-    fn take(&self, wanted: usize) -> usize {
-        let mut recent = self.0.locked();
-
-        recent.retain(|at| at.elapsed() < OPEN_WINDOW);
-
-        let granted = wanted
-            .min(OPEN_PER_TICK)
-            .min(OPEN_PER_WINDOW.saturating_sub(recent.len()));
-
-        recent.extend(std::iter::repeat(Instant::now()).take(granted));
-
-        granted
-    }
-}
 
 #[derive(Default)]
 struct ShowingState {
@@ -383,7 +359,7 @@ pub fn read_mutes(app: &AppHandle, entry_id: &str) {
 
 fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
     // links Sharkord opens in a new window, which Android's webview refuses to make
-    let granted = app.state::<Openings>().take(state.open.len());
+    let granted = app.state::<Openings>().take(entry_id, state.open.len());
 
     if granted < state.open.len() {
         eprintln!(
@@ -653,43 +629,17 @@ pub fn is_home(app: &AppHandle, target: &Url) -> bool {
 /// The webview's own background (shown between documents, white by default on Android), taken
 /// from the user's theme colour.
 pub fn background_color(settings: &Settings) -> Color {
-    parse_hex(&settings.theme_color).unwrap_or(Color(0x0a, 0x0a, 0x0a, 0xff))
+    let [r, g, b] = shiver_core::model::rgb(&settings.theme_color).unwrap_or([0x0a; 3]);
+
+    Color(r, g, b, 0xff)
 }
 
-/// `#rgb` or `#rrggbb`.
-fn parse_hex(value: &str) -> Option<Color> {
-    let digits = value.strip_prefix('#')?;
-
-    if !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-
-    let rgb = u32::from_str_radix(digits, 16).ok()?;
-
-    let (r, g, b) = match digits.len() {
-        3 => (
-            ((rgb >> 8) & 0xf) * 17,
-            ((rgb >> 4) & 0xf) * 17,
-            (rgb & 0xf) * 17,
-        ),
-        6 => (rgb >> 16, (rgb >> 8) & 0xff, rgb & 0xff),
-        _ => return None,
-    };
-
-    Some(Color(r as u8, g as u8, b as u8, 0xff))
-}
-
-/// `null` while the user is on Sharkord's own colours, so a stock Shiver restyles nothing.
 fn theme_payload(settings: &Settings) -> Value {
-    if settings.uses_default_colors() {
-        return Value::Null;
-    }
-
-    json!({
-        "themeColor": settings.theme_color,
-        "accentColor": settings.accent_color,
-        "textColor": settings.text_color,
-    })
+    shiver_core::model::theme_payload(
+        &settings.theme_color,
+        &settings.accent_color,
+        settings.text_color.as_deref(),
+    )
 }
 
 #[cfg(test)]
@@ -725,27 +675,6 @@ mod tests {
                 !DOCUMENT_START.contains(forbidden),
                 "the script must not contain {forbidden}"
             );
-        }
-    }
-
-    #[test]
-    fn colours_parse_from_hex() {
-        assert_eq!(parse_hex("#0a0a0a"), Some(Color(10, 10, 10, 255)));
-        assert_eq!(parse_hex("#FFFFFF"), Some(Color(255, 255, 255, 255)));
-        assert_eq!(parse_hex("#abc"), Some(Color(0xaa, 0xbb, 0xcc, 255)));
-
-        for bad in [
-            "",
-            "0a0a0a",
-            "#",
-            "#12",
-            "#12345",
-            "#zzzzzz",
-            "#0a0a0a0a",
-            "#+12",
-            "#+1234a",
-        ] {
-            assert_eq!(parse_hex(bad), None, "{bad} should not parse");
         }
     }
 
@@ -853,15 +782,6 @@ mod tests {
         showing.set_home_if_unset("http://localhost:1421/".into());
         showing.set_home_if_unset("http://tauri.localhost/".into());
         assert_eq!(showing.home().as_deref(), Some("http://localhost:1421/"));
-    }
-
-    #[test]
-    fn openings_are_rationed_per_poll_and_per_window() {
-        let openings = Openings::default();
-
-        assert_eq!(openings.take(8), OPEN_PER_TICK);
-        assert_eq!(openings.take(8), OPEN_PER_WINDOW - OPEN_PER_TICK);
-        assert_eq!(openings.take(1), 0);
     }
 
     #[test]

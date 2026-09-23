@@ -276,7 +276,7 @@ pub async fn remove_server(
     app.state::<VoiceState>().forget_entry(&id);
     app.state::<Readiness>().forget_entry(&id);
     app.state::<Recovery>().forget_entry(&id);
-    app.state::<webviews::Openings>().forget_entry(&id);
+    app.state::<webviews::Openings>().forget(&id);
 
     store.update(|registry| {
         registry.servers.retain(|server| server.id != id);

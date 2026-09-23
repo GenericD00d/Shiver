@@ -4,6 +4,7 @@
 pub mod error;
 pub mod hash;
 pub mod http;
+pub mod limit;
 pub mod login;
 pub mod model;
 pub mod origin;

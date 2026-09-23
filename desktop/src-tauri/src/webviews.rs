@@ -7,7 +7,6 @@
 //! any server webview is created and the popup is built fresh each time it opens.
 
 use std::{
-    collections::HashMap,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -17,6 +16,7 @@ use std::{
 };
 
 use serde_json::json;
+pub use shiver_core::limit::Openings;
 use shiver_core::LockExt;
 use tauri::{
     webview::{PageLoadEvent, WebviewBuilder},
@@ -48,11 +48,6 @@ const POPUP_SIZE: (f64, f64) = (380.0, 540.0);
 /// A click on the bell this soon after the popup dismissed itself (on losing focus to that same
 /// click) is the click that closed it, not a request to reopen it.
 const POPUP_REOPEN_GUARD: Duration = Duration::from_millis(400);
-
-/// Links one page may open in the browser: per poll/burst, and per window of time.
-const OPEN_PER_TICK: usize = 5;
-const OPEN_PER_WINDOW: usize = 10;
-const OPEN_WINDOW: Duration = Duration::from_secs(10);
 
 const BRIDGE_SOURCE: &str = include_str!("../generated/bridge.js");
 
@@ -129,37 +124,6 @@ impl ActiveServer {
 
     fn update<T>(&self, change: impl FnOnce(&mut Screen) -> T) -> T {
         change(&mut self.screen.locked())
-    }
-}
-
-/// Recent link openings per entry, so a hostile page cannot flood the browser with tabs.
-#[derive(Default)]
-pub struct Openings(Mutex<HashMap<String, Vec<Instant>>>);
-
-impl Openings {
-    /// Records one opening if the entry is within its allowance.
-    fn allow(&self, entry_id: &str) -> bool {
-        let mut seen = self.0.locked();
-        let recent = seen.entry(entry_id.to_string()).or_default();
-
-        recent.retain(|at| at.elapsed() < OPEN_WINDOW);
-
-        let burst = recent
-            .iter()
-            .filter(|at| at.elapsed() < Duration::from_secs(1))
-            .count();
-
-        if recent.len() >= OPEN_PER_WINDOW || burst >= OPEN_PER_TICK {
-            return false;
-        }
-
-        recent.push(Instant::now());
-
-        true
-    }
-
-    pub fn forget_entry(&self, entry_id: &str) {
-        self.0.locked().remove(entry_id);
     }
 }
 
@@ -757,7 +721,7 @@ pub fn open_for_page(app: &AppHandle, entry_id: &str, url: &Url) {
         return;
     }
 
-    if !app.state::<Openings>().allow(entry_id) {
+    if app.state::<Openings>().take(entry_id, 1) == 0 {
         eprintln!("[shiver] {entry_id} is opening links too quickly; {url} was not opened");
 
         return;
@@ -913,32 +877,17 @@ pub fn push_theme(app: &AppHandle, settings: &Settings) {
 
 /// The colour a Shiver webview paints before its stylesheet loads, from the user's background.
 fn startup_color(settings: &Settings) -> tauri::webview::Color {
-    let hex = settings.theme_color.trim_start_matches('#');
-    let channel = |index: usize| {
-        hex.get(index..index + 2)
-            .and_then(|part| u8::from_str_radix(part, 16).ok())
-            .unwrap_or(0x17)
-    };
+    let [r, g, b] = shiver_core::model::rgb(&settings.theme_color).unwrap_or([0x17; 3]);
 
-    tauri::webview::Color(channel(0), channel(2), channel(4), 255)
+    tauri::webview::Color(r, g, b, 255)
 }
 
-/// `null` on the default colours (pages are left untouched); otherwise sanitised colours only,
-/// since the bridge turns them into CSS.
 fn theme_payload(settings: &Settings) -> serde_json::Value {
-    use crate::model::{
-        sanitised_color, sanitised_optional_color, DEFAULT_ACCENT_COLOR, DEFAULT_THEME_COLOR,
-    };
-
-    if settings.uses_default_colors() {
-        return serde_json::Value::Null;
-    }
-
-    json!({
-        "themeColor": sanitised_color(&settings.theme_color, DEFAULT_THEME_COLOR),
-        "accentColor": sanitised_color(&settings.accent_color, DEFAULT_ACCENT_COLOR),
-        "textColor": sanitised_optional_color(settings.text_color.as_deref()),
-    })
+    shiver_core::model::theme_payload(
+        &settings.theme_color,
+        &settings.accent_color,
+        settings.text_color.as_deref(),
+    )
 }
 
 fn eval_in(app: &AppHandle, label: &str, script: &str) {
@@ -1036,15 +985,6 @@ mod tests {
 
         std::thread::sleep(POPUP_REOPEN_GUARD + Duration::from_millis(50));
         assert!(state.should_open_popup());
-    }
-
-    #[test]
-    fn a_page_cannot_open_links_faster_than_its_allowance() {
-        let openings = Openings::default();
-        let allowed = (0..50).filter(|_| openings.allow("a")).count();
-
-        assert_eq!(allowed, OPEN_PER_TICK, "a burst stops at the per-tick cap");
-        assert!(openings.allow("b"), "per entry");
     }
 
     #[test]
