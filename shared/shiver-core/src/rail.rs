@@ -173,20 +173,25 @@ impl<S: RailServer> Rail<'_, S> {
         Ok(())
     }
 
+    /// Puts one top-level item at `position`.
+    pub fn place(&mut self, item: &RailRef, position: i32) -> Result<()> {
+        match item.kind.as_str() {
+            "folder" => self.folder_mut(&item.id)?.position = position,
+            "server" => self.server_mut(&item.id)?.set_position(position),
+            other => {
+                return Err(Error::InvalidInput(format!(
+                    "'{other}' is not a kind of rail item"
+                )))
+            }
+        }
+
+        Ok(())
+    }
+
     /// Numbers the top level in the given order.
     pub fn reorder(&mut self, ordered: &[RailRef]) -> Result<()> {
         for (index, item) in ordered.iter().enumerate() {
-            let position = index as i32;
-
-            match item.kind.as_str() {
-                "folder" => self.folder_mut(&item.id)?.position = position,
-                "server" => self.server_mut(&item.id)?.set_position(position),
-                other => {
-                    return Err(Error::InvalidInput(format!(
-                        "'{other}' is not a kind of rail item"
-                    )))
-                }
-            }
+            self.place(item, index as i32)?;
         }
 
         Ok(())

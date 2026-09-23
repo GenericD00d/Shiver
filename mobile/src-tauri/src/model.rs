@@ -123,10 +123,6 @@ impl Registry {
         self.servers.iter_mut().find(|server| server.id == id)
     }
 
-    pub fn folder_mut(&mut self, id: &str) -> Option<&mut Folder> {
-        self.folders.iter_mut().find(|folder| folder.id == id)
-    }
-
     pub fn muted_for(&self, entry_id: &str) -> Vec<i64> {
         shiver_core::model::muted_for(&self.muted, entry_id)
     }

@@ -11,7 +11,7 @@ use std::{collections::HashMap, sync::Mutex};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use shiver_core::LockExt;
+use shiver_core::{rail::RailRef, LockExt};
 use tauri::{window::Color, AppHandle, Manager, Url, WebviewWindow};
 use tauri_plugin_shiver_secrets::SecretsExt;
 
@@ -37,7 +37,6 @@ const SEED_PARAM: &str = "shiver-seed";
 
 /// Bounds on what one page's rail may ask of the registry per poll.
 const MAX_CREATES_PER_POLL: usize = 5;
-use shiver_core::rail::MAX_FOLDER_NAME;
 const MAX_FOLDER_ID: usize = 64;
 const DEFAULT_FOLDER_NAME: &str = "Folder";
 
@@ -382,17 +381,11 @@ fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
 #[derive(Debug, Deserialize)]
 struct RailState {
     /// the top level (folders and loose servers) in tile order
-    order: Vec<RailItem>,
+    order: Vec<RailRef>,
     #[serde(default)]
     moves: Vec<RailMove>,
     #[serde(default)]
     creates: Vec<RailCreate>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RailItem {
-    kind: String,
-    id: String,
 }
 
 /// A server moved into (`folder_id`) or out of (`None`) a folder.
@@ -442,37 +435,26 @@ fn apply_creates(store: &Store, creates: &[RailCreate]) -> bool {
                 continue;
             }
 
-            let position = registry
-                .servers
+            let members: Vec<String> = create
+                .member_ids
                 .iter()
-                .filter(|server| create.member_ids.contains(&server.id))
-                .map(|server| server.position)
-                .min();
+                .filter(|member| registry.server(member).is_some())
+                .cloned()
+                .collect();
 
             // a folder of nothing would only be pruned again
-            let Some(position) = position else {
+            if members.is_empty() {
                 continue;
-            };
-
-            for (index, member) in create.member_ids.iter().enumerate() {
-                if let Some(server) = registry.server_mut(member) {
-                    server.folder_id = Some(id.to_string());
-                    server.position = index as i32;
-                }
             }
 
-            let name: String = create.name.trim().chars().take(MAX_FOLDER_NAME).collect();
+            let name = match create.name.trim() {
+                "" => DEFAULT_FOLDER_NAME,
+                name => name,
+            };
 
-            registry.folders.push(Folder {
-                id: id.to_string(),
-                name: if name.is_empty() {
-                    DEFAULT_FOLDER_NAME.into()
-                } else {
-                    name
-                },
-                position,
-                expanded: true,
-            });
+            registry
+                .rail()
+                .create_folder(id.to_string(), name, &members)?;
         }
 
         Ok(())
@@ -488,15 +470,11 @@ fn apply_moves(store: &Store, moves: &[RailMove]) -> bool {
     }
 
     let result = store.update(|registry| {
-        for change in moves {
-            let known = match &change.folder_id {
-                Some(id) => registry.folders.iter().any(|folder| &folder.id == id),
-                None => true,
-            };
+        let mut rail = registry.rail();
 
-            if let (true, Some(server)) = (known, registry.server_mut(&change.server_id)) {
-                server.folder_id = change.folder_id.clone();
-            }
+        for change in moves {
+            // a stale page may name what is gone; the rest still applies
+            let _ = rail.set_server_folder(&change.server_id, change.folder_id.clone());
         }
 
         Ok(())
@@ -507,22 +485,16 @@ fn apply_moves(store: &Store, moves: &[RailMove]) -> bool {
 
 /// Stores the rail's top-level order when it differs from the stored one (or `force`). Folder
 /// contents keep their own order. Compared first because the rail reports every second.
-fn apply_order(store: &Store, ordered: &[RailItem], force: bool) {
+fn apply_order(store: &Store, ordered: &[RailRef], force: bool) {
     if !force && top_level_matches(&store.registry(), ordered) {
         return;
     }
 
     let result = store.update(|registry| {
-        for (index, item) in ordered.iter().enumerate() {
-            let position = index as i32;
+        let mut rail = registry.rail();
 
-            if item.kind == "folder" {
-                if let Some(folder) = registry.folder_mut(&item.id) {
-                    folder.position = position;
-                }
-            } else if let Some(server) = registry.server_mut(&item.id) {
-                server.position = position;
-            }
+        for (index, item) in ordered.iter().enumerate() {
+            let _ = rail.place(item, index as i32);
         }
 
         registry.servers.sort_by_key(|server| server.position);
@@ -533,7 +505,7 @@ fn apply_order(store: &Store, ordered: &[RailItem], force: bool) {
     log_failure("store the rail's new order", result);
 }
 
-fn top_level_matches(registry: &crate::model::Registry, ordered: &[RailItem]) -> bool {
+fn top_level_matches(registry: &crate::model::Registry, ordered: &[RailRef]) -> bool {
     let mut current: Vec<(&str, &str, i32)> = registry
         .folders
         .iter()
