@@ -45,6 +45,11 @@ scripts/check-rails.py     checks mobile's two rails draw badges identically
   persisted only on `Ok`.
 - Rail/folder logic lives in `shiver_core::rail`; the clients call `registry.rail().<op>()`.
 - Keep shared constants in step: `shared/web/settings.ts` ↔ `shiver_core::model`.
+- `mobile/src-tauri/gen/android/` is mostly generated, but `MainActivity.kt` (insets, back handling),
+  `AndroidManifest.xml` and `res/xml/` + `res/values*/` are hand-written: re-running
+  `tauri android init` must be merged, not accepted.
+- Human docs, not covered here: `README.md` (features, building), `RELEASING.md` (signing keys,
+  releases), `SECURITY.md` (reporting), `plugin/README.md` (installing the plugin).
 
 ## shared/shiver-core (`shiver_core`)
 

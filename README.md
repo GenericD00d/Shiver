@@ -105,18 +105,7 @@ protects, and what is and is not recoverable if one is lost.
 
 ## Layout
 
-| Path | What it is |
-| --- | --- |
-| `desktop/` | The desktop client. Self-contained: its own dependencies, build and Rust crate |
-| `mobile/` | The Android client, separate because it cannot share the desktop's shape — Android gives a window one webview |
-| `plugin/` | The optional Sharkord companion plugin. Neither client's, used by both |
-| `shared/sharkord-client/` | Shiver's own client for Sharkord's protocol, depended on by both. One transcription of it rather than two that drift |
-| `shared/shiver-core/` | The rest of what both clients must agree on: the origin rules (`normalize_origin`, `is_same_origin`) and the registry store. Same argument as above — these were byte-identical copies in each client, and `is_same_origin` is the whole of Shiver's webview pinning |
+`desktop/` and `mobile/` are the two clients (each: `src/` Shiver's own UI, `bridge/` the script
+injected into Sharkord pages, `src-tauri/` the Rust core), `shared/` is what both use, and `plugin/`
+is the optional companion plugin. [`ARCHITECTURE.md`](ARCHITECTURE.md) maps every module in detail.
 
-Inside each client: `src/` is Shiver's own UI, `bridge/` is the script injected into every Sharkord
-page, and `src-tauri/src/` is the Rust core.
-
-`mobile/src-tauri/gen/android/` is Tauri's generated Android project and is **not** entirely
-generated: `app/src/main/java/com/shiver/mobile/MainActivity.kt` (the window insets and the back
-handling), `AndroidManifest.xml` and the `res/xml/` network and backup rules are all hand-written.
-Re-running `tauri android init` will overwrite them, so treat it as a merge rather than a refresh.
