@@ -19,4 +19,13 @@ pub enum Error {
     /// The server answered and said no; the message is its own, made safe to display.
     #[error("{0}")]
     Refused(String),
+
+    #[error("{0}")]
+    InvalidInput(String),
+
+    #[error("That server is not in your list")]
+    UnknownServer,
+
+    #[error("That folder is not in your list")]
+    UnknownFolder,
 }

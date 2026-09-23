@@ -30,6 +30,9 @@ use crate::{
     webviews,
 };
 
+/// Fresh sessions refused in a row before a server is left alone until signed in.
+const MAX_REFUSALS: u32 = 3;
+
 /// What each server held unread above its floor when Shiver connected, per entry.
 #[derive(Default)]
 pub struct Missed(Mutex<HashMap<String, usize>>);
@@ -201,65 +204,82 @@ fn finished(app: &AppHandle, entry_id: &str, task_id: u64, park: bool) {
     }
 }
 
-/// Holds one server's connection open, reconnecting with backoff.
+/// Watches one server; renews its session from the stored password, and parks the entry (until
+/// it is signed in) when there is no session or fresh sessions keep being refused.
 async fn watch(app: AppHandle, entry: ServerEntry, task_id: u64) {
-    let origin = entry.origin.clone();
-    let mut failures: u32 = 0;
-    let mut refusals: u32 = 0;
+    let key = entry.id.clone();
 
-    loop {
-        // asked each attempt, which is what renews an expiring session from the stored password
-        let Some(token) = commands::ensure_session(&entry).await else {
-            eprintln!("[shiver] no session for {origin}; it is not watched until it is signed in");
+    sharkord::watch(
+        &key,
+        Watch {
+            app,
+            entry,
+            task_id,
+        },
+    )
+    .await;
+}
 
-            return finished(&app, &entry.id, task_id, true);
+struct Watch {
+    app: AppHandle,
+    entry: ServerEntry,
+    task_id: u64,
+}
+
+impl sharkord::Watcher for Watch {
+    async fn target(&mut self) -> Option<sharkord::Target> {
+        // asked each attempt, which is what renews an expiring session
+        let Some(token) = commands::ensure_session(&self.entry).await else {
+            eprintln!(
+                "[shiver] no session for {}; not watched until signed in",
+                self.entry.origin
+            );
+            finished(&self.app, &self.entry.id, self.task_id, true);
+
+            return None;
         };
 
-        let trusted = app
+        let accept_any_size = self
+            .app
             .state::<Store>()
             .registry()
-            .server(&entry.id)
+            .server(&self.entry.id)
             .is_some_and(|server| server.accept_any_size);
 
-        match sharkord::open(&origin, &token, trusted).await {
-            Ok(mut session) => {
-                failures = 0;
-                refusals = 0;
-                on_joined(&app, &entry.id, &session.joined);
+        Some(sharkord::Target {
+            origin: self.entry.origin.clone(),
+            token,
+            accept_any_size,
+        })
+    }
 
-                while let Some(event) = session.next_event().await {
-                    on_event(&app, &entry.id, &session.joined, event);
-                }
+    fn joined(&mut self, joined: &sharkord::Joined) {
+        on_joined(&self.app, &self.entry.id, joined);
+    }
 
-                eprintln!("[shiver] {origin} closed the connection");
-            }
-            Err(sharkord::Error::Refused(reason)) => {
-                // drop the refused token so `ensure_session` signs in again next time round
-                eprintln!("[shiver] {origin} refused Shiver's session ({reason})");
-                let _ = secrets::forget_off_thread(Secret::Session, &entry.id).await;
+    fn event(&mut self, joined: &sharkord::Joined, event: sharkord::Event) {
+        on_event(&self.app, &self.entry.id, joined, event);
+    }
 
-                // a server that refuses even fresh sessions is left alone until the user signs in
-                refusals += 1;
+    async fn refused(&mut self, refusals: u32) -> bool {
+        // dropped so `ensure_session` signs in afresh
+        let _ = secrets::forget_off_thread(Secret::Session, &self.entry.id).await;
 
-                if refusals >= 3 {
-                    return finished(&app, &entry.id, task_id, true);
-                }
-            }
-            Err(sharkord::Error::TooLarge { size, max }) => {
-                eprintln!(
-                    "[shiver] {origin} sent {size} bytes in one message; Shiver accepts {max}"
-                );
-                report_too_large(&app, &entry.id, size);
-            }
-            Err(error) => eprintln!("[shiver] could not watch {origin}: {error}"),
+        if refusals >= MAX_REFUSALS {
+            finished(&self.app, &self.entry.id, self.task_id, true);
+
+            return false;
         }
 
-        app.state::<Readiness>().disconnected(&entry.id);
+        true
+    }
 
-        let wait = sharkord::retry_delay(failures, &entry.id);
+    fn too_large(&mut self, size: usize) {
+        report_too_large(&self.app, &self.entry.id, size);
+    }
 
-        failures = failures.saturating_add(1);
-        tokio::time::sleep(wait).await;
+    fn disconnected(&mut self) {
+        self.app.state::<Readiness>().disconnected(&self.entry.id);
     }
 }
 

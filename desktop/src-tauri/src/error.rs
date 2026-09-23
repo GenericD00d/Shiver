@@ -53,6 +53,9 @@ impl From<shiver_core::Error> for Error {
             Core::Unreachable(message) => Error::Unreachable(message),
             Core::NotSharkord(message) => Error::NotSharkord(message),
             Core::Refused(message) => Error::Refused(message),
+            Core::InvalidInput(message) => Error::InvalidInput(message),
+            Core::UnknownServer => Error::UnknownServer,
+            Core::UnknownFolder => Error::UnknownFolder,
         }
     }
 }

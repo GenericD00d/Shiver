@@ -144,7 +144,7 @@ pub fn run() {
             webviews::create_main_window(handle)?;
             webviews::prune_profiles(handle);
             drain::spawn(handle);
-            commands::connect_all_servers(handle);
+            crate::watch::sync(handle);
 
             update::start(handle);
 

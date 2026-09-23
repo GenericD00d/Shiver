@@ -12,7 +12,10 @@ pub use shiver_core::{
     },
     normalize_origin,
     probe::ServerInfo,
+    rail::Rail,
 };
+
+shiver_core::rail_server!(ServerEntry);
 
 /// One rail entry. The same origin may appear more than once (several accounts on one server);
 /// `id` is what identifies the entry everywhere, never the origin.
@@ -161,10 +164,6 @@ impl Registry {
         self.servers.iter_mut().find(|server| server.id == id)
     }
 
-    pub fn folder_mut(&mut self, id: &str) -> Option<&mut Folder> {
-        self.folders.iter_mut().find(|folder| folder.id == id)
-    }
-
     pub fn muted_for(&self, entry_id: &str) -> Vec<i64> {
         shiver_core::model::muted_for(&self.muted, entry_id)
     }
@@ -178,13 +177,15 @@ impl Registry {
         shiver_core::model::set_muted_for(&mut self.muted, entry_id, channels)
     }
 
-    /// The next free position at the top level of the rail (servers and folders share one space).
+    /// The next free top-level position.
     pub fn next_position(&self) -> i32 {
-        self.servers
-            .iter()
-            .map(|server| server.position)
-            .chain(self.folders.iter().map(|folder| folder.position))
-            .max()
-            .map_or(0, |max| max + 1)
+        shiver_core::rail::next_position(&self.servers, &self.folders)
+    }
+
+    pub fn rail(&mut self) -> Rail<'_, ServerEntry> {
+        Rail {
+            servers: &mut self.servers,
+            folders: &mut self.folders,
+        }
     }
 }

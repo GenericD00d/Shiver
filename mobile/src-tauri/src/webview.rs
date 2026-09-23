@@ -35,7 +35,7 @@ const SEED_PARAM: &str = "shiver-seed";
 
 /// Bounds on what one page's rail may ask of the registry per poll.
 const MAX_CREATES_PER_POLL: usize = 5;
-const MAX_FOLDER_NAME: usize = 100;
+use shiver_core::rail::MAX_FOLDER_NAME;
 const MAX_FOLDER_ID: usize = 64;
 const DEFAULT_FOLDER_NAME: &str = "Folder";
 
@@ -416,7 +416,7 @@ fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
     apply_order(&store, &rail.order, changed);
 
     if changed {
-        let _ = store.update(|registry| Ok(crate::model::prune_folders(registry)));
+        let _ = store.update(|registry| Ok(registry.rail().prune_folders()));
     }
 }
 

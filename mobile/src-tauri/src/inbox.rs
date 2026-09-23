@@ -493,77 +493,87 @@ pub fn sync(app: &AppHandle) {
     publish(app);
 }
 
-fn origin_of(app: &AppHandle, entry_id: &str) -> Option<(String, bool)> {
-    app.state::<Store>()
-        .registry()
-        .server(entry_id)
-        .map(|server| (server.origin.clone(), server.accept_any_size))
+/// Watches one server with the session Shiver holds. A refused session is renewed from the stored
+/// password; repeated refusals give up and mark the server signed out.
+async fn watch(app: AppHandle, entry_id: String) {
+    let key = entry_id.clone();
+
+    sharkord::watch(&key, Watch { app, entry_id }).await;
 }
 
-/// Holds one server's connection, reconnecting with backoff. A refused session triggers a sign-in
-/// with the stored password; repeated refusals give up and mark the server signed out.
-async fn watch(app: AppHandle, entry_id: String) {
-    let mut failures: u32 = 0;
-    let mut refusals: u32 = 0;
+struct Watch {
+    app: AppHandle,
+    entry_id: String,
+}
 
-    loop {
-        let (Some(token), Some((origin, accept_any_size))) = (
-            app.state::<Inbox>().token(&entry_id),
-            origin_of(&app, &entry_id),
-        ) else {
-            app.state::<Inbox>()
-                .with(|state| state.running.remove(&entry_id));
+impl sharkord::Watcher for Watch {
+    async fn target(&mut self) -> Option<sharkord::Target> {
+        let token = self.app.state::<Inbox>().token(&self.entry_id);
+        let server = self
+            .app
+            .state::<Store>()
+            .registry()
+            .server(&self.entry_id)
+            .map(|server| (server.origin.clone(), server.accept_any_size));
 
-            return;
+        let (Some(token), Some((origin, accept_any_size))) = (token, server) else {
+            self.app
+                .state::<Inbox>()
+                .with(|state| state.running.remove(&self.entry_id));
+
+            return None;
         };
 
-        match sharkord::open(&origin, &token, accept_any_size).await {
-            Ok(mut session) => {
-                failures = 0;
-                refusals = 0;
-                on_joined(&app, &entry_id, &session.joined);
+        Some(sharkord::Target {
+            origin,
+            token,
+            accept_any_size,
+        })
+    }
 
-                while let Some(event) = session.next_event().await {
-                    match event {
-                        sharkord::Event::Unread { channel_id, delta } => {
-                            update_read_states(&app, &entry_id, |states| {
-                                sharkord::apply_delta(states, channel_id, delta)
-                            });
-                        }
-                        sharkord::Event::UnreadSet { channel_id, count } => {
-                            update_read_states(&app, &entry_id, |states| {
-                                sharkord::set_unread(states, channel_id, count)
-                            });
-                        }
-                        sharkord::Event::Posted(message) => {
-                            announce(&app, &entry_id, &session.joined, &message)
-                        }
-                    }
-                }
+    fn joined(&mut self, joined: &sharkord::Joined) {
+        on_joined(&self.app, &self.entry_id, joined);
+    }
+
+    fn event(&mut self, joined: &sharkord::Joined, event: sharkord::Event) {
+        let (app, entry_id) = (&self.app, self.entry_id.as_str());
+
+        match event {
+            sharkord::Event::Unread { channel_id, delta } => {
+                update_read_states(app, entry_id, |states| {
+                    sharkord::apply_delta(states, channel_id, delta)
+                })
             }
-            Err(sharkord::Error::Refused(reason)) => {
-                eprintln!("[shiver] {origin} refused Shiver's stored session ({reason})");
-                refusals += 1;
-
-                if refusals < MAX_REFUSALS && sign_in_again(&app, &entry_id, &origin).await {
-                    continue;
-                }
-
-                forget_session(&app, &entry_id);
-
-                return;
+            sharkord::Event::UnreadSet { channel_id, count } => {
+                update_read_states(app, entry_id, |states| {
+                    sharkord::set_unread(states, channel_id, count)
+                })
             }
-            Err(sharkord::Error::TooLarge { size, max }) => {
-                eprintln!(
-                    "[shiver] {origin} sent {size} bytes in one message; Shiver accepts {max}"
-                );
-                report_watch_problem(&app, &entry_id, size);
+            sharkord::Event::Posted(message) => announce(app, entry_id, joined, &message),
+        }
+    }
+
+    async fn refused(&mut self, refusals: u32) -> bool {
+        let origin = self
+            .app
+            .state::<Store>()
+            .registry()
+            .server(&self.entry_id)
+            .map(|server| server.origin.clone());
+
+        if let Some(origin) = origin {
+            if refusals < MAX_REFUSALS && sign_in_again(&self.app, &self.entry_id, &origin).await {
+                return true;
             }
-            Err(error) => eprintln!("[shiver] could not watch {origin}: {error}"),
         }
 
-        tokio::time::sleep(sharkord::retry_delay(failures, &entry_id)).await;
-        failures = failures.saturating_add(1);
+        forget_session(&self.app, &self.entry_id);
+
+        false
+    }
+
+    fn too_large(&mut self, size: usize) {
+        report_watch_problem(&self.app, &self.entry_id, size);
     }
 }
 

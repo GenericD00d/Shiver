@@ -11,7 +11,10 @@ pub use shiver_core::{
     },
     normalize_origin,
     probe::ServerInfo,
+    rail::Rail,
 };
+
+shiver_core::rail_server!(ServerEntry);
 
 /// One rail entry; `id` identifies it everywhere, never the origin.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -144,15 +147,16 @@ impl Registry {
         shiver_core::model::set_muted_for(&mut self.muted, entry_id, channels)
     }
 
-    /// The next free top-level position (servers and folders share one space).
+    /// The next free top-level position.
     pub fn next_position(&self) -> i32 {
-        self.servers
-            .iter()
-            .filter(|server| server.folder_id.is_none())
-            .map(|server| server.position)
-            .chain(self.folders.iter().map(|folder| folder.position))
-            .max()
-            .map_or(0, |max| max + 1)
+        shiver_core::rail::next_position(&self.servers, &self.folders)
+    }
+
+    pub fn rail(&mut self) -> Rail<'_, ServerEntry> {
+        Rail {
+            servers: &mut self.servers,
+            folders: &mut self.folders,
+        }
     }
 
     /// The entry a push token belongs to.
@@ -172,187 +176,5 @@ impl Registry {
                 server.id.clone()
             })
             .collect()
-    }
-}
-
-/// Dissolves folders holding fewer than two servers: their servers take the folder's place at the
-/// top level, which is then renumbered 0, 1, 2… Returns whether anything changed.
-pub fn prune_folders(registry: &mut Registry) -> bool {
-    let doomed: Vec<(String, i32)> = registry
-        .folders
-        .iter()
-        .filter(|folder| {
-            registry
-                .servers
-                .iter()
-                .filter(|server| server.folder_id.as_deref() == Some(folder.id.as_str()))
-                .count()
-                < 2
-        })
-        .map(|folder| (folder.id.clone(), folder.position))
-        .collect();
-
-    if doomed.is_empty() {
-        return false;
-    }
-
-    for server in registry.servers.iter_mut() {
-        if let Some((_, place)) = server
-            .folder_id
-            .as_ref()
-            .and_then(|id| doomed.iter().find(|(doomed, _)| doomed == id))
-        {
-            server.position = *place;
-            server.folder_id = None;
-        }
-    }
-
-    registry
-        .folders
-        .retain(|folder| !doomed.iter().any(|(id, _)| id == &folder.id));
-
-    let mut items: Vec<(i32, bool, String)> = registry
-        .servers
-        .iter()
-        .filter(|server| server.folder_id.is_none())
-        .map(|server| (server.position, false, server.id.clone()))
-        .chain(
-            registry
-                .folders
-                .iter()
-                .map(|folder| (folder.position, true, folder.id.clone())),
-        )
-        .collect();
-
-    items.sort_by_key(|(position, _, _)| *position);
-
-    for (index, (_, is_folder, id)) in items.iter().enumerate() {
-        if *is_folder {
-            if let Some(folder) = registry.folder_mut(id) {
-                folder.position = index as i32;
-            }
-        } else if let Some(server) = registry.server_mut(id) {
-            server.position = index as i32;
-        }
-    }
-
-    true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_folder_holding_fewer_than_two_servers_dissolves() {
-        let mut registry = Registry {
-            folders: vec![
-                Folder {
-                    id: "keep".into(),
-                    name: "Keep".into(),
-                    position: 0,
-                    expanded: true,
-                },
-                Folder {
-                    id: "lonely".into(),
-                    name: "Lonely".into(),
-                    position: 1,
-                    expanded: true,
-                },
-                Folder {
-                    id: "empty".into(),
-                    name: "Empty".into(),
-                    position: 2,
-                    expanded: true,
-                },
-            ],
-            servers: vec![
-                folder_member("a", Some("keep")),
-                folder_member("b", Some("keep")),
-                folder_member("c", Some("lonely")),
-                folder_member("d", None),
-            ],
-            ..Default::default()
-        };
-
-        assert!(prune_folders(&mut registry));
-
-        let left: Vec<&str> = registry.folders.iter().map(|f| f.id.as_str()).collect();
-
-        assert_eq!(left, vec!["keep"]);
-
-        // the one that was on its own is still here, just no longer in a folder
-        let c = registry.servers.iter().find(|s| s.id == "c").unwrap();
-
-        assert_eq!(c.folder_id, None);
-        assert_eq!(registry.servers.len(), 4);
-    }
-
-    #[test]
-    fn pruning_a_tidy_rail_changes_nothing() {
-        let mut registry = Registry {
-            folders: vec![Folder {
-                id: "keep".into(),
-                name: "Keep".into(),
-                position: 0,
-                expanded: true,
-            }],
-            servers: vec![
-                folder_member("a", Some("keep")),
-                folder_member("b", Some("keep")),
-            ],
-            ..Default::default()
-        };
-
-        assert!(!prune_folders(&mut registry));
-        assert_eq!(registry.folders.len(), 1);
-    }
-
-    #[test]
-    fn a_freed_server_lands_where_its_folder_was() {
-        let mut registry = Registry {
-            folders: vec![Folder {
-                id: "lonely".into(),
-                name: "Lonely".into(),
-                position: 1,
-                expanded: true,
-            }],
-            servers: vec![
-                at("first", None, 0),
-                // inside the folder, so this zero says nothing about the top level
-                at("freed", Some("lonely"), 0),
-                at("last", None, 2),
-            ],
-            ..Default::default()
-        };
-
-        assert!(prune_folders(&mut registry));
-
-        let mut order: Vec<(&str, i32)> = registry
-            .servers
-            .iter()
-            .map(|server| (server.id.as_str(), server.position))
-            .collect();
-
-        order.sort_by_key(|(_, position)| *position);
-
-        assert_eq!(order, vec![("first", 0), ("freed", 1), ("last", 2)]);
-    }
-
-    fn at(id: &str, folder: Option<&str>, position: i32) -> ServerEntry {
-        ServerEntry {
-            position,
-            ..folder_member(id, folder)
-        }
-    }
-
-    fn folder_member(id: &str, folder: Option<&str>) -> ServerEntry {
-        ServerEntry {
-            id: id.into(),
-            name: id.into(),
-            origin: format!("https://{id}.example.com"),
-            folder_id: folder.map(str::to_string),
-            ..Default::default()
-        }
     }
 }

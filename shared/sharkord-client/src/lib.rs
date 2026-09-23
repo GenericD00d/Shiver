@@ -480,6 +480,74 @@ pub fn retry_delay(attempt: u32, key: &str) -> std::time::Duration {
     backed_off + std::time::Duration::from_millis(spread.checked_rem(jitter).unwrap_or(0))
 }
 
+/// Where and how to connect for one attempt.
+pub struct Target {
+    pub origin: String,
+    pub token: String,
+    pub accept_any_size: bool,
+}
+
+/// The client-specific half of [`watch`].
+pub trait Watcher: Send {
+    /// What to connect with next; `None` stops watching.
+    fn target(&mut self) -> impl std::future::Future<Output = Option<Target>> + Send;
+    fn joined(&mut self, joined: &Joined);
+    fn event(&mut self, joined: &Joined, event: Event);
+    /// The server refused the session (`refusals` in a row). `true` retries at once (after the
+    /// watcher renewed the session); `false` stops watching.
+    fn refused(&mut self, refusals: u32) -> impl std::future::Future<Output = bool> + Send;
+    /// A message exceeded the frame limit (retrying will not fix it).
+    fn too_large(&mut self, size: usize);
+    /// The connection is down, before the backoff.
+    fn disconnected(&mut self) {}
+}
+
+/// Holds one server's connection open, reconnecting with [`retry_delay`] backoff (keyed by `key`)
+/// until the watcher stops it.
+pub async fn watch(key: &str, mut watcher: impl Watcher) {
+    let mut failures: u32 = 0;
+    let mut refusals: u32 = 0;
+
+    while let Some(target) = watcher.target().await {
+        let origin = &target.origin;
+
+        match open(origin, &target.token, target.accept_any_size).await {
+            Ok(mut session) => {
+                failures = 0;
+                refusals = 0;
+                watcher.joined(&session.joined);
+
+                while let Some(event) = session.next_event().await {
+                    watcher.event(&session.joined, event);
+                }
+
+                eprintln!("[shiver] {origin} closed the connection");
+            }
+            Err(Error::Refused(reason)) => {
+                eprintln!("[shiver] {origin} refused Shiver's session ({reason})");
+                refusals += 1;
+
+                if watcher.refused(refusals).await {
+                    continue;
+                }
+
+                return;
+            }
+            Err(Error::TooLarge { size, max }) => {
+                eprintln!(
+                    "[shiver] {origin} sent {size} bytes in one message; Shiver accepts {max}"
+                );
+                watcher.too_large(size);
+            }
+            Err(error) => eprintln!("[shiver] could not watch {origin}: {error}"),
+        }
+
+        watcher.disconnected();
+        tokio::time::sleep(retry_delay(failures, key)).await;
+        failures = failures.saturating_add(1);
+    }
+}
+
 /// `TooLarge` for a size limit (it will not fix itself), `Unreachable` for anything else.
 fn socket_error(error: tokio_tungstenite::tungstenite::Error) -> Error {
     use tokio_tungstenite::tungstenite::{error::CapacityError, Error as Tungstenite};

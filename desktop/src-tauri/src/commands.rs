@@ -28,8 +28,6 @@ use shiver_core::{login, probe};
 /// Tells Shiver's own webviews the settings changed.
 const SETTINGS_EVENT: &str = "shiver://settings";
 
-const MAX_FOLDER_NAME: usize = 100;
-
 type Password = Zeroizing<String>;
 
 /* ── lookups ── */
@@ -54,16 +52,6 @@ fn voice_locked_for(app: &AppHandle, entry_id: &str) -> bool {
     app.state::<VoiceState>()
         .holder()
         .is_some_and(|holder| holder != entry_id)
-}
-
-fn clamp_name(name: &str) -> Result<String> {
-    let trimmed = name.trim();
-
-    if trimmed.is_empty() {
-        return Err(Error::InvalidInput("A folder needs a name".into()));
-    }
-
-    Ok(trimmed.chars().take(MAX_FOLDER_NAME).collect())
 }
 
 /* ── sessions ── */
@@ -433,60 +421,19 @@ pub async fn set_accept_any_size(
 
 /* ── the rail ── */
 
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RailRef {
-    pub kind: String,
-    pub id: String,
-}
-
 /// Applies a drag of top-level servers only.
 #[tauri::command]
 pub async fn reorder_servers(store: State<'_, Store>, ordered_ids: Vec<String>) -> Result<()> {
-    store.update(|registry| {
-        for (index, id) in ordered_ids.iter().enumerate() {
-            registry
-                .server_mut(id)
-                .ok_or(Error::UnknownServer)?
-                .position = index as i32;
-        }
-
-        registry.servers.sort_by_key(|server| server.position);
-
-        Ok(())
-    })
+    store.update(|registry| Ok(registry.rail().reorder_servers(&ordered_ids)?))
 }
 
 /// Applies a drag anywhere at the top level (servers and folders share one position space).
 #[tauri::command]
-pub async fn reorder_rail(store: State<'_, Store>, ordered: Vec<RailRef>) -> Result<()> {
-    store.update(|registry| {
-        for (index, item) in ordered.iter().enumerate() {
-            let position = index as i32;
-
-            match item.kind.as_str() {
-                "folder" => {
-                    registry
-                        .folder_mut(&item.id)
-                        .ok_or(Error::UnknownFolder)?
-                        .position = position
-                }
-                "server" => {
-                    registry
-                        .server_mut(&item.id)
-                        .ok_or(Error::UnknownServer)?
-                        .position = position
-                }
-                other => {
-                    return Err(Error::InvalidInput(format!(
-                        "'{other}' is not a kind of rail item"
-                    )))
-                }
-            }
-        }
-
-        Ok(())
-    })
+pub async fn reorder_rail(
+    store: State<'_, Store>,
+    ordered: Vec<shiver_core::rail::RailRef>,
+) -> Result<()> {
+    store.update(|registry| Ok(registry.rail().reorder(&ordered)?))
 }
 
 /// Creates a folder holding `member_ids`, at the first member's place, in one step.
@@ -497,81 +444,30 @@ pub async fn create_folder_with(
     member_ids: Vec<String>,
 ) -> Result<Folder> {
     store.update(|registry| {
-        let position = registry
-            .servers
-            .iter()
-            .filter(|server| member_ids.contains(&server.id))
-            .map(|server| server.position)
-            .min()
-            .unwrap_or_else(|| registry.next_position());
-
-        let folder = Folder {
-            id: Uuid::new_v4().to_string(),
-            name: clamp_name(&name)?,
-            position,
-            expanded: true,
-        };
-
-        for (index, id) in member_ids.iter().enumerate() {
-            let server = registry.server_mut(id).ok_or(Error::UnknownServer)?;
-
-            server.folder_id = Some(folder.id.clone());
-            server.position = index as i32;
-        }
-
-        registry.folders.push(folder.clone());
-
-        Ok(folder)
+        Ok(registry
+            .rail()
+            .create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?)
     })
 }
 
 #[tauri::command]
 pub async fn create_folder(store: State<'_, Store>, name: String) -> Result<Folder> {
     store.update(|registry| {
-        let folder = Folder {
-            id: Uuid::new_v4().to_string(),
-            name: clamp_name(&name)?,
-            position: registry.next_position(),
-            expanded: true,
-        };
-
-        registry.folders.push(folder.clone());
-
-        Ok(folder)
+        Ok(registry
+            .rail()
+            .create_folder(Uuid::new_v4().to_string(), &name, &[])?)
     })
 }
 
 #[tauri::command]
 pub async fn rename_folder(store: State<'_, Store>, id: String, name: String) -> Result<()> {
-    store.update(|registry| {
-        registry.folder_mut(&id).ok_or(Error::UnknownFolder)?.name = clamp_name(&name)?;
-
-        Ok(())
-    })
+    store.update(|registry| Ok(registry.rail().rename_folder(&id, &name)?))
 }
 
 /// Deletes a folder; its servers move back to the top level.
 #[tauri::command]
 pub async fn delete_folder(store: State<'_, Store>, id: String) -> Result<()> {
-    store.update(|registry| {
-        let before = registry.folders.len();
-
-        registry.folders.retain(|folder| folder.id != id);
-
-        if registry.folders.len() == before {
-            return Err(Error::UnknownFolder);
-        }
-
-        for server in registry
-            .servers
-            .iter_mut()
-            .filter(|server| server.folder_id.as_deref() == Some(id.as_str()))
-        {
-            server.folder_id = None;
-        }
-
-        Ok(())
-    })
+    store.update(|registry| Ok(registry.rail().delete_folder(&id)?))
 }
 
 #[tauri::command]
@@ -581,14 +477,9 @@ pub async fn set_server_folder(
     folder_id: Option<String>,
 ) -> Result<()> {
     store.update(|registry| {
-        if let Some(folder_id) = &folder_id {
-            registry.folder_mut(folder_id).ok_or(Error::UnknownFolder)?;
-        }
+        let mut rail = registry.rail();
 
-        registry
-            .server_mut(&id)
-            .ok_or(Error::UnknownServer)?
-            .folder_id = folder_id;
+        rail.set_server_folder(&id, folder_id)?;
 
         Ok(())
     })
@@ -600,14 +491,7 @@ pub async fn set_folder_expanded(
     id: String,
     expanded: bool,
 ) -> Result<()> {
-    store.update(|registry| {
-        registry
-            .folder_mut(&id)
-            .ok_or(Error::UnknownFolder)?
-            .expanded = expanded;
-
-        Ok(())
-    })
+    store.update(|registry| Ok(registry.rail().set_folder_expanded(&id, expanded)?))
 }
 
 #[tauri::command]
@@ -1002,21 +886,9 @@ pub async fn dismiss_popup(app: AppHandle) -> Result<()> {
     webviews::set_popup_open(&app, false)
 }
 
-/// Starts a socket for every signed-in server at launch; pages are built only when opened.
-pub(crate) fn connect_all_servers(app: &AppHandle) {
-    crate::watch::sync(app);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn folder_names_are_trimmed_bounded_and_required() {
-        assert_eq!(clamp_name("  games  ").unwrap(), "games");
-        assert_eq!(clamp_name(&"x".repeat(500)).unwrap().len(), MAX_FOLDER_NAME);
-        assert!(clamp_name("   ").is_err());
-    }
 
     #[test]
     fn the_plugin_label_has_three_answers() {

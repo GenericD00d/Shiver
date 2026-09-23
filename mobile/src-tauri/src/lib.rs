@@ -135,7 +135,7 @@ pub fn run() {
 
             let _ = app
                 .state::<Store>()
-                .update(|registry| Ok(model::prune_folders(registry)));
+                .update(|registry| Ok(registry.rail().prune_folders()));
 
             inbox::restore(&handle);
             ask_to_notify(&handle);
