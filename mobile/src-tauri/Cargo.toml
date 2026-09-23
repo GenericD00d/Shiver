@@ -1,42 +1,33 @@
 [package]
 name = "shiver-mobile"
-version = "0.1.4"
 description = "Shiver for Android"
-edition = "2021"
-rust-version = "1.77.2"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
-# Android loads the app as a shared library rather than running a binary, so the crate has to be
-# built as one. `main.rs` stays for running the same app on a desktop, which is how it is tested.
 [lib]
 name = "shiver_mobile_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build.workspace = true
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
-tauri-plugin-shiver-secrets = { path = "../plugins/tauri-plugin-shiver-secrets" }
-# the Sharkord protocol itself, shared with desktop so there is one transcription of it
-sharkord-client = { path = "../../shared/sharkord-client" }
-# the origin rules and the registry store, shared so there is one copy of each rather than two
-shiver-core = { path = "../../shared/shiver-core" }
-tauri-plugin-shiver-push = { path = "../plugins/tauri-plugin-shiver-push" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
-# comparing versions the way versions mean, not the way strings sort
-semver = "1"
-url = "2"
-uuid = { version = "1", features = ["v4"] }
-# the password crosses ipc as a String and is copied on the way to the server; this is what
-# clears those copies rather than leaving them in freed heap for a core dump to pick up
-zeroize = { version = "1", features = ["derive"] }
-thiserror = "2"
-base64 = "0.22"
-# the core's own connection to a server, so notifications arrive from servers that have no webview
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
-futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+tauri.workspace = true
+tauri-plugin-opener.workspace = true
 tauri-plugin-notification = "2.4.0"
+tauri-plugin-shiver-secrets = { path = "../plugins/tauri-plugin-shiver-secrets" }
+tauri-plugin-shiver-push = { path = "../plugins/tauri-plugin-shiver-push" }
+sharkord-client.workspace = true
+shiver-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# the update check follows GitHub's release redirect, so it has its own client
+reqwest.workspace = true
+semver = "1"
+url.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }
+

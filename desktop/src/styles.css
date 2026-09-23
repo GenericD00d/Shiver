@@ -130,10 +130,7 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  /* the tile used to clip this, which also clipped anything meant to overhang it: the unread badge
-     and, less visibly, the drop indicator, whose line sits 6px outside the tile and so never drew
-     on a server at all. the icon rounds itself now and the tile clips nothing. `inherit` follows
-     the tile through its hover and merge-target radii, transition included. */
+  /* the tile clips nothing (the badge and drop line overhang it), so the icon rounds itself */
   border-radius: inherit;
   transition: border-radius 120ms ease;
 }
@@ -245,14 +242,8 @@ body {
   font-size: 14px;
 }
 
-/* Unread on a server icon, matching the bell's badge because they count the same thing, and
-   overhanging the tile the way the bell's does. That is why `.rail-item` no longer clips its
-   contents: see `.rail-item img`, which now rounds itself instead.
-
-   Pale with dark text, which is Sharkord's own unread badge (`bg-primary text-primary-foreground`)
-   rather than Shiver's invention. It also frees the colour red: Sharkord paints a badge red when it
-   is a mention, and Shiver paints the offline mark red, so red now means something is *wanted from
-   you* rather than being the ordinary colour of having messages. */
+/* Unread count: Sharkord's own pale badge, overhanging the tile like the bell's (red is kept for
+   the offline mark). */
 .rail-badge {
   position: absolute;
   top: -2px;
@@ -271,14 +262,8 @@ body {
   box-shadow: 0 0 0 1px var(--shiver-rail);
 }
 
-/* A server that is not answering, marked on the icon itself rather than beside it.
-
-   A permanent dot on every icon is a light that is on when nothing is wrong, which is nearly
-   always, so it stops being read. This appears only when something needs attention.
-
-   The exclamation is cut *out* of the red rather than drawn on it, so the server's own icon shows
-   through the mark and the tile still reads as that server. `border-radius: inherit` keeps the
-   overlay on the tile's shape through its hover and merge-target radii. */
+/* A server that is not answering: a red mark with the exclamation cut out, so the icon shows
+   through; `inherit` follows the tile's radius. */
 .rail-offline {
   position: absolute;
   inset: 0;
@@ -415,33 +400,12 @@ body {
   min-width: 0;
 }
 
-.panel-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.panel-header .actions {
-  margin-top: 0;
-}
-
-.panel-header h1 {
-  margin-bottom: 4px;
-}
-
-.panel-header p.hint {
-  margin-bottom: 0;
-}
-
 .empty {
   color: var(--shiver-text-dim);
   max-width: 460px;
 }
 
-.feed,
-.dm-list {
+.feed {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -456,10 +420,7 @@ body {
   border-bottom: 1px solid var(--shiver-border);
 }
 
-/* Read messages are **not** faded. They used to drop to 55% opacity, which on a feed where most
-   things have been seen made the whole list look disabled and the text hard to read — and fading is
-   a poor way to say "read" anyway, because it also says "less important" about a message somebody
-   may be scrolling back to find. The unread mark below carries that distinction instead. */
+/* The unread mark (read items are not faded, which would read as disabled). */
 .feed-item::before {
   content: '';
   width: 6px;
@@ -483,9 +444,7 @@ body {
 }
 
 .feed-item img,
-.feed-item .fallback,
-.dm-row img,
-.dm-row .fallback {
+.feed-item .fallback {
   width: 32px;
   height: 32px;
   flex: 0 0 32px;
@@ -682,14 +641,6 @@ button.small {
   background: var(--shiver-bg);
   color: var(--shiver-text-dim);
   font-size: 13px;
-}
-
-.dm-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .panel {
@@ -1027,23 +978,13 @@ button:disabled {
   background: var(--shiver-surface-hover);
 }
 
-.menu button.danger {
-  color: var(--shiver-danger);
-}
-
 .menu hr {
   margin: 4px 6px;
   border: none;
   border-top: 1px solid var(--shiver-border);
 }
 
-/* ---------------------------------------------------------------------------------------------
-   Global voice controls
-
-   These live in the rail because the rail is the only part of the shell a server webview never
-   covers, which is what makes the call reachable from any server. 72px is not much to work with,
-   so the tile leans on its tooltip for the full names and keeps the buttons legible instead.
-   --------------------------------------------------------------------------------------------- */
+/* ── Global voice controls: in the rail, the one part of the shell a server never covers ── */
 
 .voice-tile {
   width: 66px;
@@ -1135,13 +1076,7 @@ button:disabled {
   color: #ffffff;
 }
 
-/* ---------------------------------------------------------------------------------------------
-   Connecting: Shiver's own view of a server whose client is not up yet
-
-   With the message cache on this is the saved messages, so the server can be read immediately;
-   with it off it is the loading screen DESIGN.md specifies as the default. Both are read-only:
-   the real client takes the area back the moment it has connected.
-   --------------------------------------------------------------------------------------------- */
+/* ── Connecting: a spinner over a server whose client is not up yet ── */
 
 @keyframes shiver-spin {
   to {

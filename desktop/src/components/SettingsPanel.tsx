@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../api';
 
 import { HotkeyField } from './HotkeyField';
-import { automaticTextColor } from '../theme';
+import { automaticTextColor } from '../../../shared/web/theme';
 import { playNotificationSound } from '../sounds';
 import {
   DEFAULT_ACCENT_COLOR,
@@ -20,14 +20,7 @@ type Props = {
   onClose: () => void;
 };
 
-/**
- * The sections, in the order they are listed.
- *
- * Grouped by what a person came here to change rather than by what the code calls things. Shiver's
- * settings are few enough that one list was readable for a while, but it had grown to eight
- * unrelated controls in a column — the colours, a keyboard shortcut and a memory dial all in the
- * same run — and the only way to find anything was to read all of it.
- */
+/** The settings sections, grouped by what the user came to change. */
 const SECTIONS = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'notifications', label: 'Notifications' },
@@ -134,20 +127,18 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
     }
   }, []);
 
-  // Answers in place of a toast: this panel has nowhere to put one, and a button that says nothing
-  // when pressed is exactly the sort of silence this feature exists to fix.
+  // the result is shown inline, since this panel has nowhere to put a toast
   const [permissionsReset, setPermissionsReset] = useState<string | null>(null);
 
   const handleResetPermissions = useCallback(async () => {
     try {
       const forgotten = await api.resetMediaPermissions();
 
-      // The count, not a cheerful noise. This button spent a release saying "Forgotten" while
-      // clearing nothing at all, and the only thing that would have caught it sooner is the number.
+      // open servers are reset now; the rest when they are next opened
       setPermissionsReset(
         forgotten === 0
-          ? 'Nothing was stored — no server has been answered yet'
-          : `Forgotten for ${forgotten} ${forgotten === 1 ? 'answer' : 'answers'} — you will be asked again`
+          ? 'Done — servers will ask again (closed ones are reset when next opened)'
+          : `Forgot ${forgotten} ${forgotten === 1 ? 'answer' : 'answers'}; closed servers are reset when next opened`
       );
     } catch (error) {
       setPermissionsReset(errorMessage(error));

@@ -1,12 +1,8 @@
-/** Sharkord's own dark theme. Must match `DEFAULT_THEME_COLOR` / `DEFAULT_ACCENT_COLOR` in model.rs. */
-export const DEFAULT_THEME_COLOR = '#0a0a0a';
-export const DEFAULT_ACCENT_COLOR = '#e5e5e5';
+import type { Folder, MutedChannel, ServerCheck, ServerInfo } from '../../shared/web/types';
 
-/** Sharkord's `--sidebar`, used for the rail while the user is on the default colours. */
-export const DEFAULT_RAIL_COLOR = '#171717';
+export { DEFAULT_ACCENT_COLOR, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME } from '../../shared/web/settings';
 
-/** Loudest the sound slider goes. Must match `MAX_SOUND_VOLUME` in model.rs, which clamps it. */
-export const MAX_SOUND_VOLUME = 250;
+export type { Folder, MutedChannel, ServerCheck, ServerInfo };
 
 export type ServerEntry = {
   id: string;
@@ -18,11 +14,6 @@ export type ServerEntry = {
   accountLabel: string | null;
   folderId: string | null;
   position: number;
-};
-
-export type MutedChannel = {
-  entryId: string;
-  channelId: number;
 };
 
 export type Notification = {
@@ -59,19 +50,7 @@ export type DmEntry = {
 /** What the badge on a server's icon says. */
 export type ServerStatus = 'online' | 'connecting' | 'offline';
 
-export type Folder = {
-  id: string;
-  name: string;
-  position: number;
-  expanded: boolean;
-};
-
-/**
- * The call Shiver is showing in the rail.
- *
- * There is at most one across every server, which is the rule the README states: `entryId` says
- * which server is holding it, and Shiver's controls act there rather than on whatever is on screen.
- */
+/** The one call across all servers; controls act on `entryId`, not on the server on screen. */
 export type VoiceStatus = {
   entryId: string;
   serverName: string;
@@ -115,22 +94,4 @@ export type Registry = {
   folders: Folder[];
   settings: Settings;
   muted: MutedChannel[];
-};
-
-/** A server looked up before it is added, with the companion plugin's verdict where one is possible. */
-export type ServerCheck = ServerInfo & {
-  /**
-   * The plugin's version, null where the server has none — and **absent entirely** when Shiver
-   * could not ask, which is the case without credentials. Nothing reveals a server's plugins
-   * without a session, so an unasked server must not be drawn as lacking it.
-   */
-  plugin?: string | null;
-};
-
-export type ServerInfo = {
-  origin: string;
-  serverId: string;
-  name: string;
-  description: string | null;
-  iconUrl: string | null;
 };

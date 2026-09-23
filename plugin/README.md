@@ -69,25 +69,22 @@ belonging to the calling user, authenticated by the server, so a user can only e
 
 Shiver's bridge cannot call those itself — they live on Sharkord's plugin store, and only code served
 out of `/plugin-bundle/shiver/` is this plugin. So `client/index.js` is a relay: it answers messages
-posted inside the same page and makes the call on the bridge's behalf. It accepts only same-window,
-same-origin messages, and only two named operations:
+posted inside the same page and passes them on to one of this plugin's **server actions**. It accepts
+only same-window, same-origin messages, and only named operations — it cannot be talked into reading
+or writing anything else.
 
-| Operation | Does |
-| --- | --- |
-| `getMutedChannels` | Returns the calling user's muted channels |
-| `setMutedChannels` | Replaces them, leaving anything else in the row alone |
-
-Named operations rather than passing storage calls straight through, so the relay cannot be talked
-into reading or writing anything but this.
-
-The server half registers four actions of its own, for the two things that cannot go through the
-relay because the server has to *do* something with them rather than just store them:
+Every write to a user's row goes through the server, one change per user at a time. The host's
+`setUserData` replaces the whole row, so two writers (a mute from the page, a status from the server)
+used to be able to lose each other's change; they cannot now. A row that cannot be read is never
+overwritten.
 
 | Action | Does |
 | --- | --- |
-| `setStatus` | Sets the caller's status line, and pushes it to everyone connected |
-| `getStatuses` | Every status currently set, for drawing the member list |
-| `setPushEndpoint` | Registers an endpoint **after checking it** — see the section below |
+| `getMutedChannels` / `setMutedChannels` | Reads or replaces the caller's muted channels |
+| `setReadFloor` | Stores the caller's shared unread floor, so their devices agree on one badge |
+| `setStatus` | Sets the caller's status line, and pushes it to everyone connected (rate limited) |
+| `getStatuses` / `getOwnStatus` | Every status currently set, or the caller's own |
+| `setPushEndpoint` | Registers an endpoint **after checking it** — see the section below (rate limited) |
 | `clearPushEndpoint` | Drops one endpoint, or all of the caller's when none is named |
 
 Each acts on `invoker.userId`, which Sharkord authenticates, so none of them can be aimed at
@@ -95,10 +92,10 @@ another account.
 
 ## Merge behaviour
 
-On connecting, Shiver unions the device's mute list with the server's rather than letting one
-overwrite the other — a mute made before the plugin was installed and a mute made on another device
-are both deliberate, and dropping either would be wrong. After that first reconcile the server's
-copy is the source of truth, and every later change is pushed to it.
+The first time a device meets the plugin, Shiver unions that device's mute list with the server's —
+a mute made before the plugin was installed and a mute made on another device are both deliberate.
+After that first reconcile the server's copy is the source of truth, and every later change is
+pushed to it.
 
 If the plugin is not installed, Shiver detects that (`window.__SHIVER_PLUGIN__` is absent), keeps using
 its local list, and nothing else changes.
@@ -130,13 +127,17 @@ arrived over its own connection. A leaked endpoint is therefore worth spam, not 
 
 **One thing to be aware of as an admin.** The endpoint is a URL supplied by a user that this server
 then fetches, so it is checked before it is stored *and again immediately before every send*: https
-only, the hostname resolved, and refused if any address it resolves to is private, loopback or
-link-local. Redirects are never followed — a relay answering `307 Location: http://localhost:6379/`
-would otherwise walk the request straight past all of that, with the method and body intact.
+only, the hostname resolved, and refused unless every address it resolves to is public. IPv6 is
+checked as an allow-list of global unicast, so NAT64, 6to4-to-private, Teredo, IPv4-mapped and similar
+tunnelled forms are refused too.
 
-DNS rebinding is still not fully defeated: re-checking at send time narrows the window to that one
-request rather than closing it. Closing it means pinning the connection to the address that was
-vetted, which has not been done.
+**The request is made to the exact address that passed the check.** Each wake-up is a TLS connection
+to that address, with the certificate verified against the endpoint's hostname — so a name that
+changes its answer between the check and the connection (DNS rebinding) cannot move the request.
+Redirects are never followed.
+
+A refused registration is told only that it was refused, never why, so the check cannot be used to
+map which hostnames exist on this server's network.
 
 Nothing here is required. A server without this plugin simply cannot wake a closed phone, which is
 exactly how Shiver behaved before.

@@ -13,9 +13,7 @@ val tauriProperties = Properties().apply {
     }
 }
 
-// The release signing key, read from a file that is deliberately not in the repo. Absent on a
-// machine that has never been given the key, and a debug build still works there — only `release`
-// needs it.
+// The release signing key, from a file kept out of the repo (see RELEASING.md). Debug builds do not need it.
 val keystoreFile = rootProject.file("keystore.properties")
 
 val keystoreProperties = Properties().apply {
@@ -24,12 +22,6 @@ val keystoreProperties = Properties().apply {
     }
 }
 
-/**
- * Everything `signingConfigs` needs, or a list of what is missing.
- *
- * The four keys are checked together rather than one at a time, because a `keystore.properties`
- * that has three of them is a mistake worth naming all at once instead of one build at a time.
- */
 val REQUIRED_KEYSTORE_KEYS = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
 
 val missingKeystoreKeys = REQUIRED_KEYSTORE_KEYS.filter { keystoreProperties.getProperty(it).isNullOrBlank() }
@@ -49,8 +41,6 @@ android {
     }
     signingConfigs {
         create("release") {
-            // Populated only when there is a complete key to populate it with. An incomplete one is
-            // caught by `failOnUnsignedRelease` below rather than half-applied here.
             if (canSignRelease) {
                 storeFile = file(keystoreProperties.getProperty("storeFile"))
                 storePassword = keystoreProperties.getProperty("storePassword")
@@ -65,16 +55,14 @@ android {
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
-            packaging {                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
+            packaging {
+                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
                 jniLibs.keepDebugSymbols.add("*/armeabi-v7a/*.so")
                 jniLibs.keepDebugSymbols.add("*/x86/*.so")
                 jniLibs.keepDebugSymbols.add("*/x86_64/*.so")
             }
         }
         getByName("release") {
-            // Assigned only when it holds a key. An empty signing config is not a signing config,
-            // and which of "fail loudly" or "quietly produce an unsigned apk" you get from one
-            // depends on the AGP version — see `failOnUnsignedRelease`.
             signingConfig = if (canSignRelease) signingConfigs.getByName("release") else null
             isMinifyEnabled = true
             proguardFiles(
@@ -93,22 +81,8 @@ android {
 }
 
 /**
- * Refuses to build a release APK that would not be signed.
- *
- * The comment above `keystoreProperties` used to claim it was "better to fail at signing time than
- * to quietly ship an unsigned apk" — and then did not arrange for that. The signing config was
- * created empty when the key was absent and assigned to the release build type regardless, so
- * whether the build failed or produced an unsigned artifact came down to which AGP version was in
- * use. An unsigned release APK is not a broken build; it is a build that installs on the developer's
- * own phone and cannot be shipped, which is the kind of thing that is discovered at the worst
- * moment.
- *
- * **An unsigned APK is also unable to update an existing install**: Android identifies an app by
- * package name *and* signing certificate, so an APK signed with a different key — or none — is a
- * different app to the system. That is why this is worth a hard stop rather than a warning.
- *
- * Debug builds are untouched: they sign with the local debug key and are supposed to work on a
- * machine that has never seen the release key.
+ * Refuses to build an unsigned release (whether AGP fails or silently produces one varies by
+ * version, and an APK not signed with Shiver's key cannot update an existing install).
  */
 val failOnUnsignedRelease = tasks.register("failOnUnsignedRelease") {
     doFirst {

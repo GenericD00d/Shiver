@@ -1,26 +1,30 @@
 import type { ServerEntry } from '../types';
 
-type State =
+/** An action a server page's rail asked for by navigating here; confirmed on Shiver's own page, since any page can navigate. */
+export type ConfirmAction = 'remove' | 'forgetpw' | 'logout';
+
+export type BootState =
   | { kind: 'waiting' }
   | { kind: 'connecting'; server: ServerEntry }
   | { kind: 'failed'; server: ServerEntry }
+  | { kind: 'confirm'; action: ConfirmAction; server: ServerEntry }
   | { kind: 'empty' };
 
 type Props = {
-  state: State;
+  state: BootState;
   onRetry: (server: ServerEntry) => void;
   onAdd: () => void;
+  onConfirm: (confirmed: boolean) => void;
 };
 
-/**
- * What Shiver shows while it is on its way somewhere else.
- *
- * The mobile client has no home screen: it opens the server you were last in. So this is the whole
- * of Shiver's own front page, and it is only ever transient — a spinner until the server answers, or
- * the reason it did not. The same two states the desktop client shows for a server that is coming
- * up, said the same way.
- */
-export const Boot = ({ state, onRetry, onAdd }: Props) => {
+const QUESTIONS: Record<ConfirmAction, { question: (name: string) => string; action: string }> = {
+  remove: { question: (name) => `Remove ${name} from Shiver?`, action: 'Remove' },
+  forgetpw: { question: (name) => `Forget the saved password for ${name}?`, action: 'Forget' },
+  logout: { question: (name) => `Log out of ${name}?`, action: 'Log out' }
+};
+
+/** Shiver's only front page (mobile has no home screen): a spinner, a failure, a confirmation or "add a server". */
+export const Boot = ({ state, onRetry, onAdd, onConfirm }: Props) => {
   if (state.kind === 'empty') {
     return (
       <div className="boot">
@@ -40,6 +44,24 @@ export const Boot = ({ state, onRetry, onAdd }: Props) => {
 
         <button type="button" className="primary" onClick={() => onRetry(state.server)}>
           Try again
+        </button>
+      </div>
+    );
+  }
+
+  if (state.kind === 'confirm') {
+    const { question, action } = QUESTIONS[state.action];
+
+    return (
+      <div className="boot">
+        <p>{question(state.server.name)}</p>
+
+        <button type="button" className="primary" onClick={() => onConfirm(true)}>
+          {action}
+        </button>
+
+        <button type="button" className="ghost" onClick={() => onConfirm(false)}>
+          Cancel
         </button>
       </div>
     );

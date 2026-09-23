@@ -1,13 +1,6 @@
-# The checks that already existed but only ran when somebody remembered to type them.
-#
-# Shiver's worst bug so far took twelve builds to find: reading a direct message left two badges
-# standing, and every fix was consistent with the source and wrong. What finally caught it was a
-# test. Those tests, the typechecks and the rail guard all live in the repo now — and until this
-# file they fired only by hand, on one Windows machine, when it occurred to me to run them.
-#
-# **Checks only, never builds.** A release needs JDK 17, the Android SDK and signing keys that exist
-# on exactly one machine and cannot be recovered, so releases stay local and deliberate. Nothing
-# here needs a secret, which is also why it is safe to run on a pull request from anyone.
+# Checks only, never builds a release (releases need signing keys that stay local, see
+# RELEASING.md). Nothing here needs a secret, so it is safe to run on pull requests from anyone.
+# Third-party actions are pinned to commit SHAs (tag in the trailing comment).
 name: Checks
 
 on:
@@ -15,333 +8,157 @@ on:
     branches: [main]
   pull_request:
 
-# Read-only, said out loud. This runs on pull requests from anyone, and the note above is already
-# the argument for why that is safe — a workflow that needs no secret should not be holding the
-# write token the repository hands out by default.
 permissions:
   contents: read
 
-# a second push to the same branch makes the first run irrelevant
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Windows, because that is what Shiver is developed and shipped on, and because Tauri's crates
-  # need no system packages there — on Linux this job would begin by apt-installing the whole GTK
-  # and WebKit stack, which is a slower way to test the same logic and one more thing to break.
+  # Windows: Shiver ships there, and Tauri needs no system packages on it.
   rust:
     name: Rust
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
 
-      # Four crates now, each with its own lockfile, so each gets its own cache key.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            desktop/src-tauri
-            mobile/src-tauri
-            shared/sharkord-client
-            shared/shiver-core
-
-      # The bridge is `include_str!`'d into both clients, and `build.rs` writes a placeholder when
-      # it is missing — so without this the Rust jobs compile against
-      # `/* bridge not built yet */` and nothing in CI ever sees the real injected script.
-      - uses: oven-sh/setup-bun@v2
-
+      # the bridges are `include_str!`'d; without this the crates compile against placeholders
       - name: Build the bridges
+        shell: bash
         run: |
-          bun install --frozen-lockfile
-          bun run build:bridge
-          cd ../mobile
-          bun install --frozen-lockfile
-          bun run build:bridge
-        working-directory: desktop
+          (cd desktop && bun install --frozen-lockfile && bun run build:bridge)
+          (cd mobile && bun install --frozen-lockfile && bun run build:bridge)
 
-      - name: Shared crates
-        run: |
-          cargo test --manifest-path shared/shiver-core/Cargo.toml
-          cargo test --manifest-path shared/sharkord-client/Cargo.toml
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
 
-      - name: Desktop
-        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+  # The shared crates hold the protocol and storage logic, and need nothing platform-specific.
+  shared:
+    name: Shared crates (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+        with:
+          key: shared
+      - run: cargo test -p shiver-core -p sharkord-client
 
-      # `test`, not `check`. This was `check` on the grounds that "its own unit tests need an
-      # Android runtime to mean anything" — which is not true of the 41 that exist: they are unread
-      # counts, origin rules, update comparisons and rail ordering, all pure logic, and they pass on
-      # an ordinary host. Running only `check` meant a whole test suite that could fail without
-      # anyone hearing about it.
-      - name: Mobile
-        run: cargo test --manifest-path mobile/src-tauri/Cargo.toml
-
-      # Warnings are failures here on purpose. Several of the things a review turned up — redundant
-      # clones in the message path, a `Vec` used as a set, an argument list long enough to need an
-      # `allow` — are things clippy says without being asked.
-      - name: Clippy
-        run: |
-          cargo clippy --manifest-path shared/shiver-core/Cargo.toml --all-targets -- -D warnings
-          cargo clippy --manifest-path shared/sharkord-client/Cargo.toml --all-targets -- -D warnings
-          cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
-          cargo clippy --manifest-path mobile/src-tauri/Cargo.toml -- -D warnings
-
-      - name: Formatting
-        run: |
-          cargo fmt --manifest-path shared/shiver-core/Cargo.toml --check
-          cargo fmt --manifest-path shared/sharkord-client/Cargo.toml --check
-          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --check
-          cargo fmt --manifest-path mobile/src-tauri/Cargo.toml --check
-
-  # The Android app, which nothing here used to compile.
-  #
-  # `cargo test` on `mobile/src-tauri` builds the **Rust** crate and nothing else, and the Android
-  # app is also Kotlin, Gradle, a manifest and resources — sixteen tracked files that no job
-  # touched. That is not theoretical: `PushPlugin.kt` called `receiver.sentFromPackage()`, which is
-  # a Java getter and so a property in Kotlin, and the app did not compile *at all* from the source
-  # review until it was found by hand. CI stayed green on this step throughout, because the break
-  # was in a language this job did not build. Two agents edited that file in that state, one of
-  # them recording in its own commit that it could not compile what it had written.
-  #
-  # **A debug build rather than a release one, which is what keeps it free of secrets.** Debug signs
-  # with the auto-generated debug keystore; `failOnUnsignedRelease` guards `release` only and
-  # exempts debug by name. So this needs no signing key and stays safe to run on a fork's pull
-  # request, like everything else here.
-  #
-  # **Why the whole build and not just the Kotlin.** The Rust cross-compile hangs off
-  # `merge…JniLibFolders` rather than the Kotlin tasks, so compiling Kotlin alone looks reachable —
-  # but `settings.gradle` applies `tauri.settings.gradle`, and that file is written by Tauri's own
-  # Android pipeline and holds absolute paths into the cargo registry. Without it Gradle cannot
-  # evaluate the project at all. Generating it here would mean reimplementing how Tauri resolves
-  # its mobile plugins, which is a worse thing to own than a slower job.
-  #
-  # **`android init` first**, because `gen/android` is ignored apart from ten hand-written files:
-  # a checkout has no `gradlew`, no `settings.gradle` and no `buildSrc`. Init regenerates those and
-  # leaves existing files alone, but the `git checkout` after it is not superstition — the README
-  # warns that init overwrites the hand-written ones, and this is the guard against that becoming
-  # true again silently. If init ever does start clobbering them, this job fails rather than the
-  # next release quietly shipping without the window insets or the network security config.
+  # A debug build of the Android app, which is the only thing that compiles its Kotlin, manifest
+  # and resources. Debug signs with the generated debug key, so no secret is needed.
   android:
     name: Android
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      # 17, which is what the Android Gradle plugin needs here
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
           java-version: '17'
-
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: aarch64-linux-android
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
         with:
-          workspaces: mobile/src-tauri
           key: android
-
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
 
       - name: Install
         run: bun install --frozen-lockfile
         working-directory: mobile
 
-      # The SDK and NDK the runner image already ships, so nothing large is downloaded and there is
-      # no `setup-android` step: that action's own licence acceptance exits 1 on this image
-      # (`sdkmanager --licenses` reporting "6 of 7 SDK package licenses not accepted") and took the
-      # job with it before anything was built.
-      #
-      # Licences are accepted here instead, tolerating that same exit code, and then the two
-      # packages this project actually pins are installed — `compileSdk 36` in `build.gradle.kts`.
-      # Those are *not* tolerant: if the platform cannot be installed the build cannot work, and
-      # failing here says so plainly rather than a hundred lines later.
-      #
-      # `NDK_HOME` is named explicitly because Tauri reads it before it goes hunting inside the SDK.
+      # The image's own SDK and NDK. Licence acceptance exits non-zero on this image, so it is
+      # tolerated; installing the pinned platform (compileSdk 36) is not.
       - name: Android SDK
         run: |
-          # not on PATH on this image; it lives under the sdk's cmdline-tools, versioned
           sdkmanager=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
-
-          if [ -z "$sdkmanager" ]; then
-            echo "no sdkmanager under $ANDROID_HOME/cmdline-tools" >&2
-            exit 1
-          fi
-
+          [ -n "$sdkmanager" ] || { echo "no sdkmanager under $ANDROID_HOME/cmdline-tools" >&2; exit 1; }
           yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
           "$sdkmanager" "platforms;android-36" "build-tools;36.0.0"
-
           echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
 
+      # `gen/android` is ignored except for the hand-written files, which init must not replace
       - name: Generate the Android project
-        run: ./node_modules/.bin/tauri android init
-        working-directory: mobile
-
-      # Init writes the whole project, including the ten files that are hand-written and tracked.
-      # Restoring them is what makes this job test *Shiver's* Android app rather than a stock one —
-      # and `--quiet` would hide the very thing worth seeing, so the diff is printed first.
-      - name: Restore the hand-written parts
         run: |
+          (cd mobile && ./node_modules/.bin/tauri android init)
           git status --porcelain mobile/src-tauri/gen/android
           git checkout -- mobile/src-tauri/gen/android
 
-      # Tauri generates a Gradle task that runs the CLI through whichever package manager it
-      # detected, and what it detects is not the same here as on the machine this is developed on:
-      # `bun` there, `node` on this runner. `node tauri android android-studio-script` hands node a
-      # first argument it reads as a file path, so the Rust half of the Gradle build died with
-      # `Cannot find module '…/mobile/src-tauri/tauri'` before compiling anything.
-      #
-      # So the package manager comes out of the loop: Gradle is pointed at the CLI itself, by
-      # absolute path. `node_modules/.bin/tauri` is an executable shim and needs nothing resolved on
-      # its behalf, which makes this independent of what init decided to generate.
-      #
-      # Matched as a pattern rather than against a literal `"""bun"""`, which is what made the
-      # first attempts fail: whatever is between the quotes is replaced, so this keeps working
-      # whichever package manager a future runner image makes Tauri choose.
-      #
-      # Patched rather than carried as a fork: `buildSrc` is regenerated by the init step above on
-      # every run, so this edits a file this job wrote a minute earlier. Both edits are asserted,
-      # and a miss prints the file it was given.
-      - name: Point the Gradle task straight at the Tauri CLI
+      # The generated Gradle task runs the CLI through the package manager Tauri detected, which
+      # differs on this runner; point it at the CLI binary directly (both edits are asserted).
+      - name: Point the Gradle task at the Tauri CLI
         run: |
           python3 - <<'PATCH'
           import os, pathlib, re, sys
 
           root = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
           found = list(root.glob("mobile/src-tauri/gen/android/buildSrc/**/BuildTask.kt"))
-
           if len(found) != 1:
-              sys.exit(f"expected one BuildTask.kt, found {[str(f) for f in found]}")
+              sys.exit(f"expected one BuildTask.kt, found {found}")
 
-          task = found[0]
           cli = root / "mobile" / "node_modules" / ".bin" / "tauri"
-
-          if not os.access(cli, os.X_OK):
-              sys.exit(f"no executable Tauri CLI at {cli}")
-
-          source = task.read_text(encoding="utf8")
-
-          # whatever package manager init picked, and the argument that named the CLI to it
-          source, runner = re.subn(
-              r'val executable = """[^"]*"""',
-              f'val executable = """{cli}"""',
-              source,
-              count=1,
-          )
-          source, named = re.subn(
-              r'listOf\("tauri", "android", "android-studio-script"\)',
-              'listOf("android", "android-studio-script")',
-              source,
-              count=1,
-          )
-
+          source = found[0].read_text(encoding="utf8")
+          source, runner = re.subn(r'val executable = """[^"]*"""', f'val executable = """{cli}"""', source, count=1)
+          source, named = re.subn(r'listOf\("tauri", "android", "android-studio-script"\)', 'listOf("android", "android-studio-script")', source, count=1)
           if not runner or not named:
-              print(task.read_text(encoding="utf8"), file=sys.stderr)
-              sys.exit(
-                  f"{task.name}: replaced executable={runner} args={named}, expected 1 of each — "
-                  "android init changed shape"
-              )
+              print(source, file=sys.stderr)
+              sys.exit("android init changed the shape of BuildTask.kt")
 
-          task.write_text(source, encoding="utf8")
-
-          for line in source.splitlines():
-              if "val executable" in line or "val args" in line:
-                  print(line.strip())
+          found[0].write_text(source, encoding="utf8")
           PATCH
 
-      # One ABI is enough to compile every line of it; the release build does the rest.
       - name: Build the debug APK
         run: ./node_modules/.bin/tauri android build --apk --debug --target aarch64
         working-directory: mobile
 
-  # Known-vulnerable dependencies, which is the one kind of security problem a project can find
-  # without anybody reading anything. The README says plainly that no audit has been done; this is
-  # the part of that which a machine can do every time.
-  #
-  # **`cargo audit` directly, rather than `rustsec/audit-check`.** That action looks for a single
-  # `Cargo.lock` in the directory it is run from, and this repository has no root lockfile — there
-  # are four crates, each with its own. So it failed every run from the day it was added with
-  # `not found: Couldn't load ./Cargo.lock`, which reads like an infrastructure hiccup rather than
-  # a check that never ran once. Naming each lockfile is longer and cannot fail that way.
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
         with:
           key: cargo-audit
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-
-      # Every lockfile in the tree, found rather than listed: a crate added later brings its own
-      # lockfile and would otherwise be audited by nobody, silently. The loop runs them all before
-      # failing, so one advisory does not hide the next.
-      - name: Audit every lockfile
-        run: |
-          status=0
-
-          for lock in $(find . -name Cargo.lock -not -path '*/node_modules/*' -not -path '*/target/*' | sort); do
-            echo "::group::cargo audit $lock"
-            cargo audit --file "$lock" || status=1
-            echo "::endgroup::"
-          done
-
-          exit $status
+      - run: cargo install cargo-audit --locked
+      # one workspace, one lockfile
+      - run: cargo audit
 
   frontend:
-    name: Frontends
+    name: Frontends and plugin
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
 
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Install desktop
-        run: bun install --frozen-lockfile
+      - name: Desktop
+        run: bun install --frozen-lockfile && bunx tsc --noEmit
         working-directory: desktop
 
-      - name: Typecheck desktop
-        run: bunx tsc --noEmit
-        working-directory: desktop
-
-      - name: Install mobile
-        run: bun install --frozen-lockfile
+      - name: Mobile
+        run: bun install --frozen-lockfile && bunx tsc --noEmit
         working-directory: mobile
 
-      - name: Typecheck mobile
-        run: bunx tsc --noEmit
-        working-directory: mobile
+      - name: Shared web tests
+        run: bun test shared/web
 
-      # The plugin ships as plain ES modules with no build step and no typechecker, so this is the
-      # only thing standing between a syntax error and a server that refuses to load it.
-      - name: Parse the companion plugin
+      # plain ES modules with no build step
+      - name: Companion plugin
         run: |
-          for file in server/*.js client/*.js; do
-            node --check "$file"
-          done
+          for file in server/*.js client/*.js; do node --check "$file"; done
+          node --test test/*.test.js
         working-directory: plugin
 
-      # Mobile draws its rail twice — React on Shiver's pages, vanilla dom inside a server's page —
-      # and neither stylesheet can reach the other, so they drift silently. See the script.
+      # mobile draws its rail badge twice (React and the bridge's shadow root)
       - name: Mobile's two rails agree
         run: python3 scripts/check-rails.py
-
-      # The same argument, for the one function that decides whether text on the user's chosen
-      # background is drawn dark or light. Four copies across two packages and two bridges, none
-      # able to import from another, and they have already drifted apart once.
-      - name: The four luminance tests agree
-        run: python3 scripts/check-luminance.py
-
-      # Eight files carry the version and nothing derives one from another. A missed one ships an
-      # APK that cannot upgrade an installed Shiver.
-      - name: The version is the same everywhere
-        run: python3 scripts/check-versions.py

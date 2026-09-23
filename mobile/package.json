@@ -1,11 +1,10 @@
 {
   "name": "shiver-mobile",
   "private": true,
-  "version": "0.1.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:bridge": "vite build --config vite.bridge.config.ts",
+    "build:bridge": "vite build --config vite.bridge.config.ts && vite build --config vite.bridge.config.ts --mode document-start",
     "build": "bun run build:bridge && tsc --noEmit && vite build",
     "tauri": "tauri",
     "app": "tauri dev",

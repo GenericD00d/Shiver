@@ -15,18 +15,7 @@ type Props = {
   onOpenServer: (entryId: string) => void;
 };
 
-/**
- * The call, in Shiver's own chrome.
- *
- * Voice controls that are there whichever server is on screen, and the rail is
- * the only part of Shiver that is always visible: server webviews start to the right of it, so a
- * control drawn here is never covered by the server the user has navigated to. That is also why it
- * is not a floating overlay like the bell — the bell has to sit over a server's top bar, this does
- * not, so it needs no webview of its own.
- *
- * Every button acts on the server holding the call rather than the one being viewed, which is the
- * whole point of it: the core sends the click to that entry's page.
- */
+/** The call's controls in the rail (always visible); they act on the server holding the call. */
 export const VoiceTile = ({ status, onOpenServer }: Props) => {
   const { channelName, serverName, accountLabel, micMuted, soundMuted, micLocked } = status;
 

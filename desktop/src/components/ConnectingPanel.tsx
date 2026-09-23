@@ -5,17 +5,7 @@ type Props = {
   onRetry: () => void;
 };
 
-/**
- * What Shiver shows while a server's client is coming up, and when it does not.
- *
- * Deliberately just a spinner. Shiver used to draw the server's last known messages here from a local
- * cache, rebuilt to Sharkord's own measurements — and it was not worth it: what it could show was
- * always a partial copy of the client, it only covered channels already visited, and reproducing
- * the client's own view is the one thing Shiver exists not to do.
- *
- * The failure state matters as much as the wait. Shiver covers the page while it waits, so a wait
- * with no end is a page the user cannot reach; saying so, with a way to try again, is the way out.
- */
+/** A spinner while a server's client comes up, or the failure with a retry (the page is covered meanwhile). */
 export const ConnectingPanel = ({ serverName, failed, onRetry }: Props) => (
   <div className="connecting">
     {failed ? (

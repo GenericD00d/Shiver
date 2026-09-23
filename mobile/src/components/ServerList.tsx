@@ -1,4 +1,5 @@
 import type { ServerEntry } from '../types';
+import { initials } from '../../../shared/web/rail';
 
 type Props = {
   servers: ServerEntry[];
@@ -21,20 +22,8 @@ type Props = {
   onSignIn: (id: string) => void;
 };
 
-const initials = (name: string) =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase() ?? '')
-    .join('') || '?';
 
-/**
- * Managing the list of servers.
- *
- * Not a switcher any more — the rail is that, and Shiver opens the last server used rather than
- * showing a front page. This lives under settings, which is where the things you do rarely go.
- */
+/** Managing the server list, under settings (the rail is the switcher). */
 export const ServerList = ({
   servers,
   onOpen,

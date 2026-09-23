@@ -1,17 +1,19 @@
 [package]
 name = "sharkord-client"
-version = "0.1.4"
 description = "Shiver's read-only client for Sharkord's tRPC-over-WebSocket protocol"
-edition = "2021"
-rust-version = "1.77.2"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
-# Shared by both clients on purpose. This is a transcription of another project's wire protocol,
-# worked out by probing a live server rather than from documentation, and a second copy of it would
-# drift the moment one client learned something the other did not. Neither `desktop/` nor `mobile/`
-# owns it, so it lives beside them and both depend on it by path.
 [dependencies]
-serde_json = "1"
-thiserror = "2"
-tokio = { version = "1", features = ["time"] }
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
-futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+serde.workspace = true
+shiver-core.workspace = true
+zeroize.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tokio-tungstenite.workspace = true
+futures-util = { workspace = true, features = ["sink"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

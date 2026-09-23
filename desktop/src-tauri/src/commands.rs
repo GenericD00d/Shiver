@@ -1,19 +1,21 @@
+//! Commands called from Shiver's own webviews (the shell, bell and popup). Server pages have no IPC.
+//!
+//! Every command that writes the registry is `async`, so its disk write happens on a worker rather
+//! than the UI thread. Passwords arrive as `Zeroizing<String>` so Shiver's copies are wiped.
+
 use tauri::{
     menu::{ContextMenu, MenuBuilder, MenuItemBuilder},
     AppHandle, Emitter, Manager, State,
 };
-
-/// Tells Shiver's own webviews the settings changed, so they repaint.
-const SETTINGS_EVENT: &str = "shiver://settings";
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::{
     drain::{self, Readiness},
     error::{Error, Result},
     feed::{DmEntry, Feed, Notification},
-    hotkey, jwt, login,
-    model::{normalize_origin, Folder, MutedChannel, Registry, ServerEntry, ServerInfo, Settings},
-    probe,
+    hotkey, jwt,
+    model::{normalize_origin, Folder, Registry, ServerEntry, Settings},
     secrets::{self, Secret},
     session::Recovery,
     store::{RegistryStore, Store},
@@ -21,758 +23,67 @@ use crate::{
     webviews,
 };
 
-/// Takes back the password Shiver is holding for one server.
-///
-/// The counterpart to keeping it by default. Shiver stops asking permission at the add screen, so
-/// it owes the user a way to undo that afterwards — and this is it, on the server's own menu beside
-/// logging out.
-///
-/// The session is left alone: forgetting the password means "stop signing me in again", not "sign
-/// me out now". What follows is simply the old behaviour — the server goes quiet when its week is
-/// up, and asks to be signed in.
-#[tauri::command]
-pub async fn forget_password(id: String) -> Result<()> {
-    secrets::forget_off_thread(Secret::Password, &id).await
+use sharkord_client::ServerCheck;
+use shiver_core::{login, probe};
+
+/// Tells Shiver's own webviews the settings changed.
+const SETTINGS_EVENT: &str = "shiver://settings";
+
+type Password = Zeroizing<String>;
+
+/* ── lookups ── */
+
+fn entry_of(store: &Store, id: &str) -> Result<ServerEntry> {
+    store
+        .registry()
+        .server(id)
+        .cloned()
+        .ok_or(Error::UnknownServer)
 }
 
-/// Forgets the camera and microphone answers WebView2 has stored for every server.
-///
-/// There is no way back from inside a page: press Block once and the site is refused in silence
-/// from then on, which looks like a broken camera rather than a decision. A browser puts the way
-/// back in the address bar; Shiver has no address bar, so it has this.
-///
-/// Answers with how many were forgotten, because "nothing was stored" and "nothing was cleared"
-/// are the same button press and the user is owed the difference.
-///
-/// **Async, and on a blocking thread, and both matter.** WebView2 answers this through a completion
-/// handler delivered on the main thread's message loop, and the wait for it is a blocking one. A
-/// synchronous `#[tauri::command]` runs on the main thread — so it would be the thing holding up
-/// the very loop that has to deliver the answer, which is the deadlock this project already met
-/// once when creating webviews. The visible form was a ten-second hang, "the webview did not answer
-/// in time", and the permissions cleared anyway the moment the main thread was let go.
-///
-/// `spawn_blocking` rather than a bare `async fn` because the wait really does block its thread,
-/// and the async runtime's workers are not there to be sat on.
-#[tauri::command]
-pub async fn reset_media_permissions(app: AppHandle) -> Result<usize> {
-    tauri::async_runtime::spawn_blocking(move || crate::permissions::clear_media_permissions(&app))
-        .await
-        .map_err(|error| Error::Webview(error.to_string()))?
+/// The entry, the settings and its mutes: what building a page needs.
+fn page_inputs(store: &Store, id: &str) -> Result<(ServerEntry, Settings, Vec<i64>)> {
+    let registry = store.registry();
+    let entry = registry.server(id).cloned().ok_or(Error::UnknownServer)?;
+
+    Ok((entry, registry.settings.clone(), registry.muted_for(id)))
 }
 
-#[tauri::command]
-pub fn list_registry(store: State<'_, Store>) -> Registry {
-    store.registry().clone()
-}
-
-/// Looks a server up without adding it, so the add dialog can show what the user is about to add.
-#[tauri::command]
-pub async fn probe_server(origin: String) -> Result<ServerInfo> {
-    let origin = normalize_origin(&origin)?;
-
-    probe::fetch_info(&origin).await
-}
-
-/// What a server says about itself before it is added, plus whether it has the companion plugin.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ServerCheck {
-    #[serde(flatten)]
-    pub info: ServerInfo,
-    /// The plugin's version, or `None` where the server answered and had none.
-    ///
-    /// Absent entirely when Shiver could not ask — see `check_server`. Three answers, not two: an
-    /// unasked server must not be reported as lacking the plugin.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub plugin: Option<Option<String>>,
-}
-
-/// Looks a server up, and where it can, says whether the companion plugin is installed.
-///
-/// **The plugin cannot be seen without signing in.** `/info` does not mention plugins at all, and
-/// `plugins.get` needs `MANAGE_PLUGINS`, so it answers an administrator and nobody else. The one
-/// place an ordinary member is told is the `joinServer` payload, which needs a session — so with no
-/// credentials this answers only what `/info` answers, and says so by leaving `plugin` absent
-/// rather than guessing.
-///
-/// With credentials it signs in and opens a connection purely to read that payload, then drops
-/// both. Nothing is stored and the server is not added: this is the check button doing what it
-/// says, and a wrong password is reported here rather than after the user has committed to adding.
-#[tauri::command]
-pub async fn check_server(
-    origin: String,
-    identity: Option<String>,
-    password: Option<String>,
-) -> Result<ServerCheck> {
-    let origin = normalize_origin(&origin)?;
-    let info = probe::fetch_info(&origin).await?;
-
-    let (Some(identity), Some(password)) = (identity, password) else {
-        return Ok(ServerCheck { info, plugin: None });
-    };
-
-    if identity.trim().is_empty() || password.is_empty() {
-        return Ok(ServerCheck { info, plugin: None });
-    }
-
-    let token = login::sign_in(&origin, identity.trim(), &password).await?;
-
-    // Bounded rather than trusting: this server has not been added yet, so nothing has had the
-    // chance to say it is trusted with a larger frame.
-    //
-    // A failure here is reported as the server not being readable rather than as the sign-in
-    // failing, because the sign-in plainly worked — the token above is proof of it.
-    let session = sharkord_client::open(&origin, &token, false)
-        .await
-        .map_err(|error| Error::Unreachable(format!("{origin}: {error}")))?;
-
-    Ok(ServerCheck {
-        info,
-        plugin: Some(session.joined.plugin_version.clone()),
-    })
-}
-
-/// Adds a server, signing in first when credentials were given.
-///
-/// Signing in here rather than in the webview is what makes opening a server seamless: Shiver holds
-/// the session and seeds it into the page, so the user never meets the login screen. Leaving
-/// `identity` empty keeps the old behaviour, which is the fallback for servers behind an identity
-/// provider where Shiver cannot do the sign-in itself.
-///
-/// Kept unless the user says otherwise, which is the reverse of how this started.
-/// say otherwise — the same opt-in mobile has. The session is kept either way: it is what Shiver
-/// signs in *with*, it dies in a week on its own, and without it there is no seamless open at all.
-/// The password is the thing that outlives everything, and Windows Credential Manager is readable
-/// by anything running as that user, so it is not Shiver's to keep uninvited.
-#[tauri::command]
-pub async fn add_server(
-    // injected by tauri, not sent by the caller: a server added mid-session has to start being
-    // watched, and that needs a handle
-    app: AppHandle,
-    store: State<'_, Store>,
-    origin: String,
-    identity: Option<String>,
-    password: Option<String>,
-    account_label: Option<String>,
-    // keep the password, so Shiver can sign this server in again by itself when the session expires
-    remember_password: Option<bool>,
-) -> Result<ServerEntry> {
-    let origin = normalize_origin(&origin)?;
-    let info = probe::fetch_info(&origin).await?;
-
-    let credentials = match (identity.as_deref(), password.as_deref()) {
-        (Some(identity), Some(password)) if !identity.is_empty() && !password.is_empty() => {
-            // proves the credentials before anything is written, so a typo does not leave a
-            // half-configured entry in the rail
-            let token = login::sign_in(&origin, identity, password).await?;
-
-            Some((identity.to_string(), password.to_string(), token))
-        }
-        _ => None,
-    };
-
-    let entry = store.update(|registry| {
-        let position = next_position(registry);
-
-        // the same origin is allowed more than once so a user can hold several accounts on one
-        // server, but then the entries need labels to be distinguishable in the rail
-        let existing = registry
-            .servers
-            .iter()
-            .filter(|server| server.origin == origin)
-            .count();
-
-        // the username already tells two accounts apart, so it is the natural default label
-        let label = account_label
-            .clone()
-            .or_else(|| {
-                credentials
-                    .as_ref()
-                    .map(|(identity, _, _)| identity.clone())
-            })
-            .or_else(|| (existing > 0).then(|| format!("Account {}", existing + 1)));
-
-        let entry = ServerEntry {
-            id: Uuid::new_v4().to_string(),
-            origin: origin.clone(),
-            server_id: Some(info.server_id.clone()),
-            name: info.name.clone(),
-            icon_url: info.icon_url.clone(),
-            identity: credentials
-                .as_ref()
-                .map(|(identity, _, _)| identity.clone()),
-            account_label: label,
-            folder_id: None,
-            position,
-            // off for a server nobody here runs, which is every server on the day it is added
-            accept_any_size: false,
-        };
-
-        registry.servers.push(entry.clone());
-
-        Ok(entry)
-    })?;
-
-    if let Some((_, password, token)) = credentials {
-        secrets::store_off_thread(Secret::Session, &entry.id, &token).await?;
-
-        if remember_password != Some(false) {
-            secrets::store_off_thread(Secret::Password, &entry.id, &password).await?;
-        }
-    }
-
-    // it reports from launch like every other server does, without waiting to be opened
-    crate::watch::sync(&app);
-
-    Ok(entry)
-}
-
-/// Drops both of a server's secrets, off the async runtime's workers.
-///
-/// `keyring` is synchronous and on Linux talks to the Secret Service over D-Bus, which can block
-/// for a long time and may put a keyring-unlock prompt in front of the user. `reset_media_permissions`
-/// already learned this lesson the expensive way; the credential calls are the same hazard.
-async fn forget_secrets(id: &str) -> Result<()> {
-    secrets::forget_all_off_thread(id).await
-}
-
-/// Removes a server and everything Shiver knows about the user on it.
-#[tauri::command]
-pub async fn remove_server(
-    app: AppHandle,
-    store: State<'_, Store>,
-    feed: State<'_, Feed>,
-    id: String,
-) -> Result<()> {
-    webviews::close_server(&app, &id)?;
-
-    // **And the conversation view.** It is a second, independently signed-in client for the same
-    // server, and `close_server` only ever closed the first one — so removing a server left a live
-    // authenticated page holding that session in its own storage, for a server that is no longer in
-    // the rail, with the keychain entry it was built from deleted a few lines below. Nothing would
-    // ever have cleaned it up.
-    webviews::close_dm_view(&app, &id);
-
-    // secrets go before the entry does, so a failure here cannot leave a credential behind for a
-    // server that is no longer in the rail
-    forget_secrets(&id).await?;
-    feed.forget_entry(&id);
-
-    app.state::<VoiceState>().forget_entry(&id);
-    app.state::<Readiness>().forget_entry(&id);
-    app.state::<Recovery>().forget_entry(&id);
-    app.state::<drain::Openings>().forget_entry(&id);
-
-    store.update(|registry| {
-        let before = registry.servers.len();
-
-        registry.servers.retain(|server| server.id != id);
-        registry.muted.retain(|muted| muted.entry_id != id);
-
-        // The unread floor for a server that is gone. It has one writer and had no remover at all,
-        // so `servers.json` kept a per-channel record of every server the user had ever added —
-        // growing without bound, and outliving the removal that was supposed to forget it.
-        registry.baselines.remove(&id);
-
-        if registry.servers.len() == before {
-            return Err(Error::UnknownServer);
-        }
-
-        if registry.settings.last_server_id.as_deref() == Some(id.as_str()) {
-            registry.settings.last_server_id = None;
-        }
-
-        Ok(())
-    })?;
-
-    // the entry is gone from the registry, so this is what closes the socket that was watching it
-    crate::watch::sync(&app);
-
-    Ok(())
-}
-
-/// Applies a drag in the rail. `ordered_ids` is the full rail in its new order.
-#[tauri::command]
-pub fn reorder_servers(store: State<'_, Store>, ordered_ids: Vec<String>) -> Result<()> {
-    store.update(|registry| {
-        for (index, id) in ordered_ids.iter().enumerate() {
-            let server = registry
-                .servers
-                .iter_mut()
-                .find(|server| &server.id == id)
-                .ok_or(Error::UnknownServer)?;
-
-            server.position = index as i32;
-        }
-
-        registry.servers.sort_by_key(|server| server.position);
-
-        Ok(())
-    })
-}
-
-/// One row of the rail: either a server sitting at the top level, or a folder.
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RailRef {
-    pub kind: String,
-    pub id: String,
-}
-
-/// Applies a drag anywhere in the rail.
-///
-/// Servers and folders share one position space, which is what lets a folder be dragged above a
-/// server and vice versa. Servers inside a folder are not part of this ordering and keep their own
-/// positions relative to each other.
-#[tauri::command]
-pub fn reorder_rail(store: State<'_, Store>, ordered: Vec<RailRef>) -> Result<()> {
-    store.update(|registry| {
-        for (index, item) in ordered.iter().enumerate() {
-            let position = index as i32;
-
-            match item.kind.as_str() {
-                "folder" => {
-                    let folder = registry
-                        .folders
-                        .iter_mut()
-                        .find(|folder| folder.id == item.id)
-                        .ok_or(Error::UnknownFolder)?;
-
-                    folder.position = position;
-                }
-                _ => {
-                    let server = registry
-                        .servers
-                        .iter_mut()
-                        .find(|server| server.id == item.id)
-                        .ok_or(Error::UnknownServer)?;
-
-                    server.position = position;
-                }
-            }
-        }
-
-        Ok(())
-    })
-}
-
-/// Creates a folder and moves servers into it in one step, so a drag that makes a folder cannot
-/// leave an empty one behind if it fails halfway.
-#[tauri::command]
-pub fn create_folder_with(
-    store: State<'_, Store>,
-    name: String,
-    member_ids: Vec<String>,
-) -> Result<Folder> {
-    store.update(|registry| {
-        // the new folder takes the place of the first server going into it, so it appears where the
-        // user dropped rather than at the end of the rail
-        let position = registry
-            .servers
-            .iter()
-            .filter(|server| member_ids.contains(&server.id))
-            .map(|server| server.position)
-            .min()
-            .unwrap_or_else(|| next_position(registry));
-
-        let folder = Folder {
-            id: Uuid::new_v4().to_string(),
-            name: clamp_name(&name)?,
-            position,
-            expanded: true,
-        };
-
-        for (index, id) in member_ids.iter().enumerate() {
-            let server = registry
-                .servers
-                .iter_mut()
-                .find(|server| &server.id == id)
-                .ok_or(Error::UnknownServer)?;
-
-            server.folder_id = Some(folder.id.clone());
-            server.position = index as i32;
-        }
-
-        registry.folders.push(folder.clone());
-
-        Ok(folder)
-    })
-}
-
-/// The folder's own context menu.
-#[tauri::command]
-pub async fn show_folder_menu(app: AppHandle, id: String) -> Result<()> {
-    let window = webviews::main_window(&app)?;
-
-    let rename =
-        MenuItemBuilder::with_id(format!("rename-folder:{id}"), "Rename folder").build(&app)?;
-    let delete =
-        MenuItemBuilder::with_id(format!("delete-folder:{id}"), "Delete folder").build(&app)?;
-
-    let menu = MenuBuilder::new(&app)
-        .item(&rename)
-        .separator()
-        .item(&delete)
-        .build()?;
-
-    menu.popup(window)?;
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn set_server_folder(
-    store: State<'_, Store>,
-    id: String,
-    folder_id: Option<String>,
-) -> Result<()> {
-    store.update(|registry| {
-        if let Some(folder_id) = &folder_id {
-            if !registry
-                .folders
-                .iter()
-                .any(|folder| &folder.id == folder_id)
-            {
-                return Err(Error::UnknownFolder);
-            }
-        }
-
-        let server = registry
-            .servers
-            .iter_mut()
-            .find(|server| server.id == id)
-            .ok_or(Error::UnknownServer)?;
-
-        server.folder_id = folder_id;
-
-        Ok(())
-    })
-}
-
-/// Makes an empty folder at the end of the rail.
-///
-/// `next_position` rather than `folders.len()`. Folders and servers share one position space —
-/// that is what lets a folder be dragged above a server — so numbering a new folder by how many
-/// folders exist put it at a position some server already held, and the two sat in an undecided
-/// order until the next drag rewrote both.
-#[tauri::command]
-pub fn create_folder(store: State<'_, Store>, name: String) -> Result<Folder> {
-    store.update(|registry| {
-        let folder = Folder {
-            id: Uuid::new_v4().to_string(),
-            name: clamp_name(&name)?,
-            position: next_position(registry),
-            expanded: true,
-        };
-
-        registry.folders.push(folder.clone());
-
-        Ok(folder)
-    })
-}
-
-#[tauri::command]
-pub fn rename_folder(store: State<'_, Store>, id: String, name: String) -> Result<()> {
-    store.update(|registry| {
-        let folder = registry
-            .folders
-            .iter_mut()
-            .find(|folder| folder.id == id)
-            .ok_or(Error::UnknownFolder)?;
-
-        folder.name = clamp_name(&name)?;
-
-        Ok(())
-    })
-}
-
-/// Deleting a folder keeps its servers, they just move back to the top level of the rail.
-#[tauri::command]
-pub fn delete_folder(store: State<'_, Store>, id: String) -> Result<()> {
-    store.update(|registry| {
-        for server in registry.servers.iter_mut() {
-            if server.folder_id.as_deref() == Some(id.as_str()) {
-                server.folder_id = None;
-            }
-        }
-
-        registry.folders.retain(|folder| folder.id != id);
-
-        Ok(())
-    })
-}
-
-#[tauri::command]
-pub fn set_folder_expanded(store: State<'_, Store>, id: String, expanded: bool) -> Result<()> {
-    store.update(|registry| {
-        let folder = registry
-            .folders
-            .iter_mut()
-            .find(|folder| folder.id == id)
-            .ok_or(Error::UnknownFolder)?;
-
-        folder.expanded = expanded;
-
-        Ok(())
-    })
-}
-
-/// Shows a server, creating its webview on first use, and remembers it for the next launch.
-///
-/// Async on purpose. Creating or moving a webview dispatches to the event loop and blocks until it
-/// answers, and tauri runs synchronous commands on the main thread, which *is* that loop: doing
-/// this from a `fn` deadlocks the app the first time a server is opened.
-#[tauri::command]
-pub async fn select_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
-    let (entry, settings, muted) = {
-        let registry = store.registry();
-
-        let entry = registry
-            .servers
-            .iter()
-            .find(|server| server.id == id)
-            .cloned()
-            .ok_or(Error::UnknownServer)?;
-
-        let muted = registry
-            .muted
-            .iter()
-            .filter(|muted| muted.entry_id == id)
-            .map(|muted| muted.channel_id)
-            .collect::<Vec<_>>();
-
-        (entry, registry.settings.clone(), muted)
-    };
-
-    let token = ensure_session(&entry).await;
-    let locked = voice_locked_for(&app, &id);
-
-    webviews::show_server(&app, &entry, &settings, token.as_deref(), &muted, locked)?;
-
-    // This server now has a page, which reports for itself — and whatever fell off the end of the
-    // keep-warm list no longer does. `trim_pages` closes those and re-syncs the sockets, so exactly
-    // one thing is reporting for every server either way.
-    webviews::trim_pages(&app);
-
-    // Opening a server does **not** settle its badge — walking in is not reading. What this does
-    // is hand the page this server's floor, so the user's other devices measure from the same
-    // place. The count comes down as channels are actually read.
-    crate::watch::publish_floor(&app, &id);
-
-    // deliberately does *not* mark the whole server read. The channel the page lands on clears
-    // itself once the drain sees it on screen, and what is left is the point: the badge goes on
-    // showing the unread in the channels the user has not looked at. "Mark all as read" in the
-    // rail's menu is the bulk action.
-
-    store.update(|registry| {
-        registry.settings.last_server_id = Some(id.clone());
-
-        Ok(())
-    })
-}
-
-/// Whether a page must refuse to start a call, because another entry is already holding one.
 fn voice_locked_for(app: &AppHandle, entry_id: &str) -> bool {
     app.state::<VoiceState>()
         .holder()
         .is_some_and(|holder| holder != entry_id)
 }
 
-/// Brings a server up without showing it, and says whether its client is already connected.
+/* ── sessions ── */
+
+/// A session token for this entry, signing in again when the stored one is due for renewal.
 ///
-/// This is what lets Shiver cover a connecting server with its own cached messages rather than with
-/// Sharkord's loading state. The shell calls this first: on `true` it goes straight to
-/// `select_server`, and on `false` it draws the wait itself until `shiver://server-ready` arrives.
-#[tauri::command]
-pub async fn prepare_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<bool> {
-    let (entry, settings, muted) = {
-        let registry = store.registry();
-
-        let entry = registry
-            .servers
-            .iter()
-            .find(|server| server.id == id)
-            .cloned()
-            .ok_or(Error::UnknownServer)?;
-
-        let muted = registry
-            .muted
-            .iter()
-            .filter(|muted| muted.entry_id == id)
-            .map(|muted| muted.channel_id)
-            .collect::<Vec<_>>();
-
-        (entry, registry.settings.clone(), muted)
-    };
-
-    // usually already up: every server is opened at launch. this covers the one being opened
-    // before the preload reached it, and a server added since.
-    if app.get_webview(&webviews::webview_label(&id)).is_none() {
-        let token = ensure_session(&entry).await;
-        let locked = voice_locked_for(&app, &id);
-
-        webviews::preload_server(&app, &entry, &settings, token.as_deref(), &muted, locked)?;
-
-        // this server has a page now, so the socket that was speaking for it stands down. Done
-        // here rather than at `select_server`: between the two, both would be reporting, and the
-        // same message would reach the feed twice.
-        crate::watch::sync(&app);
-    }
-
-    Ok(app.state::<Readiness>().is_ready(&id))
-}
-
-/// The call Shiver is showing in the rail, wherever it is running.
-#[tauri::command]
-pub fn voice_status(voice: State<'_, VoiceState>) -> Option<VoiceStatus> {
-    voice.status()
-}
-
-/// Works the call's own controls from Shiver's chrome, whichever server is on screen.
-///
-/// It always acts on the entry holding the call rather than on the visible one, which is the whole
-/// point: the controls have to reach a call running on a server the user has navigated away from.
-#[tauri::command]
-pub async fn voice_control(app: AppHandle, action: String) -> Result<()> {
-    if !matches!(action.as_str(), "mic" | "sound" | "leave") {
-        return Err(Error::Webview(format!("Unknown voice action '{action}'")));
-    }
-
-    let Some(holder) = app.state::<VoiceState>().holder() else {
-        return Ok(());
-    };
-
-    webviews::run_voice_action(&app, &holder, &action);
-
-    Ok(())
-}
-
-/// Hides the active server so a Shiver panel can use the whole window.
-#[tauri::command]
-pub async fn show_shell(app: AppHandle) -> Result<()> {
-    webviews::show_shell_only(&app)
-}
-
-/// Leaves the DM inbox. The conversation views stay up, hidden, so the next one opens instantly.
-#[tauri::command]
-pub async fn exit_dm_split(app: AppHandle) -> Result<()> {
-    webviews::hide_dm_views(&app)
-}
-
-/// Which build this is.
-///
-/// Shiver's own command rather than the `app` plugin's `getVersion`, which needs a capability grant
-/// Shiver does not make — it asks for nothing from the plugin acl, and a version string is not worth
-/// being the first thing it does.
-#[tauri::command]
-pub fn app_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
-}
-
-#[tauri::command]
-pub fn get_settings(store: State<'_, Store>) -> Settings {
-    // sanitised on the way out too: `servers.json` is a file, and a value hand-edited into it has
-    // never been past `update_settings`
-    store.registry().settings.clone().sanitised()
-}
-
-#[tauri::command]
-pub async fn update_settings(
-    app: AppHandle,
-    store: State<'_, Store>,
-    settings: Settings,
-) -> Result<()> {
-    let saved = store.update(|registry| {
-        // Shiver's own bookkeeping, not anything the settings screen owns — and it does not send
-        // these back, so taking the incoming struct wholesale would quietly clear them. A turned
-        // down version returning the moment somebody changed a colour is exactly the sort of thing
-        // that makes people stop trusting a prompt.
-        let last_server_id = registry.settings.last_server_id.clone();
-        let skipped_update = registry.settings.skipped_update.clone();
-
-        // Sanitised rather than taken as given. The colours end up interpolated into a stylesheet
-        // in every server's page, and this command is the door they come in through.
-        registry.settings = Settings {
-            last_server_id,
-            skipped_update,
-            ..settings.sanitised()
-        };
-
-        Ok(registry.settings.clone())
-    })?;
-
-    // re-registered rather than diffed: the shortcut may be unchanged, but the user may equally
-    // have just cleared it or taken it from another application
-    hotkey::apply(&app, saved.mute_hotkey.as_deref());
-
-    // A lowered page count is the one setting here that should cost memory the moment it is saved
-    // rather than at the next server switch — somebody turning it down is asking for the memory
-    // back now. It also re-syncs the sockets, so whatever just lost its page keeps reporting.
-    webviews::trim_pages(&app);
-
-    // every page repaints in place: the server clients through the bridge, and Shiver's own bell and
-    // popup through an event, since each is a separate webview that would otherwise keep the old
-    // colours until it was next created
-    webviews::push_theme(&app, &saved);
-
-    let _ = app.emit_to(webviews::SHELL_WEBVIEW, SETTINGS_EVENT, ());
-    let _ = app.emit_to(webviews::OVERLAY_WEBVIEW, SETTINGS_EVENT, ());
-    let _ = app.emit_to(webviews::POPUP_WEBVIEW, SETTINGS_EVENT, ());
-
-    Ok(())
-}
-
-/// Re-reads a server's name and logo, so a rename on the server shows up in the rail.
-#[tauri::command]
-pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<ServerEntry> {
-    let origin = {
-        let registry = store.registry();
-
-        registry
-            .servers
-            .iter()
-            .find(|server| server.id == id)
-            .map(|server| server.origin.clone())
-            .ok_or(Error::UnknownServer)?
-    };
-
-    let info = probe::fetch_info(&origin).await?;
-
-    store.update(|registry| {
-        let server = registry
-            .servers
-            .iter_mut()
-            .find(|server| server.id == id)
-            .ok_or(Error::UnknownServer)?;
-
-        server.name = info.name.clone();
-        server.icon_url = info.icon_url.clone();
-        server.server_id = Some(info.server_id.clone());
-
-        Ok(server.clone())
-    })
-}
-
-/// Returns a session token that will still be valid for a while, signing in again if the stored one
-/// is missing or close to expiring.
-///
-/// Never fails the caller: if Shiver cannot get a session, the server's own login page is a perfectly
-/// good fallback and is what the user would otherwise have seen anyway.
+/// Never fails: with no usable session the server's own login page is the fallback. A token that
+/// is due for renewal but still valid is used when renewal is impossible (no password) or fails.
 pub(crate) async fn ensure_session(entry: &ServerEntry) -> Option<String> {
     let stored = secrets::read_off_thread(Secret::Session, &entry.id).await;
 
-    if let Some(token) = &stored {
+    if let Some(token) = stored.as_deref() {
         if !jwt::needs_refresh(token) {
-            return stored;
+            return Some(token.to_string());
         }
     }
 
-    let identity = entry.identity.as_deref()?;
-    let password = secrets::read_off_thread(Secret::Password, &entry.id).await?;
+    let still_live = stored
+        .as_deref()
+        .filter(|token| jwt::is_live(token))
+        .map(|token| token.to_string());
+
+    let (Some(identity), Some(password)) = (
+        entry.identity.as_deref(),
+        secrets::read_off_thread(Secret::Password, &entry.id).await,
+    ) else {
+        return still_live;
+    };
 
     match login::sign_in(&entry.origin, identity, &password).await {
         Ok(token) => {
-            // the write is a keychain call too
             let _ = secrets::store_off_thread(Secret::Session, &entry.id, &token).await;
 
             Some(token)
@@ -783,183 +94,410 @@ pub(crate) async fn ensure_session(entry: &ServerEntry) -> Option<String> {
                 entry.origin
             );
 
-            // Nothing, rather than the token that got us here. Control only reaches this arm when
-            // `needs_refresh` already said that token was spent, so there was never anything to
-            // hand back — this used to re-filter it on the same predicate and return `None` by a
-            // longer route, with a comment describing a fallback that could not happen. An expired
-            // token is worse than none anyway: the client would try it, fail, and clear its own
-            // auto-login state, so the login page is the honest answer.
-            None
+            still_live
         }
     }
 }
 
-/// Signs a server out, and leaves it signed out.
-///
-/// The session *and* the password go. Keeping the password would mean Shiver signing straight back in
-/// — either through `ensure_session` on the next open or through `session.rs` the moment the page
-/// showed its login form — so a log out that kept it would not be one. The username goes with them,
-/// which puts the entry into the same state as a server added without credentials: still in the
-/// rail, still openable, and asking the user who they are.
+/// Stores a fresh session (and the password, or forgets it). On failure nothing is left behind.
+async fn store_credentials(
+    id: &str,
+    token: &str,
+    password: &str,
+    remember_password: bool,
+) -> Result<()> {
+    let stored = async {
+        secrets::store_off_thread(Secret::Session, id, token).await?;
+
+        if remember_password {
+            secrets::store_off_thread(Secret::Password, id, password).await
+        } else {
+            secrets::forget_off_thread(Secret::Password, id).await
+        }
+    }
+    .await;
+
+    if stored.is_err() {
+        let _ = secrets::forget_all_off_thread(id).await;
+    }
+
+    stored
+}
+
+/* ── adding, checking and removing servers ── */
+
+#[tauri::command]
+pub fn list_registry(store: State<'_, Store>) -> Registry {
+    Registry::clone(&store.registry())
+}
+
+/// See [`sharkord_client::check_server`].
+#[tauri::command]
+pub async fn check_server(
+    origin: String,
+    identity: Option<String>,
+    password: Option<Password>,
+) -> Result<ServerCheck> {
+    Ok(sharkord_client::check_server(
+        &origin,
+        identity.as_deref(),
+        password.as_deref().map(String::as_str),
+    )
+    .await?)
+}
+
+/// Adds a server, signing in first when credentials are given (so a typo adds nothing). The password
+/// is kept unless `remember_password` is `false`; it is what lets Shiver renew the week-long session.
+#[tauri::command]
+pub async fn add_server(
+    app: AppHandle,
+    store: State<'_, Store>,
+    origin: String,
+    identity: Option<String>,
+    password: Option<Password>,
+    account_label: Option<String>,
+    remember_password: Option<bool>,
+) -> Result<ServerEntry> {
+    let origin = normalize_origin(&origin)?;
+    let info = probe::fetch_info(&origin).await?;
+    let identity = identity
+        .map(|identity| identity.trim().to_string())
+        .filter(|identity| !identity.is_empty());
+    let id = Uuid::new_v4().to_string();
+
+    // credentials first: an entry is only written once its secrets are safely stored
+    let signed_in = match (
+        &identity,
+        password.as_ref().filter(|password| !password.is_empty()),
+    ) {
+        (Some(identity), Some(password)) => {
+            let token = Zeroizing::new(login::sign_in(&origin, identity, password).await?);
+
+            store_credentials(&id, &token, password, remember_password != Some(false)).await?;
+
+            true
+        }
+        _ => false,
+    };
+
+    let added = store.update(|registry| {
+        let existing = registry
+            .servers
+            .iter()
+            .filter(|server| server.origin == origin)
+            .count();
+        let identity = identity.clone().filter(|_| signed_in);
+
+        // a second account on one origin needs a label to be told apart
+        let label = account_label
+            .clone()
+            .or_else(|| identity.clone())
+            .or_else(|| (existing > 0).then(|| format!("Account {}", existing + 1)));
+
+        let entry = ServerEntry {
+            id: id.clone(),
+            origin: origin.clone(),
+            server_id: Some(info.server_id.clone()),
+            name: info.name.clone(),
+            icon_url: info.icon_url.clone(),
+            identity,
+            account_label: label,
+            folder_id: None,
+            position: registry.next_position(),
+            accept_any_size: false,
+            profile: None,
+        };
+
+        registry.servers.push(entry.clone());
+
+        Ok(entry)
+    });
+
+    if added.is_err() && signed_in {
+        let _ = secrets::forget_all_off_thread(&id).await;
+    }
+
+    crate::watch::sync(&app);
+
+    added
+}
+
+/// Removes a server and everything Shiver keeps about it: pages, browser profile, credentials,
+/// notifications, mutes and unread floor.
+#[tauri::command]
+pub async fn remove_server(
+    app: AppHandle,
+    store: State<'_, Store>,
+    feed: State<'_, Feed>,
+    id: String,
+) -> Result<()> {
+    entry_of(&store, &id)?;
+
+    webviews::close_server(&app, &id)?;
+    webviews::close_dm_view(&app, &id);
+
+    // credentials go first, so a failure cannot leave one behind for a server no longer listed
+    secrets::forget_all_off_thread(&id).await?;
+
+    feed.forget_entry(&id);
+    app.state::<VoiceState>().forget_entry(&id);
+    app.state::<Readiness>().forget_entry(&id);
+    app.state::<Recovery>().forget_entry(&id);
+    app.state::<webviews::Openings>().forget(&id);
+
+    store.update(|registry| {
+        registry.servers.retain(|server| server.id != id);
+        registry.muted.retain(|muted| muted.entry_id != id);
+        registry.baselines.remove(&id);
+        registry
+            .pending_permission_resets
+            .retain(|pending| pending != &id);
+
+        if registry.settings.last_server_id.as_deref() == Some(id.as_str()) {
+            registry.settings.last_server_id = None;
+        }
+
+        Ok(())
+    })?;
+
+    webviews::discard_profiles(&app, &id, None);
+    crate::watch::sync(&app);
+    drain::notify_feed_changed(&app);
+
+    Ok(())
+}
+
+/// Signs a server out and leaves it signed out: session, password and username are dropped, and its
+/// browser profile is replaced so the page keeps no cookie or stored token either.
 #[tauri::command]
 pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
-    forget_secrets(&id).await?;
+    secrets::forget_all_off_thread(&id).await?;
+
+    webviews::close_server(&app, &id)?;
+    webviews::close_dm_view(&app, &id);
 
     let entry = store.update(|registry| {
-        let server = registry
-            .servers
-            .iter_mut()
-            .find(|server| server.id == id)
-            .ok_or(Error::UnknownServer)?;
+        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
 
         server.identity = None;
+        server.profile = Some(Uuid::new_v4().simple().to_string());
 
         Ok(server.clone())
     })?;
 
-    // whatever Shiver was doing about this server's session, it is not doing it any more
+    webviews::discard_profiles(&app, &id, Some(&entry));
     app.state::<Recovery>().forget_entry(&id);
     app.state::<Readiness>().forget_entry(&id);
 
     let settings = store.registry().settings.clone();
-
-    // rebuilt with no token, so the bridge seeds nothing and clears what it seeded before
-    webviews::close_server(&app, &id)?;
-    webviews::close_dm_view(&app, &id);
-
     let locked = voice_locked_for(&app, &id);
 
     webviews::show_server(&app, &entry, &settings, None, &[], locked)?;
     webviews::preload_dm_view(&app, &entry, &settings, None)?;
-
-    // the entry has no identity any more, which is what stops Shiver watching it from the core
     crate::watch::sync(&app);
 
     Ok(())
 }
 
-/// Signs an existing entry in, for a server that was added without credentials or whose password
-/// changed.
-///
-/// `remember_password` is asked again here rather than remembered from the add, so the answer can
-/// change: a server signed in once without keeping the password can be told to keep it, and one
-/// that kept it can have it dropped by unticking the box.
+/// Signs an existing entry in (added without credentials, or its password changed). The page is
+/// rebuilt by the shell afterwards so the new session takes effect.
 #[tauri::command]
 pub async fn sign_in_server(
     app: AppHandle,
     store: State<'_, Store>,
     id: String,
     identity: String,
-    password: String,
+    password: Password,
     remember_password: Option<bool>,
 ) -> Result<()> {
-    let origin = {
-        let registry = store.registry();
+    let origin = entry_of(&store, &id)?.origin;
+    let identity = identity.trim().to_string();
+    let token = Zeroizing::new(login::sign_in(&origin, &identity, &password).await?);
 
-        registry
-            .servers
-            .iter()
-            .find(|server| server.id == id)
-            .map(|server| server.origin.clone())
-            .ok_or(Error::UnknownServer)?
-    };
-
-    let token = login::sign_in(&origin, &identity, &password).await?;
-
-    secrets::store_off_thread(Secret::Session, &id, &token).await?;
-
-    // unticked drops whatever was kept before, so the box says what is actually stored rather than
-    // only what happens from now on
-    if remember_password != Some(false) {
-        secrets::store_off_thread(Secret::Password, &id, &password).await?;
-    } else {
-        secrets::forget_off_thread(Secret::Password, &id).await?;
-    }
+    store_credentials(&id, &token, &password, remember_password != Some(false)).await?;
 
     store.update(|registry| {
-        let server = registry
-            .servers
-            .iter_mut()
-            .find(|server| server.id == id)
-            .ok_or(Error::UnknownServer)?;
+        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
 
+        server.account_label.get_or_insert_with(|| identity.clone());
         server.identity = Some(identity.clone());
-
-        if server.account_label.is_none() {
-            server.account_label = Some(identity.clone());
-        }
 
         Ok(())
     })?;
 
-    // the page has to be rebuilt for the seeded session to take effect
     webviews::close_server(&app, &id)?;
     webviews::close_dm_view(&app, &id);
     app.state::<Readiness>().forget_entry(&id);
-
-    // the user has given Shiver a password that works, so whatever it failed at before is history
     app.state::<Recovery>().forget_entry(&id);
+    crate::watch::restart(&app, &id);
 
-    // Shiver has an account on this server now, which is the thing it could not watch without.
-    crate::watch::sync(&app);
-
-    // the shell opens it from here, so the rebuilt page comes up behind Shiver's connecting screen
-    // rather than the user watching the client boot
     Ok(())
 }
 
-/// Opens the rail's context menu as a real OS menu.
+/// Takes back the stored password (the session stays until it expires).
+#[tauri::command]
+pub async fn forget_password(id: String) -> Result<()> {
+    secrets::forget_off_thread(Secret::Password, &id).await
+}
+
+/// Forgets stored camera/microphone answers. Answers how many were forgotten now.
 ///
-/// It has to be native: the rail is drawn by the shell webview, which sits *underneath* the server
-/// webview, so an html menu is painted over the moment it extends past the rail. A native menu is
-/// not part of any webview and draws above all of them.
+/// On a blocking thread: WebView2 answers on the main thread, so waiting there would deadlock.
+#[tauri::command]
+pub async fn reset_media_permissions(app: AppHandle) -> Result<usize> {
+    tauri::async_runtime::spawn_blocking(move || crate::permissions::clear_media_permissions(&app))
+        .await
+        .map_err(|error| Error::Webview(error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<ServerEntry> {
+    let info = probe::fetch_info(&entry_of(&store, &id)?.origin).await?;
+
+    store.update(|registry| {
+        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
+
+        server.name = info.name.clone();
+        server.icon_url = info.icon_url.clone();
+        server.server_id = Some(info.server_id.clone());
+
+        Ok(server.clone())
+    })
+}
+
+#[tauri::command]
+pub async fn set_accept_any_size(
+    app: AppHandle,
+    store: State<'_, Store>,
+    id: String,
+    accept: bool,
+) -> Result<()> {
+    store.update(|registry| {
+        registry
+            .server_mut(&id)
+            .ok_or(Error::UnknownServer)?
+            .accept_any_size = accept;
+
+        Ok(())
+    })?;
+
+    crate::watch::restart(&app, &id);
+
+    Ok(())
+}
+
+/* ── the rail ── */
+
+/// Applies a drag of top-level servers only.
+#[tauri::command]
+pub async fn reorder_servers(store: State<'_, Store>, ordered_ids: Vec<String>) -> Result<()> {
+    store.update(|registry| Ok(registry.rail().reorder_servers(&ordered_ids)?))
+}
+
+/// Applies a drag anywhere at the top level (servers and folders share one position space).
+#[tauri::command]
+pub async fn reorder_rail(
+    store: State<'_, Store>,
+    ordered: Vec<shiver_core::rail::RailRef>,
+) -> Result<()> {
+    store.update(|registry| Ok(registry.rail().reorder(&ordered)?))
+}
+
+/// Creates a folder holding `member_ids`, at the first member's place, in one step.
+#[tauri::command]
+pub async fn create_folder_with(
+    store: State<'_, Store>,
+    name: String,
+    member_ids: Vec<String>,
+) -> Result<Folder> {
+    store.update(|registry| {
+        Ok(registry
+            .rail()
+            .create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?)
+    })
+}
+
+#[tauri::command]
+pub async fn rename_folder(store: State<'_, Store>, id: String, name: String) -> Result<()> {
+    store.update(|registry| Ok(registry.rail().rename_folder(&id, &name)?))
+}
+
+/// Deletes a folder; its servers move back to the top level.
+#[tauri::command]
+pub async fn delete_folder(store: State<'_, Store>, id: String) -> Result<()> {
+    store.update(|registry| Ok(registry.rail().delete_folder(&id)?))
+}
+
+#[tauri::command]
+pub async fn set_server_folder(
+    store: State<'_, Store>,
+    id: String,
+    folder_id: Option<String>,
+) -> Result<()> {
+    store.update(|registry| {
+        let mut rail = registry.rail();
+
+        rail.set_server_folder(&id, folder_id)?;
+
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn set_folder_expanded(
+    store: State<'_, Store>,
+    id: String,
+    expanded: bool,
+) -> Result<()> {
+    store.update(|registry| Ok(registry.rail().set_folder_expanded(&id, expanded)?))
+}
+
+#[tauri::command]
+pub async fn show_folder_menu(app: AppHandle, id: String) -> Result<()> {
+    let window = webviews::main_window(&app)?;
+    let rename =
+        MenuItemBuilder::with_id(format!("rename-folder:{id}"), "Rename folder").build(&app)?;
+    let delete =
+        MenuItemBuilder::with_id(format!("delete-folder:{id}"), "Delete folder").build(&app)?;
+
+    MenuBuilder::new(&app)
+        .item(&rename)
+        .separator()
+        .item(&delete)
+        .build()?
+        .popup(window)?;
+
+    Ok(())
+}
+
+/// The rail's context menu, as a native menu (an html one would be painted over by the server
+/// webview). The target is encoded in each item's id; `lib.rs` forwards the choice to the shell.
 #[tauri::command]
 pub async fn show_server_menu(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
     let window = webviews::main_window(&app)?;
-
-    let (in_folder, signed_in) = {
-        let registry = store.registry();
-        let server = registry.servers.iter().find(|server| server.id == id);
-
-        (
-            server.is_some_and(|server| server.folder_id.is_some()),
-            // a stored username is what says Shiver holds this server's session rather than the
-            // user having signed in on its own page
-            server.is_some_and(|server| server.identity.is_some()),
-        )
+    let entry = entry_of(&store, &id)?;
+    let item = |action: &str, label: &str| {
+        MenuItemBuilder::with_id(format!("{action}:{id}"), label).build(&app)
     };
 
-    // the id travels in the menu item id, so the handler needs no state of its own
-    let open = MenuItemBuilder::with_id(format!("open:{id}"), "Open").build(&app)?;
-    let mark_read =
-        MenuItemBuilder::with_id(format!("markread:{id}"), "Mark all as read").build(&app)?;
-    let session = if signed_in {
-        MenuItemBuilder::with_id(format!("logout:{id}"), "Log out").build(&app)?
+    let open = item("open", "Open")?;
+    let mark_read = item("markread", "Mark all as read")?;
+    let refresh = item("refresh", "Refresh name and icon")?;
+    let remove = item("remove", "Remove from Shiver")?;
+    let session = if entry.identity.is_some() {
+        item("logout", "Log out")?
     } else {
-        MenuItemBuilder::with_id(format!("signin:{id}"), "Sign in").build(&app)?
+        item("signin", "Sign in")?
     };
-    let refresh =
-        MenuItemBuilder::with_id(format!("refresh:{id}"), "Refresh name and icon").build(&app)?;
-    let remove =
-        MenuItemBuilder::with_id(format!("remove:{id}"), "Remove from Shiver").build(&app)?;
-    // Enabled only when there is one to forget, so the item answers the question by existing.
-    //
-    // Read off the runtime's workers: this is a keychain lookup, and on Linux that is a D-Bus round
-    // trip that can block and can prompt — for the sake of one menu item's enabled state, from a
-    // right-click on the rail.
+
+    // enabled only when there is a password to forget (a keychain read, off the UI thread)
     let has_password = secrets::read_off_thread(Secret::Password, &id)
         .await
         .is_some();
-
     let forget = MenuItemBuilder::with_id(format!("forgetpw:{id}"), "Forget my password")
         .enabled(has_password)
         .build(&app)?;
 
-    // What this server can do for Shiver, said where the rest of the per-server answers are.
-    //
-    // Disabled on purpose: it is a statement, not an action. A native menu has no colour to give it
-    // — `MenuItemBuilder` takes text and nothing else — so the tick and the cross carry it, which
-    // is also what survives being read aloud by a screen reader.
     let plugin = MenuItemBuilder::with_id(
         format!("plugin:{id}"),
         plugin_menu_label(app.state::<crate::watch::Plugins>().all().get(&id)),
@@ -967,66 +505,43 @@ pub async fn show_server_menu(app: AppHandle, store: State<'_, Store>, id: Strin
     .enabled(false)
     .build(&app)?;
 
-    // Raising a limit is a security decision, so it is offered where it means something rather
-    // than against every server in the list: one that has actually tripped the limit this run, or
-    // one already raised, which needs a way back. Everywhere else the item would be an invitation
-    // to turn a protection off for no reason.
-    let trusted = {
-        let registry = store.registry();
+    let mut builder =
+        MenuBuilder::new(&app).items(&[&open, &mark_read, &refresh, &forget, &plugin]);
 
-        registry
-            .servers
-            .iter()
-            .any(|server| server.id == id && server.accept_any_size)
-    };
-
-    let tripped = app.state::<crate::watch::Reported>().mentioned(&id);
-
-    // Two ids rather than one action plus the current value, so the frontend needs to know nothing
-    // about which way this server is currently set — same shape as sign in / log out above.
-    let sizes = if trusted {
-        Some(
-            MenuItemBuilder::with_id(format!("normalsize:{id}"), "Back to the normal size limit")
-                .build(&app)?,
-        )
-    } else if tripped {
-        Some(
-            MenuItemBuilder::with_id(
-                format!("anysize:{id}"),
-                "Accept larger messages from this server",
-            )
-            .build(&app)?,
-        )
+    // the size limit is only offered where it matters: a server that tripped it, or one raised
+    let sizes = if entry.accept_any_size {
+        Some(item("normalsize", "Back to the normal size limit")?)
+    } else if app.state::<crate::watch::Reported>().mentioned(&id) {
+        Some(item("anysize", "Accept larger messages from this server")?)
     } else {
         None
     };
-
-    let mut builder =
-        MenuBuilder::new(&app).items(&[&open, &mark_read, &refresh, &forget, &plugin]);
 
     if let Some(sizes) = &sizes {
         builder = builder.item(sizes);
     }
 
-    if in_folder {
-        let take_out =
-            MenuItemBuilder::with_id(format!("unfolder:{id}"), "Move out of folder").build(&app)?;
+    let take_out = entry
+        .folder_id
+        .is_some()
+        .then(|| item("unfolder", "Move out of folder"))
+        .transpose()?;
 
-        builder = builder.separator().item(&take_out);
+    if let Some(take_out) = &take_out {
+        builder = builder.separator().item(take_out);
     }
 
-    let menu = builder.separator().item(&session).item(&remove).build()?;
-
-    menu.popup(window)?;
+    builder
+        .separator()
+        .item(&session)
+        .item(&remove)
+        .build()?
+        .popup(window)?;
 
     Ok(())
 }
 
-/// How a server's companion-plugin status reads in the rail menu.
-///
-/// Three answers, not two. A server absent from the map is one Shiver has not connected to yet, and
-/// saying "no plugin" about one of those would be a guess presented as a fact — the answer only
-/// arrives with a join. See `watch::Plugins`.
+/// Absent = not connected yet, `None` = not installed.
 fn plugin_menu_label(status: Option<&Option<String>>) -> String {
     match status {
         Some(Some(version)) => format!("\u{2713} Shiver plugin {version}"),
@@ -1035,44 +550,70 @@ fn plugin_menu_label(status: Option<&Option<String>>) -> String {
     }
 }
 
-/// Opens or closes the notification feed under the bell. Returns the new state, so the bell can
-/// show itself as active without tracking it separately.
+/* ── showing servers ── */
+
+/// Shows a server, creating its page on first use, and remembers it for next launch.
+///
+/// Async: creating a webview blocks on the event loop, which a sync command (on the main thread)
+/// would deadlock.
 #[tauri::command]
-pub async fn toggle_popup(app: AppHandle) -> Result<bool> {
-    let open = app.state::<webviews::ActiveServer>().should_open_popup();
+pub async fn select_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
+    let (entry, settings, muted) = page_inputs(&store, &id)?;
+    let token = ensure_session(&entry).await;
 
-    webviews::set_popup_open(&app, open)?;
+    webviews::show_server(
+        &app,
+        &entry,
+        &settings,
+        token.as_deref(),
+        &muted,
+        voice_locked_for(&app, &id),
+    )?;
+    webviews::trim_pages(&app);
+    crate::watch::publish_floor(&app, &id);
 
-    Ok(open)
+    store.update(|registry| {
+        registry.settings.last_server_id = Some(id);
+
+        Ok(())
+    })
 }
 
-/// Closes the feed, for the popup's own close button.
+/// Brings a server's page up hidden and says whether its client is already connected, so the shell
+/// can cover it until `shiver://server-ready`.
 #[tauri::command]
-pub async fn close_popup(app: AppHandle) -> Result<()> {
-    webviews::set_popup_open(&app, false)
+pub async fn prepare_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<bool> {
+    if app.get_webview(&webviews::webview_label(&id)).is_none() {
+        let (entry, settings, muted) = page_inputs(&store, &id)?;
+        let token = ensure_session(&entry).await;
+
+        webviews::preload_server(
+            &app,
+            &entry,
+            &settings,
+            token.as_deref(),
+            &muted,
+            voice_locked_for(&app, &id),
+        )?;
+
+        // the page reports for itself now, so its socket stands down
+        crate::watch::sync(&app);
+    }
+
+    Ok(app.state::<Readiness>().is_ready(&id))
 }
 
-/// Closes the feed because the user clicked away from it.
-///
-/// Separate from `close_popup` because only this arms the reopen guard. The close button is a
-/// deliberate close with focus still inside the feed, and needs no guard; clicking away is the one
-/// that races the bell.
 #[tauri::command]
-pub async fn dismiss_popup(app: AppHandle) -> Result<()> {
-    app.state::<webviews::ActiveServer>().note_popup_dismissed();
-
-    webviews::set_popup_open(&app, false)
+pub async fn show_shell(app: AppHandle) -> Result<()> {
+    webviews::show_shell_only(&app)
 }
 
-/// Opens one conversation *inside* Shiver's DM window.
-///
-/// Shiver's cross-server list keeps the left 288px and the conversation is rendered beside it by a
-/// webview of its own, dedicated to DMs, with its own sidebar hidden. Nothing about the conversation
-/// is reimplemented: it is still Sharkord drawing it.
-///
-/// The dedicated webview is the point. Driving the server view instead changed where that view was
-/// sitting (DM mode and selected channel are page state), so going back to the server landed on the
-/// conversation rather than the channel the user had left.
+#[tauri::command]
+pub async fn exit_dm_split(app: AppHandle) -> Result<()> {
+    webviews::hide_dm_views(&app)
+}
+
+/// Opens one conversation in the entry's conversation view, beside Shiver's DM list.
 #[tauri::command]
 pub async fn open_dm(
     app: AppHandle,
@@ -1080,49 +621,26 @@ pub async fn open_dm(
     entry_id: String,
     name: String,
 ) -> Result<()> {
-    let (entry, settings) = {
-        let registry = store.registry();
-
-        let entry = registry
-            .servers
-            .iter()
-            .find(|server| server.id == entry_id)
-            .cloned()
-            .ok_or(Error::UnknownServer)?;
-
-        (entry, registry.settings.clone())
-    };
-
+    let (entry, settings, _) = page_inputs(&store, &entry_id)?;
     let token = ensure_session(&entry).await;
-    let created = webviews::show_dm_view(&app, &entry, &settings, token.as_deref(), &name)?;
 
-    // a page created just now already has the conversation in its config and opens it itself; only
-    // an existing page needs telling
-    if created {
+    if webviews::show_dm_view(&app, &entry, &settings, token.as_deref(), &name)? {
         return Ok(());
     }
 
-    let Some(webview) = app.get_webview(&webviews::dm_webview_label(&entry_id)) else {
-        return Ok(());
-    };
+    if let Some(webview) = app.get_webview(&webviews::dm_webview_label(&entry_id)) {
+        let payload =
+            serde_json::to_string(&name).map_err(|error| Error::Webview(error.to_string()))?;
 
-    let payload = serde_json::to_string(&name).unwrap_or_else(|_| "\"\"".into());
-
-    // the page may still be connecting, so the call retries briefly on its own side
-    webview
-        .eval(format!(
+        webview.eval(format!(
             "window.__SHIVER_OPEN_DM__ && window.__SHIVER_OPEN_DM__({payload})"
-        ))
-        .map_err(|error| Error::Webview(error.to_string()))?;
+        ))?;
+    }
 
     Ok(())
 }
 
-/// Asks the shell to take the user to a message in the feed, and closes the popup behind them.
-///
-/// Callable from the bell popup, which is a webview of Shiver's own and so has IPC. It performs
-/// nothing itself: the shell owns server switching, including the cover it draws over a server that
-/// is still coming up, and a second thing doing it would be a second implementation of that.
+/// From the popup: asks the shell to go to a message, and closes the popup.
 #[tauri::command]
 pub async fn open_message(
     app: AppHandle,
@@ -1134,36 +652,92 @@ pub async fn open_message(
     let _ = app.emit_to(
         webviews::SHELL_WEBVIEW,
         drain::OPEN_MESSAGE_EVENT,
-        serde_json::json!({
-            "entryId": entry_id,
-            "channelId": channel_id,
-            "isDm": is_dm,
-            "author": author,
-        }),
+        serde_json::json!({ "entryId": entry_id, "channelId": channel_id, "isDm": is_dm, "author": author }),
     );
 
-    // the user has said where they are going, so the thing they said it from gets out of the way
     webviews::set_popup_open(&app, false)
 }
 
-/// Puts a server's page on one channel, for a notification the user clicked.
-///
-/// The shell has already opened the server by the time this runs — that is the part with the
-/// connecting cover on it, and it belongs where the rest of the switching does. This is only the
-/// last step, and the page retries on its own side because it may have been built a moment ago.
+/// Puts a server's page on one channel (the shell has already opened the server).
 #[tauri::command]
 pub fn select_channel(app: AppHandle, entry_id: String, channel_id: i64) -> Result<()> {
-    let Some(webview) = app.get_webview(&webviews::webview_label(&entry_id)) else {
-        // no page for that server, which means the click raced the server being closed
-        return Ok(());
-    };
-
-    webview
-        .eval(format!(
+    if let Some(webview) = app.get_webview(&webviews::webview_label(&entry_id)) {
+        webview.eval(format!(
             "window.__SHIVER_SELECT_CHANNEL__ && window.__SHIVER_SELECT_CHANNEL__({channel_id})"
-        ))
-        .map_err(|error| Error::Webview(error.to_string()))
+        ))?;
+    }
+
+    Ok(())
 }
+
+/* ── voice ── */
+
+#[tauri::command]
+pub fn voice_status(voice: State<'_, VoiceState>) -> Option<VoiceStatus> {
+    voice.status()
+}
+
+/// Works the call's controls on whichever entry holds it.
+#[tauri::command]
+pub async fn voice_control(app: AppHandle, action: String) -> Result<()> {
+    if !matches!(action.as_str(), "mic" | "sound" | "leave") {
+        return Err(Error::InvalidInput(format!(
+            "Unknown voice action '{action}'"
+        )));
+    }
+
+    if let Some(holder) = app.state::<VoiceState>().holder() {
+        webviews::run_voice_action(&app, &holder, &action);
+    }
+
+    Ok(())
+}
+
+/* ── settings ── */
+
+#[tauri::command]
+pub fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+#[tauri::command]
+pub fn get_settings(store: State<'_, Store>) -> Settings {
+    store.registry().settings.clone().sanitised()
+}
+
+/// Saves settings (sanitised; Shiver's own bookkeeping fields are kept) and applies them live.
+#[tauri::command]
+pub async fn update_settings(
+    app: AppHandle,
+    store: State<'_, Store>,
+    settings: Settings,
+) -> Result<()> {
+    let saved = store.update(|registry| {
+        registry.settings = Settings {
+            last_server_id: registry.settings.last_server_id.take(),
+            skipped_update: registry.settings.skipped_update.take(),
+            ..settings.sanitised()
+        };
+
+        Ok(registry.settings.clone())
+    })?;
+
+    hotkey::apply(&app, saved.mute_hotkey.as_deref());
+    webviews::trim_pages(&app);
+    webviews::push_theme(&app, &saved);
+
+    for label in [
+        webviews::SHELL_WEBVIEW,
+        webviews::OVERLAY_WEBVIEW,
+        webviews::POPUP_WEBVIEW,
+    ] {
+        let _ = app.emit_to(label, SETTINGS_EVENT, ());
+    }
+
+    Ok(())
+}
+
+/* ── notifications and mutes ── */
 
 #[tauri::command]
 pub fn list_notifications(feed: State<'_, Feed>) -> Vec<Notification> {
@@ -1175,59 +749,18 @@ pub fn list_dms(feed: State<'_, Feed>) -> Vec<DmEntry> {
     feed.dms()
 }
 
+/// The bell's count: the feed only, since every entry there has a message to show.
 #[tauri::command]
 pub fn unread_count(feed: State<'_, Feed>) -> usize {
-    // The feed alone. This is the number on the bell, and the bell opens a *list* — a count with
-    // nothing behind it to show would be worse than no count. What arrived while Shiver was closed
-    // has no message to show, so it is counted on the rail, where a badge is a claim about a
-    // server rather than a promise of a list.
     feed.unread_count()
 }
 
-/// Lets one server send larger messages than the default limit allows, or stops it.
-///
-/// Reachable from the rail's menu, and only worth touching for a server that has actually tripped
-/// the limit — Shiver says so in the feed when one does. The connection is dropped so the next
-/// attempt is made with the new ceiling, rather than the change taking effect whenever the socket
-/// happens to reconnect.
-#[tauri::command]
-pub async fn set_accept_any_size(
-    app: AppHandle,
-    store: State<'_, Store>,
-    id: String,
-    accept: bool,
-) -> Result<()> {
-    store.update(|registry| {
-        let server = registry
-            .servers
-            .iter_mut()
-            .find(|server| server.id == id)
-            .ok_or(Error::UnknownServer)?;
-
-        server.accept_any_size = accept;
-
-        Ok(())
-    })?;
-
-    crate::watch::restart(&app, &id);
-
-    Ok(())
-}
-
-/// Unread per rail entry, for the badges on the server icons.
+/// Per-entry rail badges: the feed's unread plus what arrived while Shiver was closed.
 #[tauri::command]
 pub fn unread_counts(
     app: AppHandle,
     feed: State<'_, Feed>,
 ) -> std::collections::HashMap<String, usize> {
-    // Two halves of one number, and they cannot overlap. The feed holds what arrived while Shiver
-    // was running — every one of those left a notification. `Missed` holds what arrived while it
-    // was **closed**, which left none, counted once at the first connection of this run and never
-    // recomputed upward.
-    //
-    // Making this the read states alone was a mistake: the rail then depended on delta events
-    // arriving, on the floor being right and on the plugin's shared floor being sane, where the
-    // feed depended only on a message turning up. The badge disappeared altogether.
     let mut counts = feed.unread_by_entry();
 
     for (entry_id, missed) in app.state::<crate::watch::Missed>().counts() {
@@ -1237,17 +770,10 @@ pub fn unread_counts(
     counts
 }
 
-/// Marks one whole server read, from the rail's context menu.
-///
-/// Two things are unread about a server and both are settled here: Shiver's own notifications, which
-/// is what its rail badge counts, and Sharkord's per-channel unread, which is what the server's own
-/// channel list shows. Doing only the first would clear the badge and leave every channel still
-/// bold, which would read as the menu item not having worked.
+/// "Mark all as read": Shiver's notifications, the missed count, and Sharkord's own channel state.
 #[tauri::command]
 pub async fn mark_server_read(app: AppHandle, entry_id: String) -> Result<()> {
     webviews::mark_all_read(&app, &entry_id);
-
-    // and what arrived while Shiver was closed, which the feed knows nothing about
     crate::watch::mark_read(&app, &entry_id);
 
     if app.state::<Feed>().mark_entry_read(&entry_id) {
@@ -1260,23 +786,17 @@ pub async fn mark_server_read(app: AppHandle, entry_id: String) -> Result<()> {
 #[tauri::command]
 pub fn mark_notifications_read(app: AppHandle, feed: State<'_, Feed>) {
     feed.mark_all_read();
-
-    // the rail draws a badge per server and the bell draws a total, and both are other webviews:
-    // without this they keep showing what was unread before the feed was read, until some later
-    // change happens to emit the event for them
     drain::notify_feed_changed(&app);
 }
 
 #[tauri::command]
 pub fn clear_notifications(app: AppHandle, feed: State<'_, Feed>) {
     feed.clear();
-
     drain::notify_feed_changed(&app);
 }
 
-/// Mutes or unmutes one channel on one rail entry, and tells that page to redraw its channel list.
 #[tauri::command]
-pub fn set_channel_muted(
+pub async fn set_channel_muted(
     app: AppHandle,
     store: State<'_, Store>,
     entry_id: String,
@@ -1284,23 +804,15 @@ pub fn set_channel_muted(
     muted: bool,
 ) -> Result<()> {
     let remaining = store.update(|registry| {
-        registry
-            .muted
-            .retain(|entry| !(entry.entry_id == entry_id && entry.channel_id == channel_id));
+        let mut channels = registry.muted_for(&entry_id);
+
+        channels.retain(|channel| *channel != channel_id);
 
         if muted {
-            registry.muted.push(MutedChannel {
-                entry_id: entry_id.clone(),
-                channel_id,
-            });
+            channels.push(channel_id);
         }
 
-        Ok(registry
-            .muted
-            .iter()
-            .filter(|entry| entry.entry_id == entry_id)
-            .map(|entry| entry.channel_id)
-            .collect::<Vec<_>>())
+        Ok(registry.set_muted_for(&entry_id, channels))
     })?;
 
     webviews::push_muted(&app, &entry_id, &remaining);
@@ -1308,49 +820,38 @@ pub fn set_channel_muted(
     Ok(())
 }
 
-/// Brings every server in the rail online at launch, whether or not the user opens it.
-///
-/// It used to do that by giving each one a hidden webview running the real client — two, in fact,
-/// counting the preloaded conversation view. That is what made the inbox complete from launch, and
-/// it is also what made Shiver cost a hundred megabytes per server in the rail. Someone in thirty
-/// servers was running sixty Sharkord clients to read one.
-///
-/// Now it opens a socket to each instead (`watch.rs`), which reports the same messages and the same
-/// conversations, and a page is built only for a server the user actually opens — at most
-/// `KEEP_PAGES` of them at a time. The inbox is still complete from launch; it simply is not paying
-/// for a browser per server to be so.
-pub(crate) async fn connect_all_servers(app: AppHandle) {
-    let total = app.state::<Store>().registry().servers.len();
+/* ── popup ── */
 
-    crate::watch::sync(&app);
+/// Toggles the popup; returns the new state.
+#[tauri::command]
+pub async fn toggle_popup(app: AppHandle) -> Result<bool> {
+    let open = app.state::<webviews::ActiveServer>().should_open_popup();
 
-    if total > 0 {
-        eprintln!("[shiver] {total} server(s) in the rail, connecting from the core");
-    }
+    webviews::set_popup_open(&app, open)?;
+
+    Ok(open)
 }
 
-/// The longest a folder name may be.
-///
-/// Bounded because this lands in `servers.json` verbatim and nothing else checked it: an empty
-/// string and a megabyte were both accepted. `feed.rs` clamps everything a *server* sends for
-/// exactly this reason; a name the user types deserves the same floor and ceiling.
-const MAX_FOLDER_NAME: usize = 100;
-
-fn clamp_name(name: &str) -> Result<String> {
-    let trimmed = name.trim();
-
-    if trimmed.is_empty() {
-        return Err(Error::InvalidOrigin("A folder needs a name".into()));
-    }
-
-    Ok(trimmed.chars().take(MAX_FOLDER_NAME).collect())
+#[tauri::command]
+pub async fn close_popup(app: AppHandle) -> Result<()> {
+    webviews::set_popup_open(&app, false)
 }
 
-fn next_position(registry: &Registry) -> i32 {
-    registry
-        .servers
-        .iter()
-        .map(|server| server.position)
-        .max()
-        .map_or(0, |max| max + 1)
+/// The popup lost focus; arms the reopen guard so the click that caused it does not reopen it.
+#[tauri::command]
+pub async fn dismiss_popup(app: AppHandle) -> Result<()> {
+    app.state::<webviews::ActiveServer>().note_popup_dismissed();
+    webviews::set_popup_open(&app, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_plugin_label_has_three_answers() {
+        assert!(plugin_menu_label(Some(&Some("0.2.0".into()))).contains("0.2.0"));
+        assert!(plugin_menu_label(Some(&None)).contains("No"));
+        assert!(plugin_menu_label(None).contains("not checked"));
+    }
 }

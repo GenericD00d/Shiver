@@ -22,17 +22,9 @@ const SERVER_STATE: Record<string, string> = {
 };
 
 /**
- * Being told about messages while Shiver is closed.
- *
- * Shiver's notifications come from its own connections, which only run while it does — so once
- * Android has killed the app, the phone goes quiet. The usual fix is Google FCM, which would make a
- * self-hosted client depend on Google. This is the other way: a **distributor** app holds one
- * connection on behalf of every app on the phone, and hands each one an address its server can post
- * to. The battery cost is paid once, by the distributor, rather than once per app.
- *
- * It needs two things the user has to know about, which is why this screen exists rather than being
- * silent: a distributor installed, and the Shiver plugin on the server. Either missing means Shiver
- * behaves exactly as it did before — quiet when closed — so the failure mode is honest, not broken.
+ * UnifiedPush settings: a distributor app holds one connection for every app and wakes Shiver
+ * while it is closed. Needs a distributor installed and the companion plugin on the server; without
+ * either, Shiver is simply quiet while closed.
  */
 export const BackgroundNotifications = () => {
   const [status, setStatus] = useState<PushStatus | null>(null);

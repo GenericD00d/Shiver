@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { api, errorMessage } from '../api';
-import { automaticTextColor } from '../theme';
+import { automaticTextColor } from '../../../shared/web/theme';
 import { DEFAULT_ACCENT_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME, type Settings } from '../types';
 
 /** Which group of settings to draw. The rest live in their own components — see `App`. */
@@ -13,14 +13,7 @@ type Props = {
   section: SettingsSection;
 };
 
-/**
- * One group of Shiver's own settings.
- *
- * Split by section rather than drawn as one long column: on a phone that column was most of a
- * screen's worth of scrolling to reach the volume slider, with the colours, an update offer and a
- * memory note in between. The sections themselves are listed by `App`, which is also where the
- * server list and the push settings live.
- */
+/** One section of Shiver's settings (the sections are listed by `App`). */
 export const SettingsScreen = ({ settings, onSave, section }: Props) => {
   const [draft, setDraft] = useState<Settings>(settings);
   const [version, setVersion] = useState('');

@@ -1,17 +1,4 @@
-//! This client's registry, kept by the shared store.
-//!
-//! The store itself lives in `shared/shiver-core`: everything around the registry — the corrupt-file
-//! handling, the legacy cache cleanup, the atomic write — was the same file in both clients, so it
-//! is one file now.
-//!
-//! **What stays here is identical in both clients, and has to be.** The header used to claim this
-//! was the part that differs per platform, which was not true even when it was written — both
-//! `load`s ask Tauri for `app_config_dir`. What is actually left is a trait that pins the shared
-//! store's generic error to *this crate's* `Error`, which cannot be written once because it names
-//! a type each client owns, and six lines of Tauri glue in front of `Store::load`. Sharing those
-//! six lines would mean `shiver-core` — a crate that compiles and tests in under a second, with
-//! four small dependencies — taking a dependency on Tauri. That is the wrong trade, so the
-//! duplication is deliberate rather than overlooked.
+//! This client's registry store: the shared store with the error type pinned to this crate's.
 
 use tauri::{AppHandle, Manager};
 
@@ -19,13 +6,8 @@ use crate::{error::Error, model::Registry};
 
 pub type Store = shiver_core::Store<Registry>;
 
-/// This client's `update`, with the error type pinned to this client's own.
-///
-/// The shared `edit` is generic over the error so each client keeps its own vocabulary. That is the
-/// right shape there and the wrong one at the call sites: a closure that only ever succeeds leaves
-/// the error type unconstrained, and `Error` has several `From` impls for inference to choose
-/// between. Fixing it here means every caller reads exactly as it did before.
 pub trait RegistryStore {
+    /// Edits a copy of the registry and persists it if the closure returns `Ok`.
     fn update<T>(&self, edit: impl FnOnce(&mut Registry) -> Result<T, Error>) -> Result<T, Error>;
 }
 

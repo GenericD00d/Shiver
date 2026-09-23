@@ -1,18 +1,12 @@
-//! The origin rules, which are the whole of Shiver's pinning.
-//!
-//! One copy, shared by both clients. These were byte-identical duplicates in `desktop/` and
-//! `mobile/` — including their tests — and `is_same_origin` is the single comparison every webview
-//! boundary in Shiver is decided by. Two copies of that is one copy that eventually drifts.
+//! The origin rules. `is_same_origin` is the single comparison every webview boundary uses.
 
 use url::Url;
 
 use crate::error::{Error, Result};
 
-/// Reduces a user-typed address to a bare `scheme://host[:port]` origin.
-///
-/// Every Shiver security boundary is keyed on this string, so it rejects anything that could make
-/// two different servers compare equal: embedded credentials and paths. It also rejects any scheme
-/// but https, which is a separate rule with its own reason — see below.
+/// Reduces a typed address to `https://host[:port]`. A bare host gets `https://`. Refuses any other
+/// scheme (no exception for localhost or private addresses), credentials, and anything without a
+/// host, since every boundary in Shiver is keyed on this string.
 pub fn normalize_origin(input: &str) -> Result<String> {
     let trimmed = input.trim();
 
@@ -20,20 +14,14 @@ pub fn normalize_origin(input: &str) -> Result<String> {
         return Err(Error::InvalidOrigin("Enter a server address".into()));
     }
 
-    // a bare host is the common case when typing an address, and https is the only scheme Shiver
-    // accepts, so there is nothing to guess
-    let candidate = if trimmed.contains("://") {
-        trimmed.to_string()
-    } else {
-        format!("https://{trimmed}")
+    let invalid = || Error::InvalidOrigin(format!("'{trimmed}' is not a valid address"));
+
+    let url = match Url::parse(trimmed) {
+        Ok(url) if url.has_host() => url,
+        // no scheme (`chat.example.com`, `host:4991`) parses as relative or as a bogus scheme
+        _ => Url::parse(&format!("https://{trimmed}")).map_err(|_| invalid())?,
     };
 
-    let url = Url::parse(&candidate)
-        .map_err(|_| Error::InvalidOrigin(format!("'{trimmed}' is not a valid address")))?;
-
-    // https only, and no exception for localhost or a private address. The reason is not only the
-    // wire: Shiver signing a user in over http would make cleartext credentials a supported way to
-    // use it, and that is not a thing this client should teach anyone to accept.
     if url.scheme() != "https" {
         return Err(Error::InvalidOrigin(
             "Shiver only connects over https. An http:// address would put your password and session on the wire in the clear.".into(),
@@ -48,28 +36,35 @@ pub fn normalize_origin(input: &str) -> Result<String> {
 
     let host = url
         .host_str()
-        .ok_or_else(|| Error::InvalidOrigin(format!("'{trimmed}' has no host")))?;
+        .filter(|host| !host.is_empty())
+        .ok_or_else(invalid)?;
 
-    match url.port() {
-        Some(port) => Ok(format!("{}://{}:{}", url.scheme(), host, port)),
-        None => Ok(format!("{}://{}", url.scheme(), host)),
-    }
+    Ok(match url.port() {
+        Some(port) => format!("https://{host}:{port}"),
+        None => format!("https://{host}"),
+    })
 }
 
-/// True when `url` belongs to `origin`. This is the whole of Shiver's origin pinning: a webview is
-/// allowed to navigate within the server it was opened for and nowhere else.
+/// True when `url` is on exactly `origin` (scheme, host and port). Allocation-free.
 pub fn is_same_origin(origin: &str, url: &Url) -> bool {
-    let host = match url.host_str() {
-        Some(host) => host,
-        None => return false,
+    let Some(host) = url.host_str() else {
+        return false;
     };
 
-    let candidate = match url.port() {
-        Some(port) => format!("{}://{}:{}", url.scheme(), host, port),
-        None => format!("{}://{}", url.scheme(), host),
+    let Some(rest) = origin
+        .strip_prefix(url.scheme())
+        .and_then(|rest| rest.strip_prefix("://"))
+        .and_then(|rest| rest.strip_prefix(host))
+    else {
+        return false;
     };
 
-    candidate == origin
+    match url.port() {
+        Some(port) => rest
+            .strip_prefix(':')
+            .is_some_and(|value| value.parse() == Ok(port)),
+        None => rest.is_empty(),
+    }
 }
 
 #[cfg(test)]
@@ -136,6 +131,18 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_host_with_a_port_or_a_query_still_normalises() {
+        assert_eq!(
+            normalize_origin("localhost:4991").unwrap(),
+            "https://localhost:4991"
+        );
+        assert_eq!(
+            normalize_origin("chat.example.com/a?next=https://x").unwrap(),
+            "https://chat.example.com"
+        );
+    }
+
+    #[test]
     fn rejects_credentials_and_foreign_schemes() {
         assert!(normalize_origin("https://user:pw@example.com").is_err());
         assert!(normalize_origin("ftp://example.com").is_err());
@@ -161,6 +168,18 @@ mod tests {
         assert!(!is_same_origin(
             origin,
             &Url::parse("https://evil.example.com").unwrap()
+        ));
+        assert!(!is_same_origin(
+            origin,
+            &Url::parse("https://example.com.evil.net").unwrap()
+        ));
+        assert!(is_same_origin(
+            "https://example.com:8443",
+            &Url::parse("https://example.com:8443/x").unwrap()
+        ));
+        assert!(!is_same_origin(
+            "https://example.com:8443",
+            &Url::parse("https://example.com:84").unwrap()
         ));
     }
 }

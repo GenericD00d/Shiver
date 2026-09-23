@@ -1,14 +1,6 @@
 /**
- * Shiver's notification ping.
- *
- * This is Sharkord's own MESSAGE_RECEIVED effect, reproduced rather than sampled: Sharkord
- * synthesises its sounds with Web Audio (`apps/client/src/helpers/sounds.ts`) and ships no audio
- * files, so matching it exactly means matching the oscillator. Same 600Hz sine, same 0.05 gain
- * through the same x2 master, same 50ms exponential decay.
- *
- * The user's volume setting scales that gain, and can take it past 100%. That is worth doing here
- * rather than on an `<audio>` element for the same reason it works in the bridge: a media element
- * stops at 1.0 and a gain node does not.
+ * Shiver's notification ping: Sharkord's MESSAGE_RECEIVED tone reproduced (600 Hz sine, 0.05 gain
+ * through a x2 master, 50 ms decay), scaled by the volume setting, which may exceed 100%.
  */
 
 const MASTER_GAIN = 2;

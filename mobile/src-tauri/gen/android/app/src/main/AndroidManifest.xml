@@ -2,21 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!--
-      The camera and the microphone, for voice and video in a server's own client.
-
-      Declared here and requested at the moment they are used, which wry already does for us:
-      `RustWebChromeClient.onPermissionRequest` maps the web request onto these and launches the
-      Android prompt. **Without these three lines that prompt never appears** — Android refuses a
-      permission the manifest does not declare immediately and silently, so wry's launcher comes
-      straight back denied, the web request is denied with it, and `getUserMedia` rejects. From the
-      page it looks exactly like the user pressing "no" to a dialog nobody was shown.
-
-      MODIFY_AUDIO_SETTINGS comes with RECORD_AUDIO because that is the pair wry asks for.
-
-      Both features are `required="false"`: a device with no camera should still be able to install
-      Shiver and use everything else, and a phone without one is rarer than a tablet without one.
-    -->
+    <!-- Camera and microphone for voice/video in a server's client: wry prompts for them on
+         getUserMedia, and Android silently denies any permission the manifest does not declare. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
@@ -27,19 +14,8 @@
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
-    <!--
-      allowBackup is off because this app's data is credentials.
-
-      Shiver holds a session for every server it watches, encrypted with a key in the Android
-      Keystore. Left on, the platform's backup and device-transfer paths may copy app data
-      elsewhere, and the encrypted store is the one thing Shiver has that must not travel — there is
-      nothing else in here worth restoring, the server list being three fields and a colour.
-
-      networkSecurityConfig states the https-only rule the Rust already enforces, in the one place
-      the platform itself will act on. res/xml/network_security_config.xml forbids cleartext; the
-      debug overlay at src/debug/res/xml relaxes it for the dev server, which is served over http.
-      It supersedes usesCleartextTraffic on API 24 and up, which is this app's floor (minSdk 24).
-    -->
+    <!-- No backups (the app's data is credentials); https only and system CAs only (see
+         res/xml/network_security_config.xml, relaxed for the dev server in debug builds). -->
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"

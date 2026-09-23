@@ -1,17 +1,22 @@
 import { defineConfig } from 'vite';
 
-// the bridge is evaluated inside every Sharkord page, so it has to be one self-contained IIFE with
-// no imports and no module semantics. rust picks the file up with include_str! at compile time.
-export default defineConfig({
-  build: {
-    outDir: 'src-tauri/generated',
-    emptyOutDir: false,
-    target: 'es2022',
-    lib: {
-      entry: 'bridge/index.ts',
-      name: '__ShiverBridge',
-      formats: ['iife'],
-      fileName: () => 'bridge.js'
+// Two self-contained IIFEs that Rust includes with `include_str!`:
+//   default mode          -> generated/bridge.js          (evaluated in a server page after load)
+//   --mode document-start -> generated/document-start.js  (runs before any page script)
+export default defineConfig(({ mode }) => {
+  const entry = mode === 'document-start' ? 'document-start' : 'bridge';
+
+  return {
+    build: {
+      outDir: 'src-tauri/generated',
+      emptyOutDir: false,
+      target: 'es2022',
+      lib: {
+        entry: entry === 'bridge' ? 'bridge/index.ts' : 'bridge/document-start.ts',
+        name: entry === 'bridge' ? '__ShiverBridge' : '__ShiverDocumentStart',
+        formats: ['iife'],
+        fileName: () => `${entry}.js`
+      }
     }
-  }
+  };
 });

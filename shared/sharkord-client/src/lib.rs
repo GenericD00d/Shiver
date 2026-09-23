@@ -1,88 +1,43 @@
-//! Shiver's own connection to a Sharkord server, spoken from the core rather than from a page.
+//! Shiver's read-only connection to a Sharkord server, spoken from the core rather than a page.
 //!
-//! Android gives a window one webview, so a server the user is not looking at has no page to report
-//! from — which is why the mobile client had no unified inbox. This is how Shiver hears from it
-//! anyway: it speaks the server's own tRPC-over-WebSocket protocol directly. It is **read-only**.
-//! It joins, reads unread counts, and listens; it never sends anything on the user's behalf.
+//! Sequence (worked out against a live server; `examples/sharkord.rs probe` reproduces it):
+//! 1. `POST /login` -> `{ token }` (done by the caller).
+//! 2. Connect to `wss://host/?connectionParams=1`; without the query the server fails the upgrade.
+//! 3. Send `{ method: "connectionParams", data: { token } }` to authenticate.
+//! 4. Query `others.handshake`, then `others.joinServer` with its hash. Only after the join are
+//!    protected procedures allowed; the join returns the initial state, including `readStates`.
+//! 5. Query `dms.get` and (if the companion plugin is installed) `plugins.getUserData`.
+//! 6. Subscribe to read-state deltas, read-state updates and new messages.
 //!
-//! The sequence was established against a live server rather than from tRPC's documentation, each
-//! step found by being refused at the one before it (`examples/wsprobe.rs` is the probe that found
-//! it, kept because the next person to touch this will want it):
-//!
-//! 1. `POST /login` → `{ token }`. Same endpoint desktop's `login.rs` uses.
-//! 2. Connect to `wss://host/?connectionParams=1`. **The query matters**: without it the server
-//!    builds its connection context immediately, finds `info.connectionParams` null and throws
-//!    while the socket is still upgrading. tRPC only waits for a params message when asked to.
-//! 3. Send `{ method: "connectionParams", data: { token } }`. This authenticates the socket.
-//! 4. Query `others.handshake` → `{ handshakeHash }`.
-//! 5. Query `others.joinServer` with that hash. This is what sets `ctx.authenticated`; a token
-//!    alone is not enough, and every `protectedProcedure` refuses until it has run. It answers
-//!    with the whole initial state, including `readStates`.
-//! 6. Subscribe. `channels.onReadStateDelta` is the one Shiver needs.
-//!
-//! **Both clients use this crate.** It used to be a module inside `mobile/`, because Android was
-//! the only place that needed it — a phone gives a window one webview, so a server not on screen
-//! had no page to report from. Desktop now wants the same thing for a different reason: a webview
-//! per server costs far more memory than a socket does, and people are in dozens of servers. What
-//! is transcribed here was worked out by probing a live server, and a second copy of it would start
-//! drifting the day one client learned something the other did not.
-//!
-//! Unread is modelled the way Sharkord's own client models it: the `readStates` map from the join
-//! is the baseline, and each delta event adds to one channel's count. The server deliberately sends
-//! a delta of 1 rather than a recomputed total — see `db/publishers.ts` — so Shiver must accumulate.
+//! It never sends anything on the user's behalf. Unread is accumulated the way Sharkord's own client
+//! does: `readStates` from the join is the baseline, deltas add to it, updates set it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
+pub use crate::check::{check_server, ServerCheck};
 pub use crate::error::{Error, Result};
 
+mod check;
 mod error;
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// How long any single step of the handshake may take before Shiver gives up on the server.
+/// How long any one handshake step may take.
 const STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// The most one frame from a server may be.
-///
-/// `connect_async` defaults to 64 MiB per message and 16 MiB per frame, and Shiver holds one of these
-/// sockets *per server* — so a handful of hostile servers could ask Shiver's phone process for half a
-/// gigabyte between them and be within the library's limits. A bound is still wanted; the number is
-/// the part that was guessed.
-///
-/// **It was 256 KiB, on the reasoning that the channel and user list arriving with `joinServer` is
-/// the biggest legitimate frame and could not be large.** Measured on the emulator against a real
-/// server, that frame was **2.6 MB** — so Shiver refused it, dropped the socket, and quietly stopped
-/// watching that server altogether: no unread badge, no notifications, and nothing said about it
-/// beyond one debug line. A guess about somebody else's payload turned into a feature that silently
-/// did not work on any server big enough.
-///
-/// **16 MiB**, which is tungstenite's own frame default and about six times the only real payload
-/// anyone has measured. The number moved up from 4 MiB once this failure started announcing itself:
-/// a limit that is too small is now two taps from being fixed by the person it affects, while a
-/// limit that is too large is a phone killed for memory, which is silent and takes the
-/// notifications with it. Given that asymmetry, the default is set where a legitimate server is
-/// very unlikely to meet it.
-///
-/// The exposure is transient and per socket — Shiver opens one per server, all of them at launch — so
-/// the worst case is this times the number of servers, and the realistic case is nothing at all,
-/// because only the `joinServer` payload is ever large and everything after it is a number.
-///
-/// A server that still exceeds it fails honestly: that connection dies, is retried, and is reported
-/// (`Error::TooLarge`). Anyone who trusts the server can give it more room — `accept_any_size` on
-/// the entry, which raises the ceiling to [`MAX_FRAME_TRUSTED`] — which is the right shape for a
-/// bound that exists to protect against servers nobody here controls.
+/// How long a joined socket may be silent before it is treated as dead (tRPC pings every 30s).
+const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Largest message accepted. The biggest real payload measured (a large server's `joinServer`) is
+/// about 2.6 MB; this is tungstenite's own frame default.
 const MAX_FRAME: usize = 16 * 1024 * 1024;
 
-/// What the limit becomes for a server the user has explicitly trusted.
-///
-/// Eight times the default and fifty times the largest payload anyone has measured, which is room
-/// for a server doing something unusual and nowhere near room to exhaust a phone. The number is
-/// arbitrary in the way a ceiling has to be; what matters is that there is one.
+/// The ceiling for a server the user has explicitly trusted: raised, never removed.
 const MAX_FRAME_TRUSTED: usize = 128 * 1024 * 1024;
 
 const HANDSHAKE_ID: u32 = 1;
@@ -90,173 +45,114 @@ const JOIN_ID: u32 = 2;
 const DMS_ID: u32 = 3;
 const PLUGIN_DATA_ID: u32 = 4;
 const READ_STATE_ID: u32 = 10;
-const READ_STATE_UPDATE_ID: u32 = 12;
 const MESSAGE_ID: u32 = 11;
+const READ_STATE_UPDATE_ID: u32 = 12;
 
+/// "One more unread here", published per arriving message.
 const READ_STATE_PATH: &str = "channels.onReadStateDelta";
-
-/// The *other* read-state subscription, and the one that says a channel was **read**.
-///
-/// Sharkord publishes two different events and they go to two different subscriptions:
-/// `CHANNEL_READ_STATES_DELTA` carries "one more unread here" for an arriving message, and
-/// `CHANNEL_READ_STATES_UPDATE` carries the recomputed count when `channels.markAsRead` runs —
-/// deliberately, so that "the caller's other sessions need to drop the unread badge too".
-///
-/// Shiver subscribed only to the first. Everything else was in place to act on a read and none of
-/// it ever ran, because the event was never asked for: **six builds** went out trying to fix a
-/// badge that would not clear, and this one line is why.
+/// "This channel's count is now N", published when the user reads a channel on any device.
 const READ_STATE_UPDATE_PATH: &str = "channels.onReadStateUpdate";
 const MESSAGE_PATH: &str = "messages.onNew";
 
-/// One direct-message conversation on one server.
-///
-/// The name is resolved here rather than carried as a user id, because the rail that shows this is
-/// drawn inside some *other* server's page and cannot be handed a lookup table of that server's
-/// users to resolve it with.
+/// The id Shiver's companion plugin installs under.
+pub const SHIVER_PLUGIN_ID: &str = "shiver";
+
+/// One direct-message conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectMessage {
     pub channel_id: i64,
+    /// resolved here, because the page that draws it belongs to a different server
     pub user_name: String,
-    /// when the last message in this conversation was sent, in milliseconds.
-    ///
-    /// The server's own answer, not Shiver's observation — `dms.get` computes it as
-    /// `max(messages.createdAt)` per channel and already sorts its reply by it
-    /// (`db/queries/dms.ts`). So it covers the whole history rather than only what Shiver has been
-    /// awake to see, which is the difference between a conversation list ordered usefully and one
-    /// ordered by when Shiver happened to be running.
-    ///
-    /// `None` only from a server that answers without the field.
+    /// the server's own `max(messages.createdAt)` for the conversation, in milliseconds
     pub last_message_at: Option<u64>,
 }
 
-/// What the server says about itself when Shiver joins.
+/// What the server says about itself and this user when Shiver joins.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Joined {
-    /// `serverId` as the server reports it, so Shiver can tell it is the server it meant to reach
     pub server_id: Option<String>,
-    /// this user, so a message Shiver's own account wrote is not announced back to them
     pub own_user_id: Option<i64>,
-    /// unread count per channel id, the baseline every later delta is applied to
+    /// unread per channel id, the baseline later events are applied to
     pub read_states: HashMap<i64, u32>,
-    /// which channels are direct messages, so a dm can be told from a channel
     pub dm_channels: Vec<i64>,
-    /// channel id -> name, so a message can say where it came from
     pub channel_names: HashMap<i64, String>,
-    /// user id -> name, so a message can say who sent it.
-    ///
-    /// The whole list, which on a large server is tens of thousands of people and a few hundred
-    /// kilobytes. Kept because any of them may be the next to post, and the join payload is the
-    /// only place these names arrive.
+    /// every user's name, since any of them may post next
     pub user_names: HashMap<i64, String>,
-    /// this user's conversations on this server, for Shiver's own direct-message list
     pub dms: Vec<DirectMessage>,
-    /// The unread floor this user last stored on **this server**, shared across their devices.
-    ///
-    /// Kept in the companion plugin's per-user storage, which is what makes it shared: the plugin
-    /// holds it server-side against the user's own account, so the phone and the desktop measure
-    /// their badges from the same place. Without the plugin each device keeps its own floor and the
-    /// two drift — read a server on one and the other goes on claiming those messages are unread.
-    ///
-    /// `None` where the plugin is absent, or where it has nothing stored yet.
+    /// the unread floor this user stored through the companion plugin, shared across devices
     pub shared_floor: Option<HashMap<i64, u32>>,
-    /// the version of Shiver's companion plugin on this server, if it is installed.
-    ///
-    /// Read from the join payload's `pluginsMetadata`, which costs nothing extra: it arrives with
-    /// everything else. Worth knowing because it is **not** otherwise askable as an ordinary user —
-    /// `plugins.get`, the obvious way to list them, needs `MANAGE_PLUGINS` and so answers only an
-    /// admin, and `/info` does not mention plugins at all.
-    ///
-    /// The version rather than a flag, because the features that depend on this plugin depend on
-    /// particular versions of it, and "installed" has already once meant "installed but too old to
-    /// do the thing being asked of it".
+    /// the companion plugin's version, from `pluginsMetadata` (the only place a member can see it)
     pub plugin_version: Option<String>,
 }
 
-/// A message that arrived on a server Shiver is watching but not showing.
+/// A message that arrived on a watched server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewMessage {
     pub channel_id: i64,
-    /// absent for a message a plugin posted, which has a plugin id instead of a person
+    /// absent for a message a plugin posted
     pub user_id: Option<i64>,
     pub plugin_id: Option<String>,
-    /// the message as text, with Sharkord's html taken off
+    /// the message as plain text
     pub text: String,
 }
 
-/// Something Shiver learned from a server it is not showing.
-///
-/// One variant so far. It is an enum rather than a struct because the same connection is where
-/// message previews and direct messages would arrive from, and those are the next things Shiver
-/// wants from a server it is not looking at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    /// one channel's unread count moved by `delta`
-    Unread { channel_id: i64, delta: i64 },
-    /// one channel's unread count **is now** `count`, which is how a read arrives.
-    ///
-    /// Sharkord sends two shapes down the same subscription and they mean opposite things. A new
-    /// message publishes a `delta` to add; `channels.markAsRead` publishes the recomputed `count`
-    /// for that channel — deliberately, "the caller's other sessions need to drop the unread badge
-    /// too" (`routers/channels/mark-as-read.ts`). Read as a delta it is nonsense, and read as
-    /// nothing at all — which is what Shiver did — a channel read on one device left the badge
-    /// standing on every other one until the socket happened to reconnect.
-    UnreadSet { channel_id: i64, count: u32 },
-    /// somebody posted, and Shiver has the message itself rather than only a count
+    /// a channel's unread count moved by `delta` (a new message)
+    Unread {
+        channel_id: i64,
+        delta: i64,
+    },
+    /// a channel's unread count is now `count` (it was read somewhere)
+    UnreadSet {
+        channel_id: i64,
+        count: u32,
+    },
     Posted(NewMessage),
 }
 
-/* ─────────────────────────── the wire format ─────────────────────────── */
+/* ── the wire format ── */
 
-/// The websocket address for a server's origin.
-///
-/// `?connectionParams=1` is not optional: it is how tRPC is told to wait for a params message
-/// before building the connection context. Getting this wrong does not look like an auth failure,
-/// it looks like the server crashing mid-upgrade.
-pub fn ws_url(origin: &str) -> Result<String> {
-    let trimmed = origin.trim_end_matches('/');
-
-    // wss only. This socket carries the session token in its first frame, so a `ws://` version of
-    // it would put a live credential on the wire in the clear — the same reason Shiver refuses to
-    // add an http server at all.
-    let Some(rest) = trimmed.strip_prefix("https://") else {
-        return Err(Error::InvalidOrigin(format!(
-            "'{origin}' is not an https address, and Shiver will not carry a session over ws://"
-        )));
-    };
-
-    Ok(format!("wss://{rest}/?connectionParams=1"))
+/// The websocket address for an https origin. wss only: the first frame carries the session.
+fn ws_url(origin: &str) -> Result<String> {
+    origin
+        .trim_end_matches('/')
+        .strip_prefix("https://")
+        .filter(|rest| !rest.is_empty() && !rest.contains(['/', '?', '#']))
+        .map(|rest| format!("wss://{rest}/?connectionParams=1"))
+        .ok_or_else(|| {
+            Error::InvalidOrigin(format!(
+                "'{origin}' is not an https origin, and Shiver will not carry a session over ws://"
+            ))
+        })
 }
 
-/// The first frame on a new socket, which authenticates it.
-pub fn params_frame(token: &str) -> String {
+fn params_frame(token: &str) -> String {
     serde_json::json!({ "method": "connectionParams", "data": { "token": token } }).to_string()
 }
 
-/// One tRPC request. `method` is `query` or `subscription`.
-pub fn request_frame(id: u32, method: &str, path: &str, input: Value) -> String {
-    serde_json::json!({
-        "id": id,
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": { "path": path, "input": input },
-    })
-    .to_string()
+/// One tRPC request. `input` is omitted entirely when `None` (void procedures refuse `null`).
+fn request_frame(id: u32, method: &str, path: &str, input: Option<Value>) -> String {
+    let mut params = serde_json::json!({ "path": path });
+
+    if let Some(input) = input {
+        params["input"] = input;
+    }
+
+    serde_json::json!({ "id": id, "jsonrpc": "2.0", "method": method, "params": params })
+        .to_string()
 }
 
-/// A frame from the server, reduced to the three things Shiver acts on.
+/// A frame from the server, reduced to what Shiver acts on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reply {
-    /// a reply to the request with this id, carrying its payload
+enum Reply {
     Data { id: Option<u64>, data: Value },
-    /// a subscription confirming it is running
     Started { id: Option<u64> },
-    /// the server refused something, with a message already written for a person to read
     Failed { id: Option<u64>, message: String },
-    /// keepalives, reconnect notifications and anything a later Sharkord adds
     Other,
 }
 
-pub fn parse_reply(text: &str) -> Reply {
+fn parse_reply(text: &str) -> Reply {
     let Ok(mut value) = serde_json::from_str::<Value>(text) else {
         return Reply::Other;
     };
@@ -283,11 +179,7 @@ pub fn parse_reply(text: &str) -> Reply {
         return Reply::Started { id };
     }
 
-    // `data` is the type for both a query's answer and a subscription's emission.
-    //
-    // Taken out of the parsed value rather than cloned. The `joinServer` payload has been measured
-    // at 2.6 MB and the frame cap is 16 MiB, so a `.clone()` here was a multi-megabyte deep copy
-    // of a tree that was about to be dropped anyway.
+    // taken rather than cloned: the join payload can be megabytes
     match result.get_mut("data") {
         Some(data) => Reply::Data {
             id,
@@ -297,106 +189,132 @@ pub fn parse_reply(text: &str) -> Reply {
     }
 }
 
-/// Reads the parts of `others.joinServer`'s answer that Shiver uses.
-///
-/// Tolerant on purpose: a Sharkord that renames a field Shiver does not need must not stop the
-/// connection working, and one that drops `readStates` should leave Shiver showing no unread rather
-/// than refusing to connect.
-pub fn parse_join(data: &Value) -> Joined {
-    let read_states = data
-        .get("readStates")
-        .and_then(Value::as_object)
-        .map(|states| {
-            states
-                .iter()
-                .filter_map(|(channel, count)| {
-                    // the keys arrive as strings because json objects have no integer keys
-                    Some((channel.parse::<i64>().ok()?, as_count(count)?))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+/// A count from json, accepting doubles (a page only has doubles) and saturating at `u32::MAX`.
+fn as_count(value: &Value) -> Option<u32> {
+    if let Some(number) = value.as_u64() {
+        return Some(number.min(u64::from(u32::MAX)) as u32);
+    }
 
-    // One walk of the channel array filling both maps, rather than two walks of the same array —
-    // on a large server that list is the biggest thing in the join payload.
-    let mut dm_channels = Vec::new();
-    let mut channel_names = HashMap::new();
+    let number = value.as_f64()?;
+
+    (number.is_finite() && number >= 0.0).then(|| number.round().min(f64::from(u32::MAX)) as u32)
+}
+
+/// A signed integer from json, accepting a whole double.
+fn as_integer(value: &Value) -> Option<i64> {
+    value.as_i64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|number| number.is_finite() && number.fract() == 0.0)
+            .map(|number| number as i64)
+    })
+}
+
+/// `{ "<channel id>": count }` maps, as `readStates` and the shared floor are stored.
+fn channel_counts(value: &Value) -> Option<HashMap<i64, u32>> {
+    Some(
+        value
+            .as_object()?
+            .iter()
+            .filter_map(|(channel, count)| Some((channel.parse().ok()?, as_count(count)?)))
+            .collect(),
+    )
+}
+
+/// The parts of `others.joinServer`'s answer Shiver uses. Missing fields read as empty.
+fn parse_join(data: &Value) -> Joined {
+    let mut joined = Joined {
+        server_id: data
+            .get("serverId")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        own_user_id: data.get("ownUserId").and_then(Value::as_i64),
+        read_states: data
+            .get("readStates")
+            .and_then(channel_counts)
+            .unwrap_or_default(),
+        plugin_version: plugin_version(data, SHIVER_PLUGIN_ID),
+        ..Joined::default()
+    };
 
     for channel in data
         .get("channels")
         .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+        .into_iter()
+        .flatten()
     {
         let Some(id) = channel.get("id").and_then(Value::as_i64) else {
             continue;
         };
 
         if channel.get("isDm").and_then(Value::as_bool) == Some(true) {
-            dm_channels.push(id);
+            joined.dm_channels.push(id);
         }
 
         if let Some(name) = channel.get("name").and_then(Value::as_str) {
-            channel_names.insert(id, name.to_string());
+            joined.channel_names.insert(id, name.to_string());
         }
     }
 
-    let user_names = data
+    joined.user_names = data
         .get("users")
         .and_then(Value::as_array)
-        .map(|users| {
-            users
-                .iter()
-                .filter_map(|user| {
-                    Some((
-                        user.get("id").and_then(Value::as_i64)?,
-                        user.get("name").and_then(Value::as_str)?.to_string(),
-                    ))
-                })
-                .collect()
+        .into_iter()
+        .flatten()
+        .filter_map(|user| {
+            Some((
+                user.get("id").and_then(Value::as_i64)?,
+                user.get("name").and_then(Value::as_str)?.to_string(),
+            ))
         })
-        .unwrap_or_default();
+        .collect();
 
-    Joined {
-        server_id: data
-            .get("serverId")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        own_user_id: data.get("ownUserId").and_then(Value::as_i64),
-        read_states,
-        dm_channels,
-        channel_names,
-        user_names,
-        plugin_version: plugin_version(data, SHIVER_PLUGIN_ID),
-        // asked for separately, after the join, by the query that can reach the plugin's storage
-        shared_floor: None,
-        // filled in after the join, by the query that knows who each conversation is with
-        dms: Vec::new(),
-    }
+    joined
 }
 
-/// The id Shiver's companion plugin installs under.
-pub const SHIVER_PLUGIN_ID: &str = "shiver";
-
-/// The installed version of one plugin, from a join payload's `pluginsMetadata`.
-///
-/// Separated and pure so it can be tested against the shape Sharkord actually sends
-/// (`TPluginMetadata`: `pluginId`, `name`, `description`, `version`).
 fn plugin_version(data: &Value, plugin_id: &str) -> Option<String> {
     data.get("pluginsMetadata")?
         .as_array()?
         .iter()
-        .find(|plugin| plugin.get("pluginId").and_then(Value::as_str) == Some(plugin_id))
-        .and_then(|plugin| plugin.get("version").and_then(Value::as_str))
+        .find(|plugin| plugin.get("pluginId").and_then(Value::as_str) == Some(plugin_id))?
+        .get("version")?
+        .as_str()
         .map(str::to_string)
 }
 
-/// A `messages.onNew` emission, if that is what this frame is.
-pub fn parse_message(data: &Value) -> Option<Event> {
-    let channel_id = data.get("channelId").and_then(Value::as_i64)?;
+/// `dms.get`'s answer, named from the join's user list. Unknown users read as "Unknown".
+fn parse_dms(conversations: &[Value], user_names: &HashMap<i64, String>) -> Vec<DirectMessage> {
+    conversations
+        .iter()
+        .filter_map(|dm| {
+            let user_id = dm.get("userId").and_then(Value::as_i64)?;
 
+            Some(DirectMessage {
+                channel_id: dm.get("channelId").and_then(Value::as_i64)?,
+                user_name: user_names
+                    .get(&user_id)
+                    .cloned()
+                    .unwrap_or_else(|| "Unknown".into()),
+                last_message_at: dm.get("lastMessageAt").and_then(|at| {
+                    at.as_u64().or_else(|| {
+                        at.as_f64()
+                            .filter(|at| *at >= 0.0)
+                            .map(|at| at.round() as u64)
+                    })
+                }),
+            })
+        })
+        .collect()
+}
+
+/// The shared unread floor from the plugin's row, if it holds one.
+fn parse_shared_floor(stored: &Value) -> Option<HashMap<i64, u32>> {
+    stored.get("readFloor").and_then(channel_counts)
+}
+
+fn parse_message(data: &Value) -> Option<Event> {
     Some(Event::Posted(NewMessage {
-        channel_id,
+        channel_id: data.get("channelId").and_then(Value::as_i64)?,
         user_id: data.get("userId").and_then(Value::as_i64),
         plugin_id: data
             .get("pluginId")
@@ -406,284 +324,115 @@ pub fn parse_message(data: &Value) -> Option<Event> {
     }))
 }
 
-/// Sharkord's message html as the one line a notification can show.
-///
-/// Tags come off, the handful of entities its editor emits are put back, and runs of whitespace
-/// collapse — so `<p>hello</p><p>there</p>` reads "hello there" rather than "hellothere". Not a
-/// sanitiser: nothing here is ever put back into a page, it is text for a notification.
+/// A read-state frame: `delta` for a new message, `count` for a read.
+fn parse_delta(data: &Value) -> Option<Event> {
+    let channel_id = data.get("channelId").and_then(Value::as_i64)?;
+
+    if let Some(delta) = data.get("delta").and_then(as_integer) {
+        return Some(Event::Unread { channel_id, delta });
+    }
+
+    Some(Event::UnreadSet {
+        channel_id,
+        count: data.get("count").and_then(as_count)?,
+    })
+}
+
+/// Sharkord's message html as one line of text for a notification. Tags become word breaks, common
+/// entities are decoded (named and numeric) and whitespace collapses. Not a sanitiser: the result
+/// is never put back into html.
 pub fn plain_text(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
-    let mut chars = html.chars().peekable();
     let mut pending_space = false;
+    let mut rest = html;
 
-    // Written as one pass rather than a strip followed by six `replace` calls. Each of those
-    // allocated another copy of the whole message, and the cap on a frame is 16 MiB.
-    let push = |character: char, text: &mut String, pending_space: &mut bool| {
-        if *pending_space {
-            if !text.is_empty() {
-                text.push(' ');
-            }
-
-            *pending_space = false;
+    let push = |text: &mut String, pending_space: &mut bool, piece: &str| {
+        if *pending_space && !text.is_empty() {
+            text.push(' ');
         }
 
-        text.push(character);
+        *pending_space = false;
+        text.push_str(piece);
     };
 
-    while let Some(character) = chars.next() {
-        match character {
-            // **Only when a tag can actually start here.** A bare `<` used to put this into tag
-            // state until the next `>` whatever followed it, so `1 < 2 and 3 > 4` notified as "4"
-            // and an unmatched `<` swallowed the rest of the message. A tag name starts with a
-            // letter, and a closing tag with `/`; anything else is somebody typing a less-than.
-            '<' if chars
-                .peek()
-                .is_some_and(|next| next.is_ascii_alphabetic() || *next == '/' || *next == '!') =>
-            {
-                for inside in chars.by_ref() {
-                    if inside == '>' {
-                        break;
-                    }
-                }
+    while let Some(character) = rest.chars().next() {
+        let after = &rest[character.len_utf8()..];
 
-                // a tag is a word boundary: two paragraphs are two words rather than one run-on
+        match character {
+            // only a real tag: `<` followed by a letter, `/` or `!`, and closed by a `>`
+            '<' if after.starts_with(|next: char| {
+                next.is_ascii_alphabetic() || next == '/' || next == '!'
+            }) && after.contains('>') =>
+            {
+                rest = &after[after.find('>').unwrap_or(0) + 1..];
                 pending_space = true;
+
+                continue;
             }
             '&' => {
-                let mut entity = String::new();
-
-                // long enough for the entities Sharkord's editor emits, short enough that a bare
-                // ampersand followed by prose does not eat it
-                while let Some(&next) = chars.peek() {
-                    if next == ';' || entity.len() >= 6 {
-                        break;
+                if let Some((decoded, length)) = entity(after) {
+                    match decoded {
+                        ' ' => pending_space = true,
+                        other => push(
+                            &mut text,
+                            &mut pending_space,
+                            other.encode_utf8(&mut [0; 4]),
+                        ),
                     }
 
-                    entity.push(next);
-                    chars.next();
+                    rest = &after[length..];
+
+                    continue;
                 }
 
-                let closed = chars.peek() == Some(&';');
-
-                if closed {
-                    chars.next();
-                }
-
-                match (closed, entity.as_str()) {
-                    (true, "nbsp") => pending_space = true,
-                    (true, "lt") => push('<', &mut text, &mut pending_space),
-                    (true, "gt") => push('>', &mut text, &mut pending_space),
-                    (true, "quot") => push('"', &mut text, &mut pending_space),
-                    (true, "#39" | "apos") => push('\'', &mut text, &mut pending_space),
-                    (true, "amp") => push('&', &mut text, &mut pending_space),
-                    // not an entity Shiver knows, so it is text: put back what was consumed
-                    _ => {
-                        push('&', &mut text, &mut pending_space);
-                        text.push_str(&entity);
-
-                        if closed {
-                            text.push(';');
-                        }
-                    }
-                }
+                push(&mut text, &mut pending_space, "&");
             }
             _ if character.is_whitespace() => pending_space = true,
-            _ => push(character, &mut text, &mut pending_space),
+            _ => push(
+                &mut text,
+                &mut pending_space,
+                character.encode_utf8(&mut [0; 4]),
+            ),
         }
+
+        rest = after;
     }
 
     text
 }
 
-/// Reads this user's conversations, and puts a name to each of them.
-///
-/// Two pieces from two places. `dms.get` answers with pairs of channel and user id, and the names
-/// live in the `users` list the join already returned — so no second round trip for those, which
-/// matters: a server can carry tens of thousands of users, and Shiver wants the handful it is
-/// actually in a conversation with.
-async fn fetch_dms(socket: &mut Socket, joined: &Value) -> Result<Vec<DirectMessage>> {
-    // A void procedure, and strict about it: `"input": null` is refused with
-    // `expected "void", received null`, so the key has to be absent rather than empty.
-    send(socket, void_frame(DMS_ID, "dms.get")).await?;
+/// Decodes an entity at the start of `text` (after its `&`): the character and how many bytes it
+/// used, including the `;`.
+fn entity(text: &str) -> Option<(char, usize)> {
+    let end = text
+        .char_indices()
+        .take(12)
+        .find(|(_, character)| *character == ';')?
+        .0;
+    let name = &text[..end];
 
-    let conversations = await_reply(socket, DMS_ID, "dms.get").await?;
+    let decoded = match name {
+        "nbsp" => ' ',
+        "lt" => '<',
+        "gt" => '>',
+        "quot" => '"',
+        "apos" => '\'',
+        "amp" => '&',
+        _ => {
+            let number = name.strip_prefix('#')?;
+            let code = match number.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => number.parse().ok()?,
+            };
 
-    let Some(conversations) = conversations.as_array() else {
-        eprintln!("[shiver] dms.get did not answer with a list, so no conversations were read");
-
-        return Ok(Vec::new());
+            char::from_u32(code).filter(|character| !character.is_control())?
+        }
     };
 
-    let parsed = parse_dms(conversations, joined);
-
-    // Counted out loud, because this is the one step here that fails **silently**: every field in
-    // `parse_dms` is read with `and_then`, so a payload whose shape has moved yields a shorter list
-    // rather than an error, and an empty conversation list looks exactly like having no
-    // conversations. The two numbers disagreeing is the whole diagnosis.
-    if parsed.len() != conversations.len() {
-        eprintln!(
-            "[shiver] dms.get returned {} conversation(s) and {} could be read — the rest are \
-             missing a userId, or a name for it in the join payload",
-            conversations.len(),
-            parsed.len()
-        );
-    }
-
-    Ok(parsed)
+    Some((decoded, end + 1))
 }
 
-/// Reads this user's shared unread floor out of the companion plugin's storage.
-///
-/// `plugins.getUserData` is a **query** and needs only `USE_PLUGINS`, so an ordinary member can ask
-/// and this connection stays read-only — which matters, because that is a property of this whole
-/// module rather than an accident. The matching write is not done here and cannot be: it is a
-/// mutation, and it is performed by the bridge from inside the server's own page, where Shiver
-/// already writes the muted-channel list.
-///
-/// Failing costs the shared floor and nothing else. Every caller falls back to its local one.
-async fn fetch_shared_floor(socket: &mut Socket) -> Result<Option<HashMap<i64, u32>>> {
-    let stored = call(
-        socket,
-        PLUGIN_DATA_ID,
-        "plugins.getUserData",
-        serde_json::json!({ "pluginId": SHIVER_PLUGIN_ID }),
-    )
-    .await?;
-
-    Ok(parse_shared_floor(&stored))
-}
-
-/// The reading of that answer, separated from the asking of it.
-///
-/// Json object keys are strings, so the channel ids arrive as `"12"` rather than `12` and have to
-/// be parsed back. A key that is not a number, or a count that is not one, is skipped rather than
-/// failing the lot: this row is written by Shiver but it is stored on somebody else's server.
-///
-/// **Through `as_count`, like every other count in this file.** It read `count.as_u64()? as u32`,
-/// which got both halves of that wrong. `as_u64` answers `None` for a float, and this floor is
-/// written by the *bridge* — from a page, where every json number is a double — so a value that
-/// serialised as `12.0` was not clamped or rounded but dropped, taking that channel's floor with
-/// it and making the whole backlog read as unread. And the cast was unclamped, so a value above
-/// `u32::MAX` wrapped rather than saturating, which for a row on somebody else's server is worth
-/// the one function call to avoid.
-fn parse_shared_floor(stored: &Value) -> Option<HashMap<i64, u32>> {
-    let floor = stored.get("readFloor")?.as_object()?;
-
-    Some(
-        floor
-            .iter()
-            .filter_map(|(channel_id, count)| {
-                Some((channel_id.parse::<i64>().ok()?, as_count(count)?))
-            })
-            .collect(),
-    )
-}
-
-/// The reading of that answer, separated from the asking of it.
-///
-/// Pure, so it can be tested — which matters more than it looks: every field here is read with
-/// `and_then`, so a shape that is not what Shiver expects produces a shorter list or a missing
-/// timestamp rather than an error. A dropped `lastMessageAt` in particular is invisible at runtime,
-/// since the list still appears and is merely in the wrong order.
-fn parse_dms(conversations: &[Value], joined: &Value) -> Vec<DirectMessage> {
-    let users = joined
-        .get("users")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-
-    let wanted: std::collections::HashSet<i64> = conversations
-        .iter()
-        .filter_map(|dm| dm.get("userId").and_then(Value::as_i64))
-        .collect();
-
-    let names: HashMap<i64, String> = users
-        .iter()
-        .filter_map(|user| {
-            let id = user.get("id").and_then(Value::as_i64)?;
-
-            if !wanted.contains(&id) {
-                return None;
-            }
-
-            Some((id, user.get("name").and_then(Value::as_str)?.to_string()))
-        })
-        .collect();
-
-    conversations
-        .iter()
-        .filter_map(|dm| {
-            let channel_id = dm.get("channelId").and_then(Value::as_i64)?;
-            let user_id = dm.get("userId").and_then(Value::as_i64)?;
-
-            Some(DirectMessage {
-                channel_id,
-                // a conversation with someone no longer in the user list still exists, and saying
-                // so is better than dropping it out of the list without explanation
-                user_name: names
-                    .get(&user_id)
-                    .cloned()
-                    .unwrap_or_else(|| "Unknown".into()),
-                // Read as f64 first and rounded. A webview hands numbers back as doubles and
-                // serde_json writes a large one in exponential form, which `as_u64` refuses
-                // outright — the same trap desktop's `optional_millis` exists for. This value
-                // arrives straight off the socket rather than through a page, so `as_u64` would
-                // very likely do; taking both costs nothing and cannot be the reason a
-                // conversation list comes back unsorted.
-                last_message_at: dm.get("lastMessageAt").and_then(|at| {
-                    at.as_u64()
-                        .or_else(|| at.as_f64().filter(|at| *at >= 0.0).map(|at| at as u64))
-                }),
-            })
-        })
-        .collect()
-}
-
-/// A request frame for a procedure that takes no input at all.
-pub fn void_frame(id: u32, path: &str) -> String {
-    serde_json::json!({
-        "id": id,
-        "jsonrpc": "2.0",
-        "method": "query",
-        "params": { "path": path },
-    })
-    .to_string()
-}
-
-/// Counts arrive as integers, but a webview or a future server may hand back a double.
-fn as_count(value: &Value) -> Option<u32> {
-    if let Some(number) = value.as_u64() {
-        return Some(number.min(u32::MAX as u64) as u32);
-    }
-
-    let number = value.as_f64()?;
-
-    if !number.is_finite() || number < 0.0 {
-        return None;
-    }
-
-    Some(number.round().min(u32::MAX as f64) as u32)
-}
-
-/// A read-state delta, if that is what this frame is.
-pub fn parse_delta(data: &Value) -> Option<Event> {
-    let channel_id = data.get("channelId").and_then(Value::as_i64)?;
-
-    // `delta` first, because it is the common one: every arriving message is one of these. A frame
-    // carrying `count` instead is a read — see `Event::UnreadSet`.
-    if let Some(delta) = data.get("delta").and_then(Value::as_i64) {
-        return Some(Event::Unread { channel_id, delta });
-    }
-
-    let count = data.get("count").and_then(Value::as_u64)?;
-
-    Some(Event::UnreadSet {
-        channel_id,
-        count: count.min(u64::from(u32::MAX)) as u32,
-    })
-}
-
-/// Sets one channel's unread count outright, for a read reported by another of this user's devices.
+/// Sets one channel's unread count outright (a read reported by another device).
 pub fn set_unread(read_states: &mut HashMap<i64, u32>, channel_id: i64, count: u32) {
     if count == 0 {
         read_states.remove(&channel_id);
@@ -692,55 +441,118 @@ pub fn set_unread(read_states: &mut HashMap<i64, u32>, channel_id: i64, count: u
     }
 }
 
-/// What Shiver shows on a server's tile: what arrived while Shiver was watching, minus muted channels.
-///
-/// Counted against a baseline rather than absolutely, and the difference is the whole point.
-/// Sharkord's read state is every message the user has not opened the channel to read, so on a
-/// public server it is the entire backlog — a tile that says 99+ from the first launch, says it
-/// forever, and means nothing. The desktop client never had this problem because its badge counts
-/// *notifications*, and there is no notification for a message posted before Shiver existed.
-///
-/// So the counts at the moment Shiver connects are the floor, and the badge is what has arrived
-/// since. A channel that goes down — the user read it somewhere — contributes nothing rather than a
-/// negative, so reading one channel cannot hide new messages in another.
-///
-/// Muting is Shiver's, not the server's — the server keeps counting a muted channel and is right to,
-/// because the mute belongs to this user on this device. So the filter is applied here, at the last
-/// moment, rather than by asking the server for less.
-///
-/// The mute list arrives as a set rather than a slice. It was a `&[i64]`, and `contains` on a slice
-/// is a linear scan — inside an iteration over every channel, on every read-state event, which made
-/// the badge O(channels x mutes) for a number that is recomputed constantly.
+/// Unread above the baseline, per channel, skipping muted channels. A channel below its baseline
+/// (read elsewhere) contributes nothing rather than hiding news in another channel.
 pub fn unread_total(
     read_states: &HashMap<i64, u32>,
     baseline: &HashMap<i64, u32>,
-    muted: &std::collections::HashSet<i64>,
+    muted: &HashSet<i64>,
 ) -> u32 {
     read_states
         .iter()
         .filter(|(channel, _)| !muted.contains(*channel))
         .map(|(channel, count)| count.saturating_sub(baseline.get(channel).copied().unwrap_or(0)))
-        .sum()
+        .fold(0u32, u32::saturating_add)
 }
 
-/// Applies a delta to a channel's count, never below zero.
+/// Applies a delta to a channel's count, clamped to `0..=u32::MAX`.
 pub fn apply_delta(read_states: &mut HashMap<i64, u32>, channel_id: i64, delta: i64) {
     let entry = read_states.entry(channel_id).or_insert(0);
-    let next = i64::from(*entry).saturating_add(delta);
 
-    *entry = next.max(0).min(u32::MAX as i64) as u32;
+    *entry = i64::from(*entry)
+        .saturating_add(delta)
+        .clamp(0, i64::from(u32::MAX)) as u32;
 }
 
-/* ───────────────────────────── the connection ───────────────────────────── */
+/* ── the connection ── */
 
-/// Tells "this server said more than Shiver accepts" from every other socket failure.
-///
-/// Only tungstenite's `Capacity` means the limit was hit; the rest are networks and closed sockets,
-/// which come right by themselves. The message is the library's own — it names both sizes — and is
-/// kept because the numbers are the whole point of the report.
-fn oversize_or_unreachable(error: tokio_tungstenite::tungstenite::Error) -> Error {
-    use tokio_tungstenite::tungstenite::error::CapacityError;
-    use tokio_tungstenite::tungstenite::Error as Tungstenite;
+/// How long to wait before reconnecting after `attempt` consecutive failures: 30s doubling to a
+/// 10-minute ceiling, plus a stable per-server offset (from `key`) so a whole rail does not
+/// reconnect in lockstep.
+pub fn retry_delay(attempt: u32, key: &str) -> std::time::Duration {
+    const FIRST: std::time::Duration = std::time::Duration::from_secs(30);
+    const CEILING: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+    let backed_off = FIRST.saturating_mul(1u32 << attempt.min(5)).min(CEILING);
+    let spread = key.bytes().fold(0u64, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(u64::from(byte))
+    });
+    let jitter = backed_off.as_millis() as u64 / 4;
+
+    backed_off + std::time::Duration::from_millis(spread.checked_rem(jitter).unwrap_or(0))
+}
+
+/// Where and how to connect for one attempt.
+pub struct Target {
+    pub origin: String,
+    pub token: String,
+    pub accept_any_size: bool,
+}
+
+/// The client-specific half of [`watch`].
+pub trait Watcher: Send {
+    /// What to connect with next; `None` stops watching.
+    fn target(&mut self) -> impl std::future::Future<Output = Option<Target>> + Send;
+    fn joined(&mut self, joined: &Joined);
+    fn event(&mut self, joined: &Joined, event: Event);
+    /// The server refused the session (`refusals` in a row). `true` retries at once (after the
+    /// watcher renewed the session); `false` stops watching.
+    fn refused(&mut self, refusals: u32) -> impl std::future::Future<Output = bool> + Send;
+    /// A message exceeded the frame limit (retrying will not fix it).
+    fn too_large(&mut self, size: usize);
+    /// The connection is down, before the backoff.
+    fn disconnected(&mut self) {}
+}
+
+/// Holds one server's connection open, reconnecting with [`retry_delay`] backoff (keyed by `key`)
+/// until the watcher stops it.
+pub async fn watch(key: &str, mut watcher: impl Watcher) {
+    let mut failures: u32 = 0;
+    let mut refusals: u32 = 0;
+
+    while let Some(target) = watcher.target().await {
+        let origin = &target.origin;
+
+        match open(origin, &target.token, target.accept_any_size).await {
+            Ok(mut session) => {
+                failures = 0;
+                refusals = 0;
+                watcher.joined(&session.joined);
+
+                while let Some(event) = session.next_event().await {
+                    watcher.event(&session.joined, event);
+                }
+
+                eprintln!("[shiver] {origin} closed the connection");
+            }
+            Err(Error::Refused(reason)) => {
+                eprintln!("[shiver] {origin} refused Shiver's session ({reason})");
+                refusals += 1;
+
+                if watcher.refused(refusals).await {
+                    continue;
+                }
+
+                return;
+            }
+            Err(Error::TooLarge { size, max }) => {
+                eprintln!(
+                    "[shiver] {origin} sent {size} bytes in one message; Shiver accepts {max}"
+                );
+                watcher.too_large(size);
+            }
+            Err(error) => eprintln!("[shiver] could not watch {origin}: {error}"),
+        }
+
+        watcher.disconnected();
+        tokio::time::sleep(retry_delay(failures, key)).await;
+        failures = failures.saturating_add(1);
+    }
+}
+
+/// `TooLarge` for a size limit (it will not fix itself), `Unreachable` for anything else.
+fn socket_error(error: tokio_tungstenite::tungstenite::Error) -> Error {
+    use tokio_tungstenite::tungstenite::{error::CapacityError, Error as Tungstenite};
 
     match error {
         Tungstenite::Capacity(CapacityError::MessageTooLong { size, max_size }) => {
@@ -753,16 +565,12 @@ fn oversize_or_unreachable(error: tokio_tungstenite::tungstenite::Error) -> Erro
     }
 }
 
-/// How large a message this socket will accept, in bytes.
-///
-/// A function so the one rule worth stating — trusting a server raises the ceiling and never removes
-/// it — is checked by a test rather than by reading `open`.
-fn frame_cap(accept_any_size: bool) -> Option<usize> {
-    Some(if accept_any_size {
+fn frame_cap(accept_any_size: bool) -> usize {
+    if accept_any_size {
         MAX_FRAME_TRUSTED
     } else {
         MAX_FRAME
-    })
+    }
 }
 
 /// A live, joined connection to one server.
@@ -771,28 +579,13 @@ pub struct Session {
     pub joined: Joined,
 }
 
-/// Connects, authenticates, joins and subscribes.
-///
-/// Returns once the server has answered `joinServer`, so a caller that gets a `Session` back has a
-/// connection that is already reporting real unread counts.
+/// Connects, authenticates, joins and subscribes. Returns once the join has been answered.
 pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Session> {
     let url = ws_url(origin)?;
-
-    // Bounded rather than default: see `MAX_FRAME`. Both limits are set, because `max_frame_size`
-    // alone still allows a message assembled from many frames.
-    //
-    // **Raised, never removed.** "Trusted" used to mean no limit at all, which is a different and
-    // much worse thing than a generous one: tungstenite buffers whatever arrives until a frame is
-    // complete, so an unbounded socket lets a server grow Shiver's memory by as much as it cares to
-    // transmit. On a phone that is an app kill, and the notifications go with it.
-    //
-    // A bound exists to protect against servers nobody here controls. Trusting one is a reason to
-    // give it more room, not a reason to stop having a ceiling.
     let cap = frame_cap(accept_any_size);
-
     let limits = tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
-        max_message_size: cap,
-        max_frame_size: cap,
+        max_message_size: Some(cap),
+        max_frame_size: Some(cap),
         ..Default::default()
     };
 
@@ -801,135 +594,109 @@ pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Se
         tokio_tungstenite::connect_async_with_config(&url, Some(limits), false),
     )
     .await
-    .map_err(|_| Error::Unreachable(origin.to_string()))?
-    .map_err(|_| Error::Unreachable(origin.to_string()))?;
+    .map_err(|_| Error::Unreachable(format!("{origin} (timed out)")))?
+    .map_err(|error| Error::Unreachable(format!("{origin} ({error})")))?;
 
     send(&mut socket, params_frame(token)).await?;
 
-    let handshake = call(&mut socket, HANDSHAKE_ID, "others.handshake", Value::Null).await?;
-
+    let handshake = call(
+        &mut socket,
+        HANDSHAKE_ID,
+        "others.handshake",
+        Some(Value::Null),
+    )
+    .await?;
     let hash = handshake
         .get("handshakeHash")
         .and_then(Value::as_str)
         .ok_or_else(|| Error::NotSharkord(origin.to_string()))?
         .to_string();
 
-    let joined = call(
-        &mut socket,
-        JOIN_ID,
-        "others.joinServer",
-        serde_json::json!({ "handshakeHash": hash }),
-    )
-    .await?;
+    let mut joined = parse_join(
+        &call(
+            &mut socket,
+            JOIN_ID,
+            "others.joinServer",
+            Some(serde_json::json!({ "handshakeHash": hash })),
+        )
+        .await?,
+    );
 
-    let mut parsed = parse_join(&joined);
-
-    // Asked for separately because the join payload does not carry it: a conversation is a pairing
-    // of this user with another, and the server keeps that list of its own. Failing to get it costs
-    // the direct-message list and nothing else, so it must not take the connection down with it —
-    // unread counting is the job this connection exists for.
-    match fetch_dms(&mut socket, &joined).await {
-        Ok(dms) => parsed.dms = dms,
+    // Optional extras: failing either costs that feature, not the connection.
+    match call(&mut socket, DMS_ID, "dms.get", None).await {
+        Ok(Value::Array(conversations)) => {
+            joined.dms = parse_dms(&conversations, &joined.user_names)
+        }
+        Ok(_) => eprintln!("[shiver] {origin}: dms.get did not answer with a list"),
         Err(error) => eprintln!("[shiver] could not read {origin}'s direct messages: {error}"),
     }
 
-    // Only where the plugin is actually installed. Asking a server that has none is a round trip
-    // whose answer is always nothing, on every connection to every such server.
-    if parsed.plugin_version.is_some() {
-        match fetch_shared_floor(&mut socket).await {
-            Ok(floor) => parsed.shared_floor = floor,
+    if joined.plugin_version.is_some() {
+        let input = serde_json::json!({ "pluginId": SHIVER_PLUGIN_ID });
+
+        match call(
+            &mut socket,
+            PLUGIN_DATA_ID,
+            "plugins.getUserData",
+            Some(input),
+        )
+        .await
+        {
+            Ok(stored) => joined.shared_floor = parse_shared_floor(&stored),
             Err(error) => {
                 eprintln!("[shiver] could not read {origin}'s shared unread floor: {error}")
             }
         }
     }
 
-    let joined = parsed;
-
-    send(
-        &mut socket,
-        request_frame(READ_STATE_ID, "subscription", READ_STATE_PATH, Value::Null),
-    )
-    .await?;
-
-    // and the one that reports a channel being read, which is a separate subscription entirely
-    send(
-        &mut socket,
-        request_frame(
-            READ_STATE_UPDATE_ID,
-            "subscription",
-            READ_STATE_UPDATE_PATH,
-            Value::Null,
-        ),
-    )
-    .await?;
-
-    // The messages themselves, not only the counts. A badge can say a server has three unread; only
-    // this can say who wrote them and what they said, which is what a notification needs.
-    send(
-        &mut socket,
-        request_frame(MESSAGE_ID, "subscription", MESSAGE_PATH, Value::Null),
-    )
-    .await?;
+    for (id, path) in [
+        (READ_STATE_ID, READ_STATE_PATH),
+        (READ_STATE_UPDATE_ID, READ_STATE_UPDATE_PATH),
+        (MESSAGE_ID, MESSAGE_PATH),
+    ] {
+        send(
+            &mut socket,
+            request_frame(id, "subscription", path, Some(Value::Null)),
+        )
+        .await?;
+    }
 
     Ok(Session { socket, joined })
 }
 
 impl Session {
-    /// The next frame, or `None` once the connection has ended or gone quiet for too long.
-    ///
-    /// See `IDLE_TIMEOUT`. A socket that is open but silent is indistinguishable from a healthy one
-    /// from in here, and the caller retries a closed connection, so the timeout is what turns a
-    /// hung server back into a reconnect.
-    async fn next_frame(
-        &mut self,
-    ) -> Option<std::result::Result<Message, tokio_tungstenite::tungstenite::Error>> {
-        match tokio::time::timeout(IDLE_TIMEOUT, self.socket.next()).await {
-            Ok(frame) => frame,
-            Err(_) => {
-                eprintln!(
-                    "[shiver] a server said nothing for {}s, so the socket is being dropped",
-                    IDLE_TIMEOUT.as_secs()
-                );
-
-                None
-            }
-        }
-    }
-
-    /// The next thing the server has to say, or `None` when the connection has ended.
-    ///
-    /// Frames Shiver does not understand are skipped rather than ending the loop: keepalives and
-    /// whatever a later Sharkord adds are not errors.
+    /// The next event, or `None` once the connection has ended or gone silent for `IDLE_TIMEOUT`.
+    /// Answers tRPC's `PING` (the server drops sockets that do not) and skips unknown frames.
     pub async fn next_event(&mut self) -> Option<Event> {
-        while let Some(frame) = self.next_frame().await {
-            let Ok(Message::Text(text)) = frame else {
-                // a close, a binary frame, or a broken socket all mean this connection is over
-                match frame {
-                    Ok(Message::Ping(_) | Message::Pong(_) | Message::Binary(_)) => continue,
-                    // Said out loud, because this is the one place a socket dies without anyone
-                    // being told why: the caller sees the stream end and retries, which looks the
-                    // same whether the server closed politely or sent something Shiver refused.
-                    Err(error) => {
-                        eprintln!("[shiver] a server's socket failed mid-session: {error}");
+        loop {
+            let frame = match tokio::time::timeout(IDLE_TIMEOUT, self.socket.next()).await {
+                Ok(Some(Ok(frame))) => frame,
+                Ok(Some(Err(error))) => {
+                    eprintln!("[shiver] a server's socket failed mid-session: {error}");
 
-                        return None;
-                    }
-                    Ok(_) => return None,
+                    return None;
+                }
+                Ok(None) => return None,
+                Err(_) => {
+                    eprintln!(
+                        "[shiver] a server said nothing for {}s; dropping the socket",
+                        IDLE_TIMEOUT.as_secs()
+                    );
+
+                    return None;
                 }
             };
 
-            // tRPC's own keepalive, above the websocket's: the server sends the bare word `PING`
-            // every thirty seconds and *terminates* the connection if `PONG` does not come back
-            // within five (`applyWSSHandler({ keepAlive: … })` in `utils/wss.ts`). Shiver never
-            // answered, so every background socket died about thirty-five seconds after it
-            // connected and came back thirty seconds later — unread counts arrived in bursts with
-            // half-minute holes between them, which is exactly the kind of fault that reads as "the
-            // server is quiet" rather than as a bug.
+            let text = match frame {
+                Message::Text(text) => text,
+                Message::Close(_) => return None,
+                _ => continue,
+            };
+
             if text == "PING" {
                 if self
                     .socket
-                    .send(Message::Text("PONG".to_string()))
+                    .send(Message::Text("PONG".into()))
                     .await
                     .is_err()
                 {
@@ -939,45 +706,29 @@ impl Session {
                 continue;
             }
 
-            match parse_reply(&text) {
-                Reply::Data { id, data } if id == Some(u64::from(READ_STATE_ID)) => {
-                    if let Some(event) = parse_delta(&data) {
-                        return Some(event);
-                    }
+            let event = match parse_reply(&text) {
+                Reply::Data { id: Some(id), data }
+                    if id == u64::from(READ_STATE_ID) || id == u64::from(READ_STATE_UPDATE_ID) =>
+                {
+                    parse_delta(&data)
                 }
-                Reply::Data { id, data } if id == Some(u64::from(READ_STATE_UPDATE_ID)) => {
-                    if let Some(event) = parse_delta(&data) {
-                        return Some(event);
-                    }
+                Reply::Data { id: Some(id), data } if id == u64::from(MESSAGE_ID) => {
+                    parse_message(&data)
                 }
-                Reply::Data { id, data } if id == Some(u64::from(MESSAGE_ID)) => {
-                    if let Some(event) = parse_message(&data) {
-                        return Some(event);
-                    }
-                }
-                // Said out loud: a subscription the server refuses is silent otherwise — the socket
-                // stays up, nothing arrives, and the server simply looks quiet.
                 Reply::Failed { id, message } => {
                     eprintln!("[shiver] the server refused request {id:?}: {message}");
+
+                    None
                 }
-                _ => {}
+                _ => None,
+            };
+
+            if event.is_some() {
+                return event;
             }
         }
-
-        None
     }
 }
-
-/// How long a joined socket may say nothing at all before Shiver treats it as dead.
-///
-/// Every step of the handshake is bounded, and then the event loop awaited the next frame forever
-/// — so liveness rested entirely on the server choosing to send its own keepalive. A server that
-/// holds the connection open and goes silent parked that watcher for the life of the process, with
-/// the rail still drawing it as online.
-///
-/// Comfortably longer than the thirty-second tRPC `PING`, so an ordinary quiet server is never cut
-/// off for being quiet.
-const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 async fn send(socket: &mut Socket, frame: String) -> Result<()> {
     socket
@@ -986,28 +737,18 @@ async fn send(socket: &mut Socket, frame: String) -> Result<()> {
         .map_err(|error| Error::Unreachable(error.to_string()))
 }
 
-/// Sends one query and waits for the reply carrying the same id.
-async fn call(socket: &mut Socket, id: u32, path: &str, input: Value) -> Result<Value> {
+/// Sends one query and waits (up to `STEP_TIMEOUT`) for the reply with the same id.
+async fn call(socket: &mut Socket, id: u32, path: &str, input: Option<Value>) -> Result<Value> {
     send(socket, request_frame(id, "query", path, input)).await?;
 
-    await_reply(socket, id, path).await
-}
-
-/// Waits for the reply carrying `id`, for a request that has already been sent.
-///
-/// Split out of `call` so a request built by hand — a void procedure, whose input key has to be
-/// absent rather than null — can wait the same way rather than growing a second copy of this loop.
-async fn await_reply(socket: &mut Socket, id: u32, path: &str) -> Result<Value> {
     let deadline = tokio::time::Instant::now() + STEP_TIMEOUT;
 
     loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-
-        let frame = tokio::time::timeout(remaining, socket.next())
+        let frame = tokio::time::timeout_at(deadline, socket.next())
             .await
             .map_err(|_| Error::Unreachable(format!("{path} did not answer")))?
             .ok_or_else(|| Error::Unreachable(format!("{path}: the connection closed")))?
-            .map_err(oversize_or_unreachable)?;
+            .map_err(socket_error)?;
 
         let Message::Text(text) = frame else {
             continue;
@@ -1022,7 +763,6 @@ async fn await_reply(socket: &mut Socket, id: u32, path: &str) -> Result<Value> 
                 id: Some(reply),
                 message,
             } if reply == u64::from(id) => return Err(Error::Refused(message)),
-            // the server volunteers frames of its own; none of them answer this call
             _ => continue,
         }
     }
@@ -1032,42 +772,35 @@ async fn await_reply(socket: &mut Socket, id: u32, path: &str) -> Result<Value> 
 mod tests {
     use super::*;
 
-    /// The mute list as `unread_total` wants it. A set rather than a slice, so the filter is a
-    /// hash lookup rather than a scan of the whole list per channel.
-    fn muted<const N: usize>(channels: [i64; N]) -> std::collections::HashSet<i64> {
+    fn muted<const N: usize>(channels: [i64; N]) -> HashSet<i64> {
         channels.into_iter().collect()
     }
 
-    /// Trusting a server gives it room; it does not hand it the machine. An unbounded socket lets a
-    /// server grow the read buffer as far as it likes, which on a phone is an app kill — so the
-    /// thing this must never become is `None`.
     #[test]
-    fn trusting_a_server_raises_the_ceiling_rather_than_removing_it() {
-        let normal = frame_cap(false).expect("the default is bounded");
-        let trusted = frame_cap(true).expect("a trusted server is still bounded");
+    fn retries_back_off_to_a_ceiling_with_a_stable_offset() {
+        let first = std::time::Duration::from_secs(30);
+        let ceiling = std::time::Duration::from_secs(600);
 
-        assert!(
-            trusted > normal,
-            "trusting a server should give it more room"
-        );
-        assert!(
-            trusted <= 256 * 1024 * 1024,
-            "even a trusted server has to stay inside a phone's memory"
-        );
+        assert!(retry_delay(0, "a") >= first);
+        assert!(retry_delay(1, "a") > retry_delay(0, "a"));
+        assert!(retry_delay(30, "a") <= ceiling + ceiling / 4);
+        assert_eq!(retry_delay(2, "a"), retry_delay(2, "a"));
     }
 
-    /// The report the user sees hangs off this: everything else retries quietly and comes right,
-    /// and only this one needs saying out loud, because the next attempt fails identically.
+    #[test]
+    fn trusting_a_server_raises_the_ceiling_but_keeps_one() {
+        assert!(frame_cap(true) > frame_cap(false));
+        assert!(frame_cap(true) <= 256 * 1024 * 1024);
+    }
+
     #[test]
     fn only_a_capacity_failure_reads_as_too_large() {
-        use tokio_tungstenite::tungstenite::error::CapacityError;
-        use tokio_tungstenite::tungstenite::Error as Tungstenite;
+        use tokio_tungstenite::tungstenite::{error::CapacityError, Error as Tungstenite};
 
-        let too_big =
-            oversize_or_unreachable(Tungstenite::Capacity(CapacityError::MessageTooLong {
-                size: 40_000_000,
-                max_size: MAX_FRAME,
-            }));
+        let too_big = socket_error(Tungstenite::Capacity(CapacityError::MessageTooLong {
+            size: 40_000_000,
+            max_size: MAX_FRAME,
+        }));
 
         assert!(matches!(
             too_big,
@@ -1076,14 +809,14 @@ mod tests {
                 max: MAX_FRAME
             }
         ));
-
-        let dropped = oversize_or_unreachable(Tungstenite::ConnectionClosed);
-
-        assert!(matches!(dropped, Error::Unreachable(_)));
+        assert!(matches!(
+            socket_error(Tungstenite::ConnectionClosed),
+            Error::Unreachable(_)
+        ));
     }
 
     #[test]
-    fn the_websocket_url_keeps_the_connection_params_query() {
+    fn websocket_urls_are_wss_with_the_params_query_and_nothing_else() {
         assert_eq!(
             ws_url("https://chat.example.com").unwrap(),
             "wss://chat.example.com/?connectionParams=1"
@@ -1092,228 +825,176 @@ mod tests {
             ws_url("https://localhost:4991/").unwrap(),
             "wss://localhost:4991/?connectionParams=1"
         );
-    }
 
-    /// The first frame on this socket is the session token, so plain ws is never built — not for
-    /// localhost either.
-    #[test]
-    fn only_https_becomes_a_websocket_url() {
-        assert!(ws_url("http://chat.example.com").is_err());
-        assert!(ws_url("http://localhost:4991").is_err());
-        assert!(ws_url("ftp://example.com").is_err());
-    }
-
-    /// A bare `<` in a message is a less-than sign, not the start of a tag.
-    ///
-    /// The stripper used to flip into tag state on any `<` and out of it on any `>`, so everything
-    /// between them was discarded: `1 < 2 and 3 > 4` reached the notification as "4", and an
-    /// unmatched `<` ate the rest of the message. Both are silent — the notification simply shows
-    /// the wrong text.
-    #[test]
-    fn a_bare_less_than_is_kept_as_text() {
-        assert_eq!(plain_text("1 < 2 and 3 > 4"), "1 < 2 and 3 > 4");
-        assert_eq!(plain_text("a < b"), "a < b");
-        assert_eq!(plain_text("unclosed < tail"), "unclosed < tail");
-        assert_eq!(plain_text("5<6"), "5<6");
-    }
-
-    /// And a real tag still comes off, with the word boundary it stood for.
-    #[test]
-    fn tags_still_come_off_and_leave_a_boundary() {
-        assert_eq!(plain_text("<p>hello</p><p>there</p>"), "hello there");
-        assert_eq!(plain_text("<b>bold</b>"), "bold");
-        assert_eq!(plain_text("<img src=\"x\">caption"), "caption");
-        assert_eq!(plain_text("<!-- note -->text"), "text");
-        assert_eq!(plain_text("  spaced   out  "), "spaced out");
-    }
-
-    /// The entities Sharkord's editor emits, and the ones it does not.
-    #[test]
-    fn entities_are_decoded_and_unknown_ones_are_left_alone() {
-        assert_eq!(plain_text("&lt;tag&gt;"), "<tag>");
-        assert_eq!(plain_text("a&nbsp;b"), "a b");
-        assert_eq!(plain_text("&quot;quoted&quot;"), "\"quoted\"");
-        assert_eq!(plain_text("it&#39;s"), "it's");
-        // an escaped ampersand must not revive one of the entities above
-        assert_eq!(plain_text("&amp;lt;"), "&lt;");
-        // not an entity, so it is text
-        assert_eq!(plain_text("Tom & Jerry"), "Tom & Jerry");
-        assert_eq!(plain_text("&unknown;"), "&unknown;");
-    }
-
-    /// The exact frame the server refused to work without.
-    #[test]
-    fn the_first_frame_carries_the_token() {
-        let frame: Value = serde_json::from_str(&params_frame("abc")).unwrap();
-
-        assert_eq!(frame["method"], "connectionParams");
-        assert_eq!(frame["data"]["token"], "abc");
-    }
-
-    #[test]
-    fn a_request_names_its_path_and_id() {
-        let frame: Value =
-            serde_json::from_str(&request_frame(7, "query", "others.handshake", Value::Null))
-                .unwrap();
-
-        assert_eq!(frame["id"], 7);
-        assert_eq!(frame["method"], "query");
-        assert_eq!(frame["params"]["path"], "others.handshake");
-    }
-
-    #[test]
-    fn a_data_reply_carries_its_payload() {
-        let text = r#"{"id":1,"result":{"type":"data","data":{"handshakeHash":"h"}}}"#;
-
-        match parse_reply(text) {
-            Reply::Data { id, data } => {
-                assert_eq!(id, Some(1));
-                assert_eq!(data["handshakeHash"], "h");
-            }
-            other => panic!("expected data, got {other:?}"),
+        for bad in [
+            "http://chat.example.com",
+            "ftp://example.com",
+            "https://x/path",
+            "https://",
+        ] {
+            assert!(ws_url(bad).is_err(), "{bad}");
         }
     }
 
     #[test]
-    fn a_started_subscription_is_not_data() {
+    fn plain_text_strips_tags_and_keeps_less_than_signs() {
+        assert_eq!(plain_text("1 < 2 and 3 > 4"), "1 < 2 and 3 > 4");
+        assert_eq!(plain_text("5<6"), "5<6");
+        // `<` + letter with no closing `>` is text, not the start of a tag that eats the rest
+        assert_eq!(plain_text("i think a <b and c"), "i think a <b and c");
+        assert_eq!(plain_text("<p>hello</p><p>there</p>"), "hello there");
+        assert_eq!(plain_text("<img src=\"x\">caption"), "caption");
+        assert_eq!(plain_text("<!-- note -->text"), "text");
+        assert_eq!(plain_text("  spaced   out  "), "spaced out");
+        assert_eq!(plain_text("<p></p>"), "");
+    }
+
+    #[test]
+    fn entities_are_decoded_once() {
+        assert_eq!(plain_text("&lt;tag&gt;"), "<tag>");
+        assert_eq!(plain_text("a&nbsp;b"), "a b");
+        assert_eq!(
+            plain_text("it&#39;s &#x2019; &quot;q&quot;"),
+            "it's \u{2019} \"q\""
+        );
+        assert_eq!(plain_text("&amp;lt;"), "&lt;");
+        assert_eq!(plain_text("Tom & Jerry"), "Tom & Jerry");
+        assert_eq!(plain_text("&unknown;"), "&unknown;");
+        assert_eq!(plain_text("&#0; &#x7;"), "&#0; &#x7;");
+    }
+
+    #[test]
+    fn frames_are_built_as_the_server_expects() {
+        let params: Value = serde_json::from_str(&params_frame("abc")).unwrap();
+
+        assert_eq!(params["method"], "connectionParams");
+        assert_eq!(params["data"]["token"], "abc");
+
+        let query: Value = serde_json::from_str(&request_frame(
+            7,
+            "query",
+            "others.handshake",
+            Some(Value::Null),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            (query["id"].as_u64(), query["params"]["path"].as_str()),
+            (Some(7), Some("others.handshake"))
+        );
+        assert!(query["params"].get("input").is_some());
+
+        let void: Value =
+            serde_json::from_str(&request_frame(3, "query", "dms.get", None)).unwrap();
+
+        assert!(
+            void["params"].get("input").is_none(),
+            "void procedures refuse an input key"
+        );
+    }
+
+    #[test]
+    fn replies_are_classified() {
+        match parse_reply(r#"{"id":1,"result":{"type":"data","data":{"handshakeHash":"h"}}}"#) {
+            Reply::Data { id, data } => {
+                assert_eq!((id, data["handshakeHash"].as_str()), (Some(1), Some("h")))
+            }
+            other => panic!("expected data, got {other:?}"),
+        }
+
         assert_eq!(
             parse_reply(r#"{"id":10,"result":{"type":"started"}}"#),
             Reply::Started { id: Some(10) }
         );
-    }
-
-    /// The refusal Shiver actually met before it learned to call `joinServer` first. Its message is
-    /// the server's own words, so it is worth keeping rather than replacing.
-    #[test]
-    fn a_refusal_keeps_the_servers_own_message() {
-        let text = r#"{"id":10,"error":{"message":"You must be authenticated to perform this action.","code":-32001}}"#;
-
         assert_eq!(
-            parse_reply(text),
+            parse_reply(
+                r#"{"id":10,"error":{"message":"You must be authenticated.","code":-32001}}"#
+            ),
             Reply::Failed {
                 id: Some(10),
-                message: "You must be authenticated to perform this action.".into()
+                message: "You must be authenticated.".into()
             }
         );
-    }
-
-    #[test]
-    fn unreadable_frames_are_not_errors() {
         assert_eq!(parse_reply("not json"), Reply::Other);
-        assert_eq!(
-            parse_reply(r#"{"method":"reconnectNotification"}"#),
-            Reply::Other
-        );
     }
 
-    /// Shaped on what a live server actually returned, keys as strings and all.
     #[test]
-    fn the_join_payload_yields_read_states_and_dms() {
-        let data = serde_json::json!({
+    fn the_join_payload_yields_what_shiver_uses() {
+        let joined = parse_join(&serde_json::json!({
             "serverId": "019c1482",
-            "readStates": { "1": 0, "8": 3, "140": 2 },
-            "channels": [
-                { "id": 1, "isDm": false, "name": "README" },
-                { "id": 9, "isDm": true, "name": "someone" }
-            ]
-        });
-
-        let joined = parse_join(&data);
+            "readStates": { "1": 0, "8": 3, "140": 2.0 },
+            "channels": [{ "id": 1, "isDm": false, "name": "README" }, { "id": 9, "isDm": true, "name": "x" }],
+            "users": [{ "id": 2, "name": "Smiddy" }],
+            "pluginsMetadata": [{ "pluginId": "other", "version": "2.0.0" }, { "pluginId": "shiver", "version": "0.1.0" }]
+        }));
 
         assert_eq!(joined.server_id.as_deref(), Some("019c1482"));
-        assert_eq!(joined.read_states.get(&8), Some(&3));
         assert_eq!(joined.read_states.get(&140), Some(&2));
         assert_eq!(joined.dm_channels, vec![9]);
-    }
-
-    /// `dms.get`'s answer, as `db/queries/dms.ts` builds it. The timestamp is the field the whole
-    /// conversation order rests on, and losing it is invisible — the list still appears, merely in
-    /// the wrong order — so it is asserted rather than assumed.
-    #[test]
-    fn a_conversation_carries_its_name_and_its_latest_message() {
-        let conversations = serde_json::json!([
-            { "channelId": 9, "userId": 2, "unreadCount": 0, "lastMessageAt": 1_757_000_000_000u64 }
-        ]);
-        let joined = serde_json::json!({
-            "users": [{ "id": 2, "name": "Smiddy" }, { "id": 3, "name": "Someone else" }]
-        });
-
-        let dms = parse_dms(conversations.as_array().expect("an array"), &joined);
-
         assert_eq!(
-            dms,
-            vec![DirectMessage {
-                channel_id: 9,
-                user_name: "Smiddy".into(),
-                last_message_at: Some(1_757_000_000_000),
-            }]
+            joined.user_names.get(&2).map(String::as_str),
+            Some("Smiddy")
         );
+        assert_eq!(joined.plugin_version.as_deref(), Some("0.1.0"));
+        assert_eq!(parse_join(&serde_json::json!({})), Joined::default());
     }
 
-    /// A webview hands numbers back as doubles and serde_json writes a large one in exponential
-    /// form, which `as_u64` refuses outright — the trap desktop's `optional_millis` exists for.
     #[test]
-    fn a_timestamp_in_exponential_form_is_still_a_timestamp() {
-        let conversations = serde_json::json!([
-            { "channelId": 9, "userId": 2, "lastMessageAt": 1.757e12 }
-        ]);
-
+    fn conversations_carry_their_name_and_latest_message() {
+        let names = HashMap::from([(2, "Smiddy".to_string())]);
         let dms = parse_dms(
-            conversations.as_array().expect("an array"),
-            &serde_json::json!({}),
+            serde_json::json!([
+                { "channelId": 9, "userId": 2, "lastMessageAt": 1_757_000_000_000u64 },
+                { "channelId": 10, "userId": 404, "lastMessageAt": 1.757e12 },
+                { "channelId": 11 }
+            ])
+            .as_array()
+            .unwrap(),
+            &names,
         );
 
-        assert_eq!(dms[0].last_message_at, Some(1_757_000_000_000));
-    }
-
-    /// A conversation with someone no longer in the user list still exists, and a server that
-    /// answers without a timestamp still has conversations — neither is a reason to drop the row.
-    #[test]
-    fn a_conversation_survives_a_missing_name_or_timestamp() {
-        let conversations = serde_json::json!([{ "channelId": 9, "userId": 404 }]);
-
-        let dms = parse_dms(
-            conversations.as_array().expect("an array"),
-            &serde_json::json!({ "users": [] }),
-        );
-
-        assert_eq!(dms[0].user_name, "Unknown");
-        assert_eq!(dms[0].last_message_at, None);
-    }
-
-    #[test]
-    fn a_join_payload_missing_everything_still_parses() {
-        let joined = parse_join(&serde_json::json!({}));
-
-        assert_eq!(joined, Joined::default());
-    }
-
-    #[test]
-    fn a_delta_frame_becomes_an_unread_event() {
-        let data = serde_json::json!({ "channelId": 8, "delta": 1 });
-
+        assert_eq!(dms.len(), 2);
         assert_eq!(
-            parse_delta(&data),
+            (dms[0].user_name.as_str(), dms[0].last_message_at),
+            ("Smiddy", Some(1_757_000_000_000))
+        );
+        assert_eq!(
+            (dms[1].user_name.as_str(), dms[1].last_message_at),
+            ("Unknown", Some(1_757_000_000_000))
+        );
+    }
+
+    #[test]
+    fn read_state_frames_accept_doubles() {
+        assert_eq!(
+            parse_delta(&serde_json::json!({ "channelId": 8, "delta": 1 })),
             Some(Event::Unread {
                 channel_id: 8,
                 delta: 1
             })
         );
+        assert_eq!(
+            parse_delta(&serde_json::json!({ "channelId": 8, "delta": 1.0 })),
+            Some(Event::Unread {
+                channel_id: 8,
+                delta: 1
+            })
+        );
+        assert_eq!(
+            parse_delta(&serde_json::json!({ "channelId": 4, "count": 0.0 })),
+            Some(Event::UnreadSet {
+                channel_id: 4,
+                count: 0
+            })
+        );
         assert_eq!(parse_delta(&serde_json::json!({ "channelId": 8 })), None);
+        assert_eq!(parse_delta(&serde_json::json!({ "delta": 1 })), None);
     }
 
-    /// The frame this was written against, captured from demo.sharkord.com rather than imagined:
-    /// `messages.onNew` emits the message itself, and its content is html.
     #[test]
-    fn a_new_message_is_read_from_the_frame_the_server_sends() {
+    fn new_messages_are_read_from_the_frame_the_server_sends() {
         let data = serde_json::json!({
-            "id": 13723,
-            "content": "<p>shape check for messages.onNew</p>",
-            "userId": 52737,
-            "pluginId": null,
-            "channelId": 8,
-            "createdAt": 1788726108661i64,
-            "files": [],
+            "id": 13723, "content": "<p>shape check</p>", "userId": 52737, "pluginId": null, "channelId": 8
         });
 
         assert_eq!(
@@ -1322,248 +1003,56 @@ mod tests {
                 channel_id: 8,
                 user_id: Some(52737),
                 plugin_id: None,
-                text: "shape check for messages.onNew".into(),
+                text: "shape check".into()
             }))
         );
-
-        // a frame with no channel is not a message Shiver can place, and must not panic
         assert_eq!(parse_message(&serde_json::json!({ "content": "hi" })), None);
     }
 
-    /// The body of a notification, so what lands on the shade is what was written rather than
-    /// markup — and two paragraphs read as two words rather than one run-on.
     #[test]
-    fn message_html_becomes_the_line_a_person_reads() {
-        assert_eq!(plain_text("<p>hello</p>"), "hello");
-        assert_eq!(plain_text("<p>hello</p><p>there</p>"), "hello there");
-        assert_eq!(plain_text("<p>tom &amp; jerry &lt;3</p>"), "tom & jerry <3");
-        assert_eq!(plain_text("<p>  spaced   out  </p>"), "spaced out");
-        // an attachment with no words at all, which the caller turns into its own line
-        assert_eq!(plain_text("<p></p>"), "");
-        // an escaped entity must not be revived into a tag by the unescaping itself
-        assert_eq!(plain_text("&amp;lt;p&amp;gt;"), "&lt;p&gt;");
+    fn the_shared_floor_is_read_tolerantly() {
+        let floor = parse_shared_floor(&serde_json::json!({
+            "readFloor": { "12": 3, "4": 12.0, "5": 4_294_967_296u64, "no": 1, "40": "lots" }
+        }))
+        .unwrap();
+
+        assert_eq!(floor, HashMap::from([(12, 3), (4, 12), (5, u32::MAX)]));
+        assert!(parse_shared_floor(&serde_json::json!({ "mutedChannels": [1] })).is_none());
+        assert!(parse_shared_floor(&serde_json::json!({ "readFloor": 7 })).is_none());
     }
 
-    /// Muting is Shiver's and the server keeps counting, so the filter has to be here or a muted
-    /// channel would still light the rail.
     #[test]
-    fn muted_channels_are_left_out_of_the_total() {
-        let states = HashMap::from([(1, 2), (2, 5), (3, 1)]);
-        let none = HashMap::new();
-
-        assert_eq!(unread_total(&states, &none, &muted([])), 8);
-        assert_eq!(unread_total(&states, &none, &muted([2])), 3);
-        assert_eq!(unread_total(&states, &none, &muted([1, 2, 3])), 0);
-    }
-
-    /// The badge is what arrived while Shiver was watching. A public server's backlog is not news,
-    /// and counting it is what made a tile say 99+ from the first launch and never stop.
-    #[test]
-    fn the_backlog_a_server_was_already_holding_is_not_counted() {
+    fn unread_counts_only_what_arrived_above_the_baseline() {
+        let states = HashMap::from([(1, 42), (2, 900), (3, 4)]);
         let baseline = HashMap::from([(1, 40), (2, 900)]);
 
-        // nothing has happened since Shiver connected
-        assert_eq!(unread_total(&baseline, &baseline, &muted([])), 0);
-
-        // two messages in one channel, none in the other
-        let states = HashMap::from([(1, 42), (2, 900)]);
-
-        assert_eq!(unread_total(&states, &baseline, &muted([])), 2);
+        assert_eq!(unread_total(&states, &baseline, &muted([])), 6);
+        assert_eq!(unread_total(&states, &baseline, &muted([3])), 2);
+        assert_eq!(
+            unread_total(
+                &HashMap::from([(1, 0)]),
+                &HashMap::from([(1, 10)]),
+                &muted([])
+            ),
+            0
+        );
     }
 
-    /// Reading one channel elsewhere must not eat another channel's news, which summing the
-    /// difference of the totals would do.
     #[test]
-    fn a_channel_read_elsewhere_subtracts_nothing_from_the_others() {
-        let baseline = HashMap::from([(1, 10), (2, 10)]);
-        // channel 1 was read somewhere else, channel 2 has three new messages
-        let states = HashMap::from([(1, 0), (2, 13)]);
-
-        assert_eq!(unread_total(&states, &baseline, &muted([])), 3);
-    }
-
-    /// A channel created after Shiver connected has no floor, so all of it is new.
-    #[test]
-    fn a_channel_the_baseline_never_saw_counts_in_full() {
-        let baseline = HashMap::from([(1, 5)]);
-        let states = HashMap::from([(1, 5), (2, 4)]);
-
-        assert_eq!(unread_total(&states, &baseline, &muted([])), 4);
-    }
-
-    /// The server sends a delta of 1 per message rather than a total, so this accumulates — and
-    /// must not underflow when a read state comes back down.
-    #[test]
-    fn deltas_accumulate_and_never_go_negative() {
+    fn deltas_accumulate_without_going_negative_and_sets_replace() {
         let mut states = HashMap::from([(1, 1)]);
 
         apply_delta(&mut states, 1, 1);
         apply_delta(&mut states, 2, 1);
-
-        assert_eq!(states.get(&1), Some(&2));
-        assert_eq!(states.get(&2), Some(&1));
+        assert_eq!((states[&1], states[&2]), (2, 1));
 
         apply_delta(&mut states, 1, -5);
+        assert_eq!(states[&1], 0);
 
-        assert_eq!(states.get(&1), Some(&0));
-    }
-}
+        set_unread(&mut states, 2, 7);
+        assert_eq!(states[&2], 7);
 
-#[cfg(test)]
-mod plugin_tests {
-    use super::{plugin_version, SHIVER_PLUGIN_ID};
-
-    fn payload() -> serde_json::Value {
-        serde_json::json!({
-            "pluginsMetadata": [
-                { "pluginId": "something-else", "name": "Other", "version": "2.0.0" },
-                { "pluginId": "shiver", "name": "Shiver", "version": "0.1.0" }
-            ]
-        })
-    }
-
-    #[test]
-    fn finds_the_plugin_among_others() {
-        assert_eq!(
-            plugin_version(&payload(), SHIVER_PLUGIN_ID),
-            Some("0.1.0".into())
-        );
-    }
-
-    #[test]
-    fn absent_when_not_installed() {
-        let without = serde_json::json!({ "pluginsMetadata": [] });
-
-        assert_eq!(plugin_version(&without, SHIVER_PLUGIN_ID), None);
-    }
-
-    #[test]
-    fn absent_when_the_server_does_not_mention_plugins() {
-        // an older Sharkord, or a payload shape that has moved: not installed, as far as Shiver can
-        // tell, which is the safe answer — the features behind it degrade rather than misbehave
-        assert_eq!(
-            plugin_version(&serde_json::json!({}), SHIVER_PLUGIN_ID),
-            None
-        );
-    }
-}
-
-#[cfg(test)]
-mod floor_tests {
-    use super::parse_shared_floor;
-
-    #[test]
-    fn reads_channel_ids_back_out_of_string_keys() {
-        let stored = serde_json::json!({ "readFloor": { "12": 3, "40": 0 } });
-        let floor = parse_shared_floor(&stored).expect("a floor");
-
-        assert_eq!(floor.get(&12), Some(&3));
-        assert_eq!(floor.get(&40), Some(&0));
-    }
-
-    #[test]
-    fn nothing_stored_is_no_floor() {
-        // a plugin row that exists but has only the muted list in it
-        let stored = serde_json::json!({ "mutedChannels": [1, 2] });
-
-        assert!(parse_shared_floor(&stored).is_none());
-    }
-
-    #[test]
-    fn a_row_that_is_not_an_object_is_no_floor() {
-        assert!(parse_shared_floor(&serde_json::Value::Null).is_none());
-        assert!(parse_shared_floor(&serde_json::json!({ "readFloor": 7 })).is_none());
-    }
-
-    /// The bridge writes this floor from a page, and a page has only doubles. `as_u64` answers
-    /// `None` for `12.0`, so a floor written by the very thing that is supposed to write it was
-    /// being dropped channel by channel — and a dropped floor reads as "none of this is read".
-    #[test]
-    fn a_floor_written_as_a_double_is_kept() {
-        let stored = serde_json::json!({ "readFloor": { "4": 12.0, "9": 3 } });
-        let floor = parse_shared_floor(&stored).expect("a floor");
-
-        assert_eq!(
-            floor.get(&4),
-            Some(&12),
-            "a float count must not be skipped"
-        );
-        assert_eq!(floor.get(&9), Some(&3));
-    }
-
-    /// And a count too large for the type saturates rather than wrapping round to something small.
-    #[test]
-    fn an_enormous_floor_saturates() {
-        let stored = serde_json::json!({ "readFloor": { "4": 4_294_967_296u64 } });
-        let floor = parse_shared_floor(&stored).expect("a floor");
-
-        assert_eq!(floor.get(&4), Some(&u32::MAX));
-    }
-
-    #[test]
-    fn rubbish_entries_are_skipped_rather_than_failing_the_lot() {
-        // stored by Shiver, but held on somebody else's server
-        let stored = serde_json::json!({ "readFloor": { "12": 3, "no": 1, "40": "lots" } });
-        let floor = parse_shared_floor(&stored).expect("a floor");
-
-        assert_eq!(floor.len(), 1);
-        assert_eq!(floor.get(&12), Some(&3));
-    }
-}
-
-#[cfg(test)]
-mod read_state_tests {
-    use super::{parse_delta, set_unread, Event};
-    use std::collections::HashMap;
-
-    #[test]
-    fn a_new_message_is_a_delta() {
-        let frame = serde_json::json!({ "channelId": 4, "delta": 1 });
-
-        assert_eq!(
-            parse_delta(&frame),
-            Some(Event::Unread {
-                channel_id: 4,
-                delta: 1
-            })
-        );
-    }
-
-    #[test]
-    fn a_read_on_another_device_is_a_count() {
-        // what `channels.markAsRead` publishes to the caller's other sessions
-        let frame = serde_json::json!({ "channelId": 4, "count": 0 });
-
-        assert_eq!(
-            parse_delta(&frame),
-            Some(Event::UnreadSet {
-                channel_id: 4,
-                count: 0
-            })
-        );
-    }
-
-    #[test]
-    fn a_frame_that_is_neither_is_ignored() {
-        assert_eq!(parse_delta(&serde_json::json!({ "channelId": 4 })), None);
-        assert_eq!(parse_delta(&serde_json::json!({ "delta": 1 })), None);
-    }
-
-    #[test]
-    fn setting_to_zero_forgets_the_channel() {
-        let mut states: HashMap<i64, u32> = [(4, 5)].into_iter().collect();
-
-        set_unread(&mut states, 4, 0);
-
-        assert!(!states.contains_key(&4));
-    }
-
-    #[test]
-    fn setting_replaces_rather_than_adding() {
-        let mut states: HashMap<i64, u32> = [(4, 5)].into_iter().collect();
-
-        set_unread(&mut states, 4, 2);
-
-        assert_eq!(states.get(&4), Some(&2));
+        set_unread(&mut states, 2, 0);
+        assert!(!states.contains_key(&2));
     }
 }

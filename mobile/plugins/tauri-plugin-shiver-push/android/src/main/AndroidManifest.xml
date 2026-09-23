@@ -1,19 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!--
-      Without this, Shiver cannot see that a distributor is installed at all.
-
-      Android 11 stopped letting an app enumerate the others on the phone: `queryBroadcastReceivers`
-      returns only packages already visible to the caller, so Shiver's search for anything answering
-      the UnifiedPush register broadcast came back empty with ntfy sitting right there, and the
-      settings screen said "install a distributor" to someone who had one.
-
-      A `<queries>` element declaring the exact intent is the sanctioned way back in, and it is
-      narrow on purpose: it makes visible the apps that answer *this* action, and nothing else on
-      the device. `QUERY_ALL_PACKAGES` would do it too and is both a permission Shiver has no business
-      holding and grounds for removal from the Play Store.
-    -->
+    <!-- lets Shiver see installed distributors (Android 11+ package visibility), and nothing else -->
     <queries>
         <intent>
             <action android:name="org.unifiedpush.android.distributor.REGISTER" />
@@ -21,23 +9,8 @@
     </queries>
 
     <application>
-        <!--
-          The cold-start receiver. Declared here rather than registered in code because that is the
-          whole point: Android must be able to deliver a push to Shiver when Shiver is not running, and
-          only a manifest receiver can be started into a dead process.
-
-          **Exported, and it has to be.** It was not, on the reasoning that the distributor targets
-          Shiver's package directly so nothing else needs to reach it. That is not how Android works:
-          `exported="false"` means *no other app* may deliver here, package-targeted or not, and the
-          distributor is another app. The result was a registration that looked fine from ntfy's
-          side — the topic was created — while Shiver never received the endpoint it was sent, so the
-          settings screen sat on "0 of 2 servers registered" forever and no push ever arrived.
-
-          What exporting costs is that any app on the phone can broadcast at it. What stops that
-          mattering is the token: Shiver only acts on tokens it issued, and they are the rail entries'
-          own v4 uuids. A broadcast carrying anything else is dropped without a notification, which
-          is the check `onReceive` starts with.
-        -->
+        <!-- The cold-start receiver. Exported because the distributor is another app; it acts only on
+             tokens Shiver issued and, from API 34, only on broadcasts from the chosen distributor. -->
         <receiver
             android:name="com.shiver.push.PushReceiver"
             android:exported="true">

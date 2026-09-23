@@ -1,9 +1,4 @@
-//! What can go wrong in the pieces both clients share.
-//!
-//! Its own type rather than either client's: the two disagree about what else can fail, and neither
-//! list is this crate's business. Both convert it into their own on the way out.
-//!
-//! Messages are user-facing. None of them carries a token, a password or a path.
+//! Errors from the shared pieces. Messages are user-facing and never carry a token, password or path.
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -14,4 +9,23 @@ pub enum Error {
 
     #[error("{0}")]
     Storage(String),
+
+    #[error("Could not reach {0}. Check the address and that the server is running.")]
+    Unreachable(String),
+
+    #[error("{0} does not look like a Sharkord server")]
+    NotSharkord(String),
+
+    /// The server answered and said no; the message is its own, made safe to display.
+    #[error("{0}")]
+    Refused(String),
+
+    #[error("{0}")]
+    InvalidInput(String),
+
+    #[error("That server is not in your list")]
+    UnknownServer,
+
+    #[error("That folder is not in your list")]
+    UnknownFolder,
 }

@@ -1,7 +1,9 @@
 package com.shiver.mobile
 
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.View
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
@@ -11,49 +13,26 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
-  /**
-   * Wry's own back handling is not installed.
-   *
-   * Left on, it walks the webview's history and then finishes the activity — which on a client that
-   * navigates within itself means back lands somewhere arbitrary rather than anywhere the user
-   * asked for. Shiver answers the press itself, below.
-   */
+  /** Shiver answers back presses itself (below) rather than walking the webview's history. */
   override val handleBackNavigation = false
 
   private var webView: WebView? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
-    // Both bars are told they sit on something dark, which is what decides the colour of the
-    // clock and the battery. Without it the system picks from the day/night setting and draws
-    // them dark — invisible against the background behind them.
+    // light status and navigation icons, over Shiver's dark background
     enableEdgeToEdge(
       statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
       navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
     )
     super.onCreate(savedInstanceState)
 
-    // Keep the webview out from under the status and navigation bars.
-    //
-    // Edge to edge is not optional from Android 15 on, so the window genuinely does extend behind
-    // both bars, and Sharkord's own header ended up sharing the strip with the clock — its server
-    // name written over the time. That cannot be fixed from css: the panels involved are
-    // `position: fixed`, which anchors them to the viewport rather than to anything a stylesheet of
-    // Shiver's can push down, and it is not Shiver's place to re-lay-out the client anyway.
-    //
-    // Padding the content view moves the viewport itself instead, so every one of those panels
-    // lands below the bar without the page being told anything. The insets are consumed rather than
-    // passed on, so `env(safe-area-inset-*)` inside the page correctly reports nothing left to
-    // avoid — the rail's own safe-area padding then adds zero rather than a second inset.
-    //
-    // The bottom takes whichever is larger of the navigation bar and the keyboard, so the composer
-    // clears the gesture pill and is not buried when the keyboard opens.
+    // Edge to edge is mandatory from Android 15, and Sharkord's fixed panels cannot be moved from
+    // CSS, so the content view is padded by the system bars (and the keyboard, at the bottom) and
+    // the insets consumed, leaving `env(safe-area-inset-*)` at zero inside the page.
     val content = findViewById<View>(android.R.id.content)
 
     ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
-      val bars =
-        insets.getInsets(
-          WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-        )
+      val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
       val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
 
       view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
@@ -62,82 +41,57 @@ class MainActivity : TauriActivity() {
     }
   }
 
-  /**
-   * Points the back button at the server rail.
-   *
-   * Registered here rather than in `onCreate` because this runs once the webview exists, which is
-   * also the only moment there is anything to ask. The rail answers innermost thing first — a menu,
-   * then the direct-message list, then the rail itself — and says whether it used the press.
-   *
-   * On a page Shiver is not drawing on, its own screens included, nothing answers and the press falls
-   * through to what the system would have done.
-   */
   override fun onWebViewCreate(webView: WebView) {
     this.webView = webView
 
-    // Kills the white flash between servers, from the first frame.
-    //
-    // Android's WebView paints white when no page is painting, and on mobile every server switch is
-    // two navigations — the rail inside a server's page has no way to call Shiver, so it goes to
-    // Shiver's own page with a fragment and Shiver navigates on from there. Each of those tears the old
-    // document down before the new one paints, and the webview's own background is what shows in
-    // between.
-    //
-    // Sharkord's own colour, which is Shiver's default, rather than the user's chosen one: this runs
-    // before Rust has read the settings. The Rust side sets the user's actual background straight
-    // after (`webview::background_color`) and again whenever they change it, so this is the floor
-    // rather than the answer — but it is the floor that covers app start.
+    // Sharkord's default background until Rust applies the user's (Android paints white between documents)
     webView.setBackgroundColor(getColor(R.color.shiver_background))
 
     onBackPressedDispatcher.addCallback(
       this,
       object : OnBackPressedCallback(true) {
+        /** when a server page last swallowed a press */
+        private var swallowedAt = 0L
+
         override fun handleOnBackPressed() {
-          val view = this@MainActivity.webView
+          val view = this@MainActivity.webView ?: return leave()
+          val serverPage = !isShiverPage(view.url)
 
-          if (view == null) {
-            leave()
-
-            return
+          // A server page's rail answers the press (closing a menu, toggling the rail), but a page
+          // could answer "true" forever, so a second press soon after a swallowed one always goes back.
+          if (serverPage && SystemClock.uptimeMillis() - swallowedAt < ESCAPE_MS) {
+            swallowedAt = 0
+            return goBack(view)
           }
 
-          // **Only Shiver's own pages are asked.** `__SHIVER_BACK__` is an ordinary window
-          // property, so a server's page can define it and answer "true" to every press — which
-          // takes away the user's main way of leaving that page. Shiver draws the rail on its own
-          // origin, which is the only place the question means anything.
-          if (!isShiverPage(view.url)) {
-            if (view.canGoBack()) view.goBack() else leave()
-
-            return
-          }
-
-          // asynchronous, and deliberately so: the reply arrives on this thread rather than being
-          // waited for on it, which is the difference between a back press and a frozen app
-          view.evaluateJavascript(
-            "window.__SHIVER_BACK__ ? window.__SHIVER_BACK__() : false"
-          ) { answer ->
-            if (answer == "true") return@evaluateJavascript
-
-            if (view.canGoBack()) view.goBack() else leave()
+          view.evaluateJavascript("window.__SHIVER_BACK__ ? window.__SHIVER_BACK__() : false") { answer ->
+            if (answer != "true") return@evaluateJavascript goBack(view)
+            if (serverPage) swallowedAt = SystemClock.uptimeMillis()
           }
         }
 
         /**
-         * Whether the page on screen is one of Shiver's own.
-         *
-         * Shiver's pages are served from the app's asset origin in a bundled build and from the
-         * vite dev server in development, and no server's page is ever either of those.
+         * Back through the webview's history, except from a server page into Shiver's boot page
+         * (which would only reopen the server): then whatever the system would do.
          */
-        private fun isShiverPage(url: String?): Boolean {
-          val address = url ?: return false
+        private fun goBack(view: WebView) {
+          val history = view.copyBackForwardList()
+          val previous = if (history.currentIndex > 0) history.getItemAtIndex(history.currentIndex - 1)?.url else null
 
-          return address.startsWith("http://tauri.localhost") ||
-            address.startsWith("https://tauri.localhost") ||
-            address.startsWith("http://localhost:") ||
-            address.startsWith("http://10.0.2.2:")
+          if (previous != null && (isShiverPage(view.url) || !isShiverPage(previous))) view.goBack() else leave()
         }
 
-        /** What the system would have done with the press, had Shiver not taken it. */
+        /** Shiver's bundled origin, or (debug builds only) the vite dev server. */
+        private fun isShiverPage(url: String?): Boolean {
+          val uri = url?.let(Uri::parse) ?: return false
+          val host = uri.host ?: return false
+
+          if (host == "tauri.localhost" && (uri.scheme == "http" || uri.scheme == "https")) return true
+
+          return BuildConfig.DEBUG && uri.scheme == "http" && (host == "localhost" || host == "10.0.2.2")
+        }
+
+        /** Whatever the system would have done with the press. */
         private fun leave() {
           isEnabled = false
           onBackPressedDispatcher.onBackPressed()
@@ -145,5 +99,9 @@ class MainActivity : TauriActivity() {
         }
       }
     )
+  }
+
+  private companion object {
+    const val ESCAPE_MS = 1000L
   }
 }

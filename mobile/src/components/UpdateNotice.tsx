@@ -3,20 +3,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 
 /**
- * Says a newer Shiver exists, where it will be seen rather than found.
- *
- * The settings screen already names the newest version, and Android's shade gets a notification —
- * but a notification is easy to swipe past and settings is somewhere people go for a reason. This
- * sits on Shiver's own screens, which is where a launch lands.
- *
- * **Android installs its own packages.** Shiver does not: that would need
- * `REQUEST_INSTALL_PACKAGES`, a permission letting it install anything at all, which is a poor
- * trade for saving a tap. So the button opens the releases page and Android's installer takes it
- * from there, asking the browser for permission rather than Shiver.
- *
- * Three ways out, meaning different things. **Get it** opens the page. **Later** puts this away for
- * now. **Skip this version** means "stop telling me about this one" — persisted, so it survives a
- * restart — and a release after it is news again.
+ * Announces a newer release on Shiver's screens. Shiver cannot install packages itself (that would
+ * need `REQUEST_INSTALL_PACKAGES`), so "Get it" opens the releases page; "Skip" is remembered.
  */
 export const UpdateNotice = () => {
   const [version, setVersion] = useState<string | null>(null);

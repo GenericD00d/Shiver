@@ -7,12 +7,7 @@ import { Bell } from './Bell';
 import { NotificationsPopup } from './NotificationsPopup';
 import './styles.css';
 
-/**
- * One bundle serves all three of Shiver's own webviews: the shell, the bell, and the notification
- * popup. The webview's own label decides which, rather than a query string, because
- * `WebviewUrl::App` takes a path and there is no guarantee a `?` survives being resolved against
- * the base url.
- */
+/** One bundle serves the shell, the bell and the feed; the webview label picks which. */
 const label = (() => {
   try {
     return getCurrentWebview().label;

@@ -82,12 +82,7 @@ export const HeadphoneOffIcon = ({ className }: Props) => (
   </svg>
 );
 
-/**
- * Lucide's `phone-off`, verbatim. The slash runs top-right to bottom-left — the opposite way from
- * every other "off" icon here — because the handset itself lies along the other diagonal, and a
- * slash on the same line as the thing it crosses out does not read as crossing it out. The old
- * copy had the slash on the handset's own diagonal, which is what made it look wrong.
- */
+/** Lucide's `phone-off`; its slash crosses the handset's diagonal, unlike the other "off" icons. */
 export const PhoneOffIcon = ({ className }: Props) => (
   <svg {...base} className={className}>
     <path d="M10.1 13.9a14 14 0 0 0 3.732 2.668 1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2 18 18 0 0 1-12.728-5.272" />

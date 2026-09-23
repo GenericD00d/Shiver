@@ -1,14 +1,4 @@
-/**
- * The rail's icons.
- *
- * Copied path for path from the desktop client's `icons.tsx`, at the same 16px in the same 48px
- * tile, and drawn the same way again in `bridge/index.ts`. The rail appears on both sides of a
- * webview that only ever holds one page, so a control that changed shape when the user crossed
- * between Shiver and a server would read as two different controls rather than one that stayed put.
- *
- * Inline rather than emoji, for the desktop client's reason: emoji are rendered by the system font
- * in their own colours and cannot be themed. These inherit `currentColor`.
- */
+/** The rail's icons: the desktop client's paths at the same size, also drawn by the bridge's rail. */
 
 type Props = {
   className?: string;

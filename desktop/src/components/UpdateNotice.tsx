@@ -3,20 +3,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../api';
 
 /**
- * Says a newer Shiver exists, once, where it will actually be seen.
- *
- * The bell already carries an entry for this, and the bell is where somebody looks when they want
- * to know what they have missed — not where they look to find out that the thing they are using is
- * out of date. So this sits over the top of the window on launch instead.
- *
- * **A bar rather than a dialog.** Nothing here is urgent enough to stop somebody reading their
- * messages, and a modal on launch is the kind of thing people learn to dismiss without reading.
- * It can be ignored entirely and the bell keeps the offer.
- *
- * Three ways out, and they mean different things. **Install** takes it now. **Later** puts the bar
- * away for this run and the offer stays in the bell. **Skip this version** means "stop telling me
- * about this one" — persisted, so it survives a restart — and a release after it is news again.
- * Being asked twice about the same version is how a prompt teaches people to ignore prompts.
+ * A bar announcing a newer release on launch. Install now, Later (the bell keeps the offer) or Skip
+ * this version (remembered).
  */
 export const UpdateNotice = () => {
   const [version, setVersion] = useState<string | null>(null);

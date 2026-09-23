@@ -9,6 +9,8 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: false,
+    // shared/web is imported from outside this project
+    fs: { allow: ['.', '../shared/web'] },
     watch: {
       ignored: ['**/src-tauri/**']
     }
