@@ -111,31 +111,44 @@ export function addedMenu(records: MutationRecord[]): HTMLElement | null {
 const CONTROL = 'button, input, select, textarea, label, [role="button"], [contenteditable]';
 
 /**
- * Catches plain clicks on `target="_blank"` http(s) links, which the webview will not open as a
- * new window, and hands the address to `open` (the core opens it in the browser). Controls inside
- * a link (the delete button on an attachment card) are left to the page.
+ * Hands `open` (which the core rations and opens in the browser) what the user opens away from the
+ * page: a trusted click on an http(s) link to another origin, into a new window or with a modifier,
+ * and one `window.open` per gesture. The core opens nothing else. Controls inside a link (the
+ * delete button on an attachment card) are left to the page.
  */
 export function installExternalLinks(open: (href: string) => void) {
-  document.addEventListener(
-    'click',
-    (event) => {
-      if (!event.isTrusted || event.defaultPrevented) return;
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  let armed = false;
 
-      const target = event.target as Element | null;
-      const anchor = target?.closest?.('a');
+  const capture = (event: MouseEvent) => {
+    if (!event.isTrusted || event.defaultPrevented || event.button > 1) return;
 
-      if (!(anchor instanceof HTMLAnchorElement) || anchor.target !== '_blank') return;
+    const target = event.target as Element | null;
+    const anchor = target?.closest?.('a');
 
-      const control = target?.closest?.(CONTROL);
+    if (!(anchor instanceof HTMLAnchorElement) || !/^https?:$/.test(anchor.protocol)) return;
 
-      if (control && control !== anchor && anchor.contains(control)) return;
-      if (!/^https?:/i.test(anchor.href)) return;
+    const control = target?.closest?.(CONTROL);
 
-      event.preventDefault();
-      event.stopPropagation();
-      open(anchor.href);
-    },
-    true
-  );
+    if (control && control !== anchor && anchor.contains(control)) return;
+    if (anchor.target !== '_blank' && anchor.origin === location.origin && event.button === 0 && !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    open(anchor.href);
+  };
+
+  document.addEventListener('click', capture, true);
+  document.addEventListener('auxclick', capture, true);
+
+  for (const type of ['pointerdown', 'keydown']) window.addEventListener(type, (event) => (armed ||= event.isTrusted), true);
+
+  window.open = (url?: string | URL) => {
+    const href = armed && navigator.userActivation?.isActive && url ? new URL(url, location.href) : null;
+
+    armed = false;
+
+    if (href && /^https?:$/.test(href.protocol)) open(href.href);
+
+    return null;
+  };
 }

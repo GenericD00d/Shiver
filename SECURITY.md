@@ -57,6 +57,9 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
 - **Server pages cannot call Shiver.** Tauri refuses commands from remote origins, and desktop also
   refuses any command not sent by Shiver's own webviews. Android reports a new page's origin late,
   so it refuses every command while a server is on screen or being opened.
+- **Only the user opens the browser.** A page's own navigations off its origin and its new windows
+  are refused; the browser gets only links the user clicked and one window per click, rationed per
+  server.
 - **Sessions never reach a webview's storage.** A small script that runs before the page's own
   patches `Storage.prototype` so Sharkord's auto-login token and live session are served from
   memory (`shared/web/session.ts`). On desktop it is part of the initialization script; on Android
@@ -71,8 +74,7 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   opaque entry id, position and folder, unread count and a signed-out flag; plus folder names. It
   is never handed another server's address, account, session or push endpoint. A page can reorder
   the rail, move servers between folders and switch Shiver to another server, as the rail does;
-  removing, logging out and forgetting a password need confirmation on Shiver's own page, and links
-  it opens in the browser are rationed.
+  removing, logging out and forgetting a password need confirmation on Shiver's own page.
 - **The plugin's push delivery is pinned.** The endpoint is resolved once, every address is
   checked, and the request is sent over TLS on port 443 to that vetted address with the hostname as
   SNI, so DNS rebinding cannot redirect it. Deliveries in flight are capped server-wide.

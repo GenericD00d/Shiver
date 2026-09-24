@@ -336,7 +336,7 @@ pub fn read_mutes(app: &AppHandle, entry_id: &str) {
 }
 
 fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
-    // links Sharkord opens in a new window, which Android's webview refuses to make
+    // what the user opened away from the page, queued by the document-start script
     for url in app
         .state::<Openings>()
         .grant(entry_id, &state.open)

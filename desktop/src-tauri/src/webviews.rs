@@ -8,10 +8,7 @@
 
 use std::{
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -19,9 +16,8 @@ use serde_json::json;
 pub use shiver_core::limit::Openings;
 use shiver_core::LockExt;
 use tauri::{
-    webview::{PageLoadEvent, WebviewBuilder},
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl, Window,
-    WindowEvent,
+    webview::WebviewBuilder, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview,
+    WebviewUrl, Window, WindowEvent,
 };
 use url::Url;
 
@@ -645,9 +641,8 @@ enum PageRole<'a> {
 
 /// Builds one page webview pinned to the entry's origin, in the entry's own profile.
 ///
-/// Navigation stays on the origin; a link out of it (after the first load) and every new-window
-/// request go to the browser, subject to the entry's opening allowance. An off-origin redirect
-/// before the first load is refused rather than opened.
+/// Navigation stays on the origin and new windows are refused: the bridge hands over what the user
+/// opens away from the page, and the drain opens it in the browser.
 fn build_page_webview(
     window: &Window,
     entry: &ServerEntry,
@@ -663,41 +658,24 @@ fn build_page_webview(
         PageRole::Server { .. } => webview_label(&entry.id),
         PageRole::Dm { .. } => dm_webview_label(&entry.id),
     };
-
-    let app = window.app_handle().clone();
-    let loaded = Arc::new(AtomicBool::new(false));
-    let loaded_for_page = loaded.clone();
     let origin = entry.origin.clone();
-    let entry_id = entry.id.clone();
-    let (nav_app, nav_id) = (app.clone(), entry_id.clone());
 
     let mut builder = WebviewBuilder::new(label, WebviewUrl::External(url))
         // Sharkord uploads by listening for dragover/drop, which the native handler would swallow
         .disable_drag_drop_handler()
         .initialization_script(bridge_script(entry, settings, token, muted, role))
-        .on_page_load(move |_webview, payload| {
-            if matches!(payload.event(), PageLoadEvent::Finished) {
-                loaded_for_page.store(true, Ordering::Relaxed);
-            }
-        })
         .on_navigation(move |target| {
-            if is_same_origin(&origin, target) {
-                return true;
+            let allowed = is_same_origin(&origin, target);
+
+            if !allowed {
+                let away = target.origin().ascii_serialization();
+
+                eprintln!("[shiver] {origin} tried to leave for {away}; refused");
             }
 
-            if loaded.load(Ordering::Relaxed) {
-                open_for_page(&nav_app, &nav_id, target);
-            } else {
-                eprintln!("[shiver] {origin} redirected to {target} before it finished loading; not opened");
-            }
-
-            false
+            allowed
         })
-        .on_new_window(move |url, _features| {
-            open_for_page(&app, &entry_id, &url);
-
-            tauri::webview::NewWindowResponse::Deny
-        });
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
 
     if let Some(root) = profiles_root(window.app_handle()) {
         builder = builder.data_directory(root.join(profile_name(entry)));
@@ -713,15 +691,6 @@ fn build_page_webview(
     crate::permissions::apply_pending_reset(window.app_handle(), &entry.id);
 
     Ok(())
-}
-
-/// Opens a link from a page in the user's browser, within the entry's allowance.
-pub fn open_for_page(app: &AppHandle, entry_id: &str, url: &Url) {
-    if app.state::<Openings>().take(entry_id, 1) == 1 {
-        open_in_browser(app, url);
-    } else {
-        eprintln!("[shiver] {entry_id} is opening links too quickly; {url} was not opened");
-    }
 }
 
 /// Opens an http(s) link in the user's browser.

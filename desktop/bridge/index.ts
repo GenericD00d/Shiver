@@ -148,6 +148,8 @@ function install(shiver: ShiverConfig) {
   const lastSeen = new Map<number, number>();
   let lastSeenVersion = 0;
 
+  installExternalLinks((href) => openQueue.push(href));
+
   reportOpenDmFailure = (name) => {
     openDmFailure = name;
   };
@@ -221,7 +223,6 @@ function install(shiver: ShiverConfig) {
     installAttachmentFocus();
     installVoiceColors();
     installVoiceLock(shiver.voiceLocked, () => state);
-    installExternalLinks((href) => openQueue.push(href));
 
     let dmInputs: unknown[] = [];
 
@@ -272,6 +273,7 @@ function installConversationView(shiver: ShiverConfig) {
   const openQueue: string[] = [];
   let openDmFailure: string | null = null;
 
+  installExternalLinks((href) => openQueue.push(href));
   installSoundVolume(shiver.soundVolume);
   silenceMessagePing();
   installNotificationWrapper(() => undefined);
@@ -313,7 +315,6 @@ function installConversationView(shiver: ShiverConfig) {
     installAttachmentCards(shiver.minimiseAttachments);
     installAttachmentFocus();
     installVoiceColors();
-    installExternalLinks((href) => openQueue.push(href));
 
     if (shiver.openDm) openDirectMessage(shiver.openDm);
 

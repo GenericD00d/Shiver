@@ -121,29 +121,18 @@ pub fn run() {
                         return true;
                     }
 
+                    let away = target.origin().ascii_serialization();
+
+                    eprintln!("[shiver] the page tried to leave for {away}; refused");
+
                     if handle.state::<Showing>().loading() {
-                        eprintln!(
-                            "[shiver] refused a redirect to {} before the server loaded",
-                            target.origin().ascii_serialization()
-                        );
                         webview::show_failed(&handle);
-                    } else {
-                        open_for_page(&handle, target);
                     }
 
                     false
                 }
             })
-            .on_new_window({
-                let handle = handle.clone();
-
-                // `target="_blank"` links; Android does not ask, so its bridge queues them instead
-                move |url, _features| {
-                    open_for_page(&handle, &url);
-
-                    tauri::webview::NewWindowResponse::Deny
-                }
-            })
+            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
             .on_page_load({
                 let handle = handle.clone();
 
@@ -328,14 +317,6 @@ fn backfill_icons(app: AppHandle) {
             });
         }
     });
-}
-
-fn open_for_page(app: &AppHandle, url: &Url) {
-    let key = app.state::<Showing>().server().unwrap_or_default();
-
-    if app.state::<webview::Openings>().take(&key, 1) == 1 {
-        open_externally(app, url);
-    }
 }
 
 /// Hands an http(s) link to the system browser.

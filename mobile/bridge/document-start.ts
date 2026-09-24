@@ -7,11 +7,14 @@
  *    must be SHA-256 of this script's secret and the page's origin, so a link cannot seed a session
  *    and a server that reads its own key learns nothing usable on another. Sharkord auto-logs in
  *    only after its plugins load, well after the digest.
- * 2. Applies Sharkord's light/dark class before first paint (its own effect runs only after React
+ * 2. On a server's page, queues what the user opens away from it for the core to open in the browser
+ *    (`__SHIVER_OPEN__`), defined before the page can claim the name.
+ * 3. Applies Sharkord's light/dark class before first paint (its own effect runs only after React
  *    mounts, so its light-first stylesheet would flash white on every server switch). Same rule as
  *    Sharkord's `ThemeProvider`: the stored `vite-ui-theme`, default dark, `system` follows the OS.
  */
 
+import { defineHook, installExternalLinks, isTopFrame } from '../../shared/web/bridge/dom';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
 
 declare const SHIVER_SEED_KEY: string;
@@ -30,6 +33,17 @@ try {
       .catch(() => {});
 } catch {
   // never take a page down; without the shim the bridge falls back to seeding storage
+}
+
+try {
+  if (location.protocol === 'https:' && isTopFrame()) {
+    const queue: string[] = [];
+
+    defineHook('__SHIVER_OPEN__', () => queue.splice(0));
+    installExternalLinks((href) => queue.push(href));
+  }
+} catch {
+  // the page then opens nothing outside
 }
 
 const chosenTheme = () => {

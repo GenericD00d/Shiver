@@ -6,7 +6,7 @@
  * The session was served from memory since document start (`document-start.ts`).
  */
 
-import { defineHook, installExternalLinks, isTopFrame, onDomSettled } from '../../shared/web/bridge/dom';
+import { defineHook, isTopFrame, onDomSettled } from '../../shared/web/bridge/dom';
 import { installAttachmentCards, installRoleColors, installSoundVolume, installStatusButton, installVoiceColors } from '../../shared/web/bridge/features';
 import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, waitForPlugin } from '../../shared/web/bridge/plugin';
 import { installMuteStyles, paintMuted } from '../../shared/web/bridge/sharkord';
@@ -43,11 +43,6 @@ function install(shiver: ShiverConfig) {
   installReturnMakesALine();
   installStatusButton(true);
   installAutoReconnect(shiver.session, shiver.serverName, shiver.entryId);
-
-  const openQueue: string[] = [];
-
-  defineHook('__SHIVER_OPEN__', () => openQueue.splice(0));
-  installExternalLinks((href) => openQueue.push(href));
 
   const muted = new Set(shiver.muted);
   const paint = () => paintMuted(muted);
