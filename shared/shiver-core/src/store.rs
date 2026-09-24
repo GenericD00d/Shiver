@@ -2,8 +2,8 @@
 //!
 //! - An edit runs against a copy, which replaces the registry only once it is on disk. A copy that
 //!   serialises to what is already there is not written again (pages report state every second).
-//! - Writes are serialised by the registry lock, and go to a temp file that is synced and renamed
-//!   into place.
+//! - Edits are serialised by their own lock; the registry lock is held only to copy and to swap, so
+//!   readers never wait on the disk. Writes go to a temp file that is synced and renamed into place.
 
 use std::{
     fs,
@@ -126,18 +126,17 @@ where
     where
         E: From<Error>,
     {
-        let mut registry = self.registry.locked();
-        let mut draft = registry.clone();
+        let mut written = self.written.locked();
+        let mut draft = self.registry.locked().clone();
         let value = edit(&mut draft)?;
         let json = to_json(&draft)?;
-        let mut written = self.written.locked();
 
         if *written != json {
             self.persist(&json)?;
             *written = json;
         }
 
-        *registry = draft;
+        *self.registry.locked() = draft;
 
         Ok(value)
     }
