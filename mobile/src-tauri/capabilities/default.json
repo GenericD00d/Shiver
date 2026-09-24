@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "default",
+  "description": "Shiver's own page may listen for the core's events (unread counts, push status), which it needs for live updates. Nothing else: app commands are gated in lib.rs and no remote origin is listed.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}
