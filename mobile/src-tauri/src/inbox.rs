@@ -619,10 +619,7 @@ fn update_read_states(
 /// Replaces an entry's mutes with what its page reports (bounded), and recounts.
 pub fn replace_mutes(app: &AppHandle, entry_id: &str, channels: &[i64]) {
     let store = app.state::<Store>();
-    let mut next = channels.to_vec();
-
-    next.sort_unstable();
-    next.dedup();
+    let next = shiver_core::model::normalized_mutes(channels.iter().copied());
 
     if store.registry().muted_for(entry_id) == next {
         return;

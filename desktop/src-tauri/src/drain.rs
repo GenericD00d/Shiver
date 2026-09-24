@@ -298,7 +298,11 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
     // Mutes: the plugin's reconciled list replaces ours, then toggles from Sharkord's channel menu
     // apply on top. One registry write for the lot.
     if result.synced_mutes.is_some() || !result.mutes.is_empty() {
-        let mut next: BTreeSet<i64> = result.synced_mutes.unwrap_or(muted).into_iter().collect();
+        let mut next: BTreeSet<i64> = result
+            .synced_mutes
+            .unwrap_or_else(|| muted.clone())
+            .into_iter()
+            .collect();
 
         for mute in &result.mutes {
             let _ = if mute.muted {
@@ -308,18 +312,18 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
             };
         }
 
-        let had_toggles = !result.mutes.is_empty();
+        let next = shiver_core::model::normalized_mutes(next);
+        let stored = next == muted
+            || app
+                .state::<Store>()
+                .update(|registry| Ok(registry.set_muted_for(entry_id, next.clone())))
+                .is_ok();
 
-        if let Ok(remaining) = app
-            .state::<Store>()
-            .update(|registry| Ok(registry.set_muted_for(entry_id, next)))
-        {
-            if had_toggles {
-                webviews::push_muted(app, entry_id, &remaining);
-            }
-
-            changed = true;
+        if stored && !result.mutes.is_empty() {
+            webviews::push_muted(app, entry_id, &next);
         }
+
+        changed |= stored && next != muted;
     }
 
     if let Some(name) = result.open_dm_failed {

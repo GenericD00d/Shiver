@@ -94,7 +94,18 @@ pub fn muted_for(muted: &[MutedChannel], entry_id: &str) -> Vec<i64> {
 /// A page can report mutes, so their number is bounded.
 const MAX_MUTED_PER_ENTRY: usize = 500;
 
-/// Replaces one entry's mutes (deduplicated, bounded); returns the new list.
+/// Mutes as stored: sorted, deduplicated, bounded.
+pub fn normalized_mutes(channels: impl IntoIterator<Item = i64>) -> Vec<i64> {
+    let mut kept: Vec<i64> = channels.into_iter().collect();
+
+    kept.sort_unstable();
+    kept.dedup();
+    kept.truncate(MAX_MUTED_PER_ENTRY);
+
+    kept
+}
+
+/// Replaces one entry's mutes (normalised); returns the new list.
 pub fn set_muted_for(
     muted: &mut Vec<MutedChannel>,
     entry_id: &str,
@@ -102,11 +113,7 @@ pub fn set_muted_for(
 ) -> Vec<i64> {
     muted.retain(|muted| muted.entry_id != entry_id);
 
-    let mut kept: Vec<i64> = channels.into_iter().collect();
-
-    kept.sort_unstable();
-    kept.dedup();
-    kept.truncate(MAX_MUTED_PER_ENTRY);
+    let kept = normalized_mutes(channels);
 
     muted.extend(kept.iter().map(|channel_id| MutedChannel {
         entry_id: entry_id.to_string(),

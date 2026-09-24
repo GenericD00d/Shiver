@@ -1,6 +1,7 @@
 //! The registry file (`servers.json`): the rail, folders and settings. Nothing secret lives here.
 //!
-//! - An edit runs against a copy, which replaces the registry only once it is on disk.
+//! - An edit runs against a copy, which replaces the registry only once it is on disk. A copy that
+//!   serialises to what is already there is not written again (pages report state every second).
 //! - Writes are serialised by the registry lock, and go to a temp file that is synced and renamed
 //!   into place.
 
@@ -46,6 +47,7 @@ impl<R> Deref for ReadGuard<'_, R> {
 pub struct Store<R> {
     path: PathBuf,
     registry: Mutex<R>,
+    written: Mutex<String>,
 }
 
 fn remove_legacy_cache(dir: &Path) {
@@ -54,6 +56,10 @@ fn remove_legacy_cache(dir: &Path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => eprintln!("[shiver] could not remove the old message cache: {error}"),
     }
+}
+
+fn to_json(registry: &impl Serialize) -> Result<String> {
+    serde_json::to_string_pretty(registry).map_err(|error| Error::Storage(error.to_string()))
 }
 
 fn unix_seconds() -> u64 {
@@ -101,6 +107,7 @@ where
 
         Ok(Self {
             path,
+            written: Mutex::new(to_json(&registry)?),
             registry: Mutex::new(registry),
         })
     }
@@ -122,17 +129,21 @@ where
         let mut registry = self.registry.locked();
         let mut draft = registry.clone();
         let value = edit(&mut draft)?;
+        let json = to_json(&draft)?;
+        let mut written = self.written.locked();
 
-        self.persist(&draft)?;
+        if *written != json {
+            self.persist(&json)?;
+            *written = json;
+        }
+
         *registry = draft;
 
         Ok(value)
     }
 
-    fn persist(&self, registry: &R) -> Result<()> {
+    fn persist(&self, json: &str) -> Result<()> {
         let path = &self.path;
-        let json = serde_json::to_string_pretty(registry)
-            .map_err(|error| Error::Storage(error.to_string()))?;
         let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
 
         let write = (|| -> std::io::Result<()> {
@@ -216,6 +227,28 @@ mod tests {
             .file_name()
             .to_string_lossy()
             .contains(".tmp")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_edit_that_changes_nothing_is_not_written() {
+        let dir = temp_dir("unchanged");
+        let store: Store<Registry> = Store::load(&dir).unwrap();
+
+        store.edit(|_| Ok::<_, Error>(())).unwrap();
+        assert!(!dir.join(REGISTRY_FILE).exists());
+
+        store
+            .edit(|registry| {
+                registry.servers.push("one".into());
+
+                Ok::<_, Error>(())
+            })
+            .unwrap();
+        fs::remove_file(dir.join(REGISTRY_FILE)).unwrap();
+        store.edit(|_| Ok::<_, Error>(())).unwrap();
+        assert!(!dir.join(REGISTRY_FILE).exists());
 
         let _ = fs::remove_dir_all(&dir);
     }
