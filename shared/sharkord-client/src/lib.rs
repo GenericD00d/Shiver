@@ -20,7 +20,7 @@ use shiver_core::login::presentable;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
-pub use crate::check::{check_server, ServerCheck};
+pub use crate::check::{check_server, CheckedSessions, ServerCheck};
 pub use crate::error::{Error, Result};
 
 mod check;

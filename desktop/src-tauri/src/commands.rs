@@ -23,7 +23,7 @@ use crate::{
     webviews,
 };
 
-use sharkord_client::ServerCheck;
+use sharkord_client::{CheckedSessions, ServerCheck};
 use shiver_core::{login, probe};
 
 /// Tells Shiver's own webviews the settings changed.
@@ -134,6 +134,7 @@ pub fn list_registry(store: State<'_, Store>) -> Registry {
 /// See [`sharkord_client::check_server`].
 #[tauri::command]
 pub async fn check_server(
+    kept: State<'_, CheckedSessions>,
     origin: String,
     identity: Option<String>,
     password: Option<Password>,
@@ -142,6 +143,7 @@ pub async fn check_server(
         &origin,
         identity.as_deref(),
         password.as_deref().map(String::as_str),
+        &kept,
     )
     .await?)
 }
@@ -171,7 +173,13 @@ pub async fn add_server(
         password.as_ref().filter(|password| !password.is_empty()),
     ) {
         (Some(identity), Some(password)) => {
-            let token = Zeroizing::new(login::sign_in(&origin, identity, password).await?);
+            let token = match app
+                .state::<CheckedSessions>()
+                .take(&origin, identity, password)
+            {
+                Some(token) => token,
+                None => Zeroizing::new(login::sign_in(&origin, identity, password).await?),
+            };
 
             store_credentials(&id, &token, password, remember_password != Some(false)).await?;
 

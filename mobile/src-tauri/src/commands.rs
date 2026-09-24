@@ -9,7 +9,7 @@ use tauri_plugin_shiver_secrets::SecretsExt;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use sharkord_client::ServerCheck;
+use sharkord_client::{CheckedSessions, ServerCheck};
 use shiver_core::{login, probe};
 
 use crate::{
@@ -49,6 +49,7 @@ pub async fn probe_server(origin: String) -> Result<ServerInfo> {
 /// See [`sharkord_client::check_server`].
 #[tauri::command]
 pub async fn check_server(
+    kept: State<'_, CheckedSessions>,
     origin: String,
     identity: Option<String>,
     password: Option<Password>,
@@ -57,6 +58,7 @@ pub async fn check_server(
         &origin,
         identity.as_deref(),
         password.as_deref().map(String::as_str),
+        &kept,
     )
     .await?)
 }
@@ -80,9 +82,15 @@ pub async fn add_server(
     let password = password.filter(|password| !password.is_empty());
 
     let session = match (&identity, &password) {
-        (Some(identity), Some(password)) => Some(Zeroizing::new(
-            login::sign_in(&origin, identity, password).await?,
-        )),
+        (Some(identity), Some(password)) => Some(
+            match app
+                .state::<CheckedSessions>()
+                .take(&origin, identity, password)
+            {
+                Some(token) => token,
+                None => Zeroizing::new(login::sign_in(&origin, identity, password).await?),
+            },
+        ),
         _ => None,
     };
 

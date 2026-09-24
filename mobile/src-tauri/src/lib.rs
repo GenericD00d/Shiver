@@ -65,6 +65,7 @@ pub fn run() {
             app.manage(store::load(&handle)?);
             app.manage(webview::Openings::default());
             app.manage(Showing::default());
+            app.manage(sharkord::CheckedSessions::default());
             app.manage(Inbox::default());
             app.manage(push::Push::default());
             app.manage(update::Available::default());

@@ -75,7 +75,8 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 - Watch loop: `watch(key, impl Watcher)`; `Watcher` trait: `target()→Option<Target{origin,token,accept_any_size}>`,
   `joined`, `event`, `refused(n)→retry now?`, `too_large`, `disconnected`. `retry_delay`.
 - Unread math: `set_unread`, `apply_delta`, `unread_total`; `plain_text(html)`.
-- `check_server(origin, identity, password) -> ServerCheck {info, plugin}` (plugin: absent = not asked).
+- `check_server(origin, identity, password, &CheckedSessions) -> ServerCheck {info, plugin}` (plugin: absent =
+  not asked); `CheckedSessions::take` hands `add_server` the check's session for the same credentials.
 
 ## desktop/src-tauri (`shiver`)
 
