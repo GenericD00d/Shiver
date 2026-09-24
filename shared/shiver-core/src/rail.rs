@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::{model::Folder, Error, Result};
 
-pub const MAX_FOLDER_NAME: usize = 100;
+const MAX_FOLDER_NAME: usize = 100;
 
 /// What the rail needs from a client's server entry.
 pub trait RailServer {
@@ -70,7 +70,7 @@ pub struct Rail<'a, S> {
 }
 
 /// A trimmed, non-empty folder name of at most `MAX_FOLDER_NAME` characters.
-pub fn folder_name(name: &str) -> Result<String> {
+fn folder_name(name: &str) -> Result<String> {
     let trimmed = name.trim();
 
     if trimmed.is_empty() {

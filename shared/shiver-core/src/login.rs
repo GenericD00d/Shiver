@@ -16,7 +16,7 @@ const MAX_SERVER_MESSAGE: usize = 200;
 
 /// `origin` plus the innermost cause of a transport failure (a certificate or DNS problem, say),
 /// so "could not reach" says why.
-pub fn unreachable(origin: &str, error: &(dyn std::error::Error + 'static)) -> Error {
+pub(crate) fn unreachable(origin: &str, error: &(dyn std::error::Error + 'static)) -> Error {
     let mut cause = error;
 
     while let Some(inner) = cause.source() {
@@ -76,7 +76,7 @@ fn failure(origin: &str, status: reqwest::StatusCode, body: Option<Value>) -> Er
 }
 
 /// Sharkord's `{ errors: { field: msg } }` or `{ error: msg }`, made presentable.
-pub fn login_error_message(body: &Value) -> String {
+fn login_error_message(body: &Value) -> String {
     body.get("errors")
         .and_then(Value::as_object)
         .and_then(|errors| errors.values().find_map(Value::as_str))

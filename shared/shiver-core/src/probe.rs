@@ -14,7 +14,7 @@ use crate::{
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The largest logo Shiver will inline as a `data:` uri.
-pub const MAX_ICON_BYTES: usize = 256 * 1024;
+const MAX_ICON_BYTES: usize = 256 * 1024;
 
 /// What `GET /info` tells a client that has not signed in.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -60,7 +60,7 @@ pub async fn fetch_info(origin: &str) -> Result<ServerInfo> {
 
 /// The logo's url on the server's own origin. Built with `Url` so a stored name containing `?`,
 /// `#` or `/` stays one path segment.
-pub fn logo_url(origin: &str, body: &Value) -> Option<String> {
+fn logo_url(origin: &str, body: &Value) -> Option<String> {
     let name = body.get("logo")?.get("name")?.as_str()?;
 
     if name.is_empty() || name == "." || name == ".." {
@@ -75,7 +75,7 @@ pub fn logo_url(origin: &str, body: &Value) -> Option<String> {
 }
 
 /// Downloads a logo as a `data:` uri, or `None` on any failure. Only images, at most
-/// [`MAX_ICON_BYTES`], read incrementally so an oversized answer is never buffered.
+/// `MAX_ICON_BYTES`, read incrementally so an oversized answer is never buffered.
 pub async fn fetch_icon(url: &str) -> Option<String> {
     use base64::{engine::general_purpose::STANDARD, Engine};
 

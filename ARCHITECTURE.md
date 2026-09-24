@@ -59,22 +59,21 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `error` | `Error` {InvalidOrigin, Storage, Unreachable, NotSharkord, Refused, InvalidInput, UnknownServer, UnknownFolder}, `Result` |
 | `origin` | `normalize_origin`, `is_same_origin` (the one webview-boundary comparison) |
 | `store` | `Store<R>` (`load`, `registry`→`ReadGuard`, `edit`); `LockExt::locked` (poison-tolerant lock). An edit applies only once written; atomic writes |
-| `model` | `Folder`, `MutedChannel`, `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `MAX_SOUND_VOLUME`, `MAX_MUTED_PER_ENTRY`, `sanitised_color`, `sanitised_optional_color`, `uses_default_colors`, `rgb`, `theme_payload`, `muted_for`, `set_muted_for` |
-| `rail` | `RailServer` trait + `rail_server!(Type)` macro; `RailRef {kind,id}`; `next_position`; `folder_name`; `MAX_FOLDER_NAME`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder`, `reorder_servers`, `prune_folders` |
-| `http` | `client()` (pooled, no redirects), `bytes_within_limit`, `json_within_limit`, `MAX_BODY` |
-| `login` | `sign_in` (`POST /login` → token), `login_error_message`, `presentable`, `unreachable` |
-| `probe` | `ServerInfo`, `fetch_info` (`GET /info`), `logo_url`, `fetch_icon` (data URI), `MAX_ICON_BYTES` |
+| `model` | `Folder`, `MutedChannel`, `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `MAX_SOUND_VOLUME`, `sanitised_color`, `sanitised_optional_color`, `rgb`, `theme_payload`, `muted_for`, `set_muted_for` |
+| `rail` | `RailServer` trait + `rail_server!(Type)` macro; `RailRef {kind,id}`; `next_position`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder`, `reorder_servers`, `prune_folders` |
+| `http` | `client()` (pooled, no redirects), `bytes_within_limit`, `MAX_BODY` |
+| `login` | `sign_in` (`POST /login` → token), `presentable` |
+| `probe` | `ServerInfo`, `fetch_info` (`GET /info`), `fetch_icon` (data URI) |
 | `limit` | `Openings`: `take(key, n)` (5/s, 10/10s per key), `grant`, `forget` |
 | `hash` | `java_string` (Java `String.hashCode`) |
 
 ## shared/sharkord-client (`sharkord_client`)
 
-- `open(origin, token, accept_any_size) -> Session`; `Session::next_event() -> Option<Event>`.
 - Types: `Joined` (join payload: read states, user names, `plugin_version`…), `DirectMessage`,
-  `NewMessage`, `Event`, `Error` (`TooLarge`, `Refused` matter), `SHIVER_PLUGIN_ID`.
+  `NewMessage`, `Event`, `Error` (`TooLarge`, `Refused` matter).
 - Watch loop: `watch(key, impl Watcher)`; `Watcher` trait: `target()→Option<Target{origin,token,accept_any_size}>`,
-  `joined`, `event`, `refused(n)→retry now?`, `too_large`, `disconnected`. `retry_delay`.
-- Unread math: `set_unread`, `apply_delta`, `unread_total`; `plain_text(html)`.
+  `joined`, `event`, `refused(n)→retry now?`, `too_large`, `disconnected`; reconnects with backoff.
+- Unread math: `set_unread`, `apply_delta`, `unread_total`.
 - `check_server(origin, identity, password, &CheckedSessions) -> ServerCheck {info, plugin}` (plugin: absent =
   not asked); `CheckedSessions::take` hands `add_server` the check's session for the same credentials.
 

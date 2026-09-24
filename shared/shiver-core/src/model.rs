@@ -51,7 +51,7 @@ pub fn sanitised_optional_color(value: Option<&str>) -> Option<String> {
 }
 
 /// Whether colours are Sharkord's own, in which case Shiver injects no css into pages.
-pub fn uses_default_colors(theme: &str, accent: &str, text: Option<&str>) -> bool {
+fn uses_default_colors(theme: &str, accent: &str, text: Option<&str>) -> bool {
     theme.eq_ignore_ascii_case(DEFAULT_THEME_COLOR)
         && accent.eq_ignore_ascii_case(DEFAULT_ACCENT_COLOR)
         && text.is_none()
@@ -92,7 +92,7 @@ pub fn muted_for(muted: &[MutedChannel], entry_id: &str) -> Vec<i64> {
 }
 
 /// A page can report mutes, so their number is bounded.
-pub const MAX_MUTED_PER_ENTRY: usize = 500;
+const MAX_MUTED_PER_ENTRY: usize = 500;
 
 /// Replaces one entry's mutes (deduplicated, bounded); returns the new list.
 pub fn set_muted_for(

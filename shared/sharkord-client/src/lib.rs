@@ -56,7 +56,7 @@ const READ_STATE_UPDATE_PATH: &str = "channels.onReadStateUpdate";
 const MESSAGE_PATH: &str = "messages.onNew";
 
 /// The id Shiver's companion plugin installs under.
-pub const SHIVER_PLUGIN_ID: &str = "shiver";
+const SHIVER_PLUGIN_ID: &str = "shiver";
 
 /// One direct-message conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -340,7 +340,7 @@ fn parse_delta(data: &Value) -> Option<Event> {
 /// Sharkord's message html as one line of text for a notification. Tags become word breaks, common
 /// entities are decoded (named and numeric) and whitespace collapses. Not a sanitiser: the result
 /// is never put back into html.
-pub fn plain_text(html: &str) -> String {
+fn plain_text(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
     let mut pending_space = false;
     let mut rest = html;
@@ -468,7 +468,7 @@ pub fn apply_delta(read_states: &mut HashMap<i64, u32>, channel_id: i64, delta: 
 /// How long to wait before reconnecting after `attempt` consecutive failures: 30s doubling to a
 /// 10-minute ceiling, plus a stable per-server offset (from `key`) so a whole rail does not
 /// reconnect in lockstep.
-pub fn retry_delay(attempt: u32, key: &str) -> std::time::Duration {
+fn retry_delay(attempt: u32, key: &str) -> std::time::Duration {
     const FIRST: std::time::Duration = std::time::Duration::from_secs(30);
     const CEILING: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
@@ -503,7 +503,7 @@ pub trait Watcher: Send {
     fn disconnected(&mut self) {}
 }
 
-/// Holds one server's connection open, reconnecting with [`retry_delay`] backoff (keyed by `key`)
+/// Holds one server's connection open, reconnecting with `retry_delay` backoff (keyed by `key`)
 /// until the watcher stops it.
 pub async fn watch(key: &str, mut watcher: impl Watcher) {
     let mut failures: u32 = 0;
@@ -573,13 +573,13 @@ fn frame_cap(accept_any_size: bool) -> usize {
 }
 
 /// A live, joined connection to one server.
-pub struct Session {
+pub(crate) struct Session {
     socket: Socket,
-    pub joined: Joined,
+    pub(crate) joined: Joined,
 }
 
 /// Connects, authenticates, joins and subscribes. Returns once the join has been answered.
-pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Session> {
+pub(crate) async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Session> {
     let url = ws_url(origin)?;
     let cap = frame_cap(accept_any_size);
     let limits = tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
@@ -666,7 +666,7 @@ pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Se
 impl Session {
     /// The next event, or `None` once the connection has ended or gone silent for `IDLE_TIMEOUT`.
     /// Answers tRPC's `PING` (the server drops sockets that do not) and skips unknown frames.
-    pub async fn next_event(&mut self) -> Option<Event> {
+    async fn next_event(&mut self) -> Option<Event> {
         loop {
             let frame = match tokio::time::timeout(IDLE_TIMEOUT, self.socket.next()).await {
                 Ok(Some(Ok(frame))) => frame,
