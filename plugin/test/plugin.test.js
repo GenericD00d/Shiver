@@ -102,6 +102,8 @@ test('endpoints are canonicalised once, so the stored string is the checked one'
   assert.equal(normaliseEndpoint('HTTPS://Ntfy.Example.com/up1#x'), 'https://ntfy.example.com/up1');
   assert.equal(normaliseEndpoint('http://ntfy.example.com/up1'), null);
   assert.equal(normaliseEndpoint('https://user:pw@ntfy.example.com/'), null);
+  assert.equal(normaliseEndpoint('https://ntfy.example.com:8443/up'), null, 'port 443 only');
+  assert.equal(normaliseEndpoint('https://ntfy.example.com:443/up'), 'https://ntfy.example.com/up');
   assert.equal(normaliseEndpoint({ toString: () => 'https://x.example/' }), null);
   assert.equal(normaliseEndpoint(`https://x.example/${'a'.repeat(600)}`), null);
   assert.deepEqual(endpointsFrom(['HTTPS://a.example/1', 'https://a.example/1', 7]), ['https://a.example/1']);
@@ -143,7 +145,7 @@ class FakeSocket extends EventEmitter {
 
 test('delivery connects to the vetted address, names the host for TLS, and reads the status', async () => {
   let socket;
-  const vetted = await vetEndpoint('https://relay.example:8443/up?x=1', publicLookup);
+  const vetted = await vetEndpoint('https://relay.example/up?x=1', publicLookup);
   const status = await deliver(vetted, {
     connect: (options) => (socket = new FakeSocket(options, 'HTTP/1.1 410 Gone\r\n\r\n'))
   });
@@ -151,8 +153,8 @@ test('delivery connects to the vetted address, names the host for TLS, and reads
   assert.equal(status, 410);
   assert.equal(socket.options.host, '93.184.216.34', 'pinned to the checked address');
   assert.equal(socket.options.servername, 'relay.example', 'certificate checked against the name');
-  assert.equal(socket.options.port, 8443);
-  assert.match(socket.written, /^POST \/up\?x=1 HTTP\/1\.1\r\nHost: relay\.example:8443\r\n/);
+  assert.equal(socket.options.port, 443);
+  assert.match(socket.written, /^POST \/up\?x=1 HTTP\/1\.1\r\nHost: relay\.example\r\n/);
   assert.match(socket.written, /Content-Length: 0/);
   assert.equal(socket.destroyed, true);
 });
@@ -265,6 +267,16 @@ test('a dead endpoint is dropped without touching the rest of the row', async ()
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   assert.deepEqual(ctx.data.get(1), { pushEndpoints: [], status: 'hello', mutedChannels: [2] });
+});
+
+test('deliveries in flight are capped server-wide', async () => {
+  let sends = 0;
+  const { push } = await pushFor(subscribed(), { send: () => ((sends += 1), new Promise(() => {})), maxInFlight: 1 });
+
+  await push.onMessage({ userId: 7, channelId: 4 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(sends, 1);
 });
 
 test('a refused registration says only that it was refused, and is rate limited', async () => {

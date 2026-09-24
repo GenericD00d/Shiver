@@ -70,5 +70,5 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   removing, logging out and forgetting a password need confirmation on Shiver's own page, and links
   it opens in the browser are rationed.
 - **The plugin's push delivery is pinned.** The endpoint is resolved once, every address is
-  checked, and the request is sent over TLS to that vetted address with the hostname as SNI, so
-  DNS rebinding cannot redirect it.
+  checked, and the request is sent over TLS on port 443 to that vetted address with the hostname as
+  SNI, so DNS rebinding cannot redirect it. Deliveries in flight are capped server-wide.
