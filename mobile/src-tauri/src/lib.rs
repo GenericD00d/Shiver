@@ -81,7 +81,7 @@ pub fn run() {
             .title("Shiver")
             .inner_size(420.0, 860.0)
             .background_color(webview::background_color(&settings))
-            .initialization_script(webview::DOCUMENT_START)
+            .initialization_script(webview::document_start())
             .on_navigation({
                 let handle = handle.clone();
 

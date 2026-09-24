@@ -141,14 +141,14 @@ export function installSessionShim(token: string | null): Shim {
 export const SEED_PARAM = 'shiver-seed';
 
 /**
- * Takes a `#shiver-seed=<token>` parameter out of the URL (before any page script can see it) and
- * returns the token. Other fragment parameters are left in place.
+ * Takes a `#shiver-seed=<key>.<token>` parameter out of the URL (before any page script can see it)
+ * and returns the token when `key` matches. Other fragment parameters are left in place.
  */
-export function takeSeedFromLocation(): string | null {
+export function takeSeedFromLocation(key?: string): string | null {
   const params = new URLSearchParams(window.location.hash.slice(1));
-  const token = params.get(SEED_PARAM);
+  const value = params.get(SEED_PARAM);
 
-  if (token === null) return null;
+  if (value === null) return null;
 
   params.delete(SEED_PARAM);
 
@@ -156,5 +156,5 @@ export function takeSeedFromLocation(): string | null {
 
   history.replaceState(history.state, '', `${window.location.pathname}${window.location.search}${rest ? `#${rest}` : ''}`);
 
-  return token || null;
+  return key && value.startsWith(`${key}.`) ? value.slice(key.length + 1) || null : null;
 }

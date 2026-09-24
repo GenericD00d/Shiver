@@ -58,7 +58,8 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   patches `Storage.prototype` so Sharkord's auto-login token and live session are served from
   memory (`shared/web/session.ts`). On desktop it is part of the initialization script; on Android
   the token arrives in a `#shiver-seed=` fragment that the document-start script removes before any
-  page script runs. A URL carrying it is never handed to the browser, and an off-origin redirect
+  page script runs, and is only accepted with a per-launch key held in that script, so a link cannot
+  seed a session. A URL carrying it is never handed to the browser, and an off-origin redirect
   before the server's first load is refused. It steps aside if the server refuses the token or the
   user signs in on the page.
 - **What a server's page can learn on Android.** There is one webview, so the rail is drawn inside

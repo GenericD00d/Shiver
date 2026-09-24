@@ -2,12 +2,16 @@
 //!
 //! Android gives a window a single webview, so Shiver is a switcher: the webview shows either
 //! Shiver's own pages or one server's client, and opening a server is a navigation. The server's
-//! session travels in a `#shiver-seed=` fragment that the document-start script takes out of the
-//! URL before the page's scripts run and serves from memory (see `shared/web/session.ts`), so it
-//! is never written to the webview's storage. The bridge runs after load; anything it reads back
+//! session travels in a `#shiver-seed=<key>.<token>` fragment that the document-start script takes
+//! out of the URL before the page's scripts run and serves from memory (see `shared/web/session.ts`),
+//! so it is never written to the webview's storage. The key is per launch and lives only in that
+//! script's closure. The bridge runs after load; anything it reads back
 //! out of a page is a request, never trusted state.
 
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -30,10 +34,23 @@ const BRIDGE_SOURCE: &str = include_str!("../generated/bridge.js");
 
 /// Runs at document start in every page: takes the seeded session out of the URL and applies
 /// Sharkord's light/dark class before first paint. Built from `mobile/bridge/document-start.ts`.
-pub const DOCUMENT_START: &str = include_str!("../generated/document-start.js");
+const DOCUMENT_START: &str = include_str!("../generated/document-start.js");
 
 /// The fragment parameter `DOCUMENT_START` reads the session from (`SEED_PARAM` in shared/web).
 const SEED_PARAM: &str = "shiver-seed";
+
+fn seed_key() -> &'static str {
+    static KEY: OnceLock<String> = OnceLock::new();
+
+    KEY.get_or_init(|| uuid::Uuid::new_v4().simple().to_string())
+}
+
+pub fn document_start() -> String {
+    format!(
+        "(function(SHIVER_SEED_KEY){{{DOCUMENT_START}\n}})(\"{}\");",
+        seed_key()
+    )
+}
 
 pub fn without_seed(url: &Url) -> Url {
     let mut url = url.clone();
@@ -203,7 +220,7 @@ pub fn show_server(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) ->
     if let Some(token) = token.filter(|token| !token.is_empty()) {
         let encoded: String = url::form_urlencoded::byte_serialize(token.as_bytes()).collect();
 
-        url.set_fragment(Some(&format!("{SEED_PARAM}={encoded}")));
+        url.set_fragment(Some(&format!("{SEED_PARAM}={}.{encoded}", seed_key())));
     }
 
     forget_page_session(&window);
@@ -639,8 +656,13 @@ mod tests {
             return;
         }
 
+        let script = document_start();
+
+        assert!(script.contains(seed_key()) && !DOCUMENT_START.contains(seed_key()));
+
         for needed in [
             SEED_PARAM,
+            "SHIVER_SEED_KEY",
             "vite-ui-theme",
             "prefers-color-scheme",
             "MutationObserver",

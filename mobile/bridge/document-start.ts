@@ -2,8 +2,9 @@
  * Runs at document start in every page of the webview (Shiver's own and each server's), before
  * the page's own scripts. Keep it small: it runs on every navigation.
  *
- * 1. Takes a `#shiver-seed=<token>` Shiver navigated with out of the URL and installs the session
- *    shim, so the server's client signs in without the token ever being written to storage.
+ * 1. Takes a `#shiver-seed=<key>.<token>` Shiver navigated with out of the URL and installs the session
+ *    shim, so the server's client signs in without the token ever being written to storage. The key
+ *    exists only in this script's closure, so a link cannot seed a session.
  * 2. Applies Sharkord's light/dark class before first paint (its own effect runs only after React
  *    mounts, so its light-first stylesheet would flash white on every server switch). Same rule as
  *    Sharkord's `ThemeProvider`: the stored `vite-ui-theme`, default dark, `system` follows the OS.
@@ -11,8 +12,10 @@
 
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
 
+declare const SHIVER_SEED_KEY: string;
+
 try {
-  const token = takeSeedFromLocation();
+  const token = takeSeedFromLocation(SHIVER_SEED_KEY);
 
   if (token) installSessionShim(token);
 } catch {
