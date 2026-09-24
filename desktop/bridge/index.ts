@@ -103,7 +103,6 @@ declare global {
     __SHIVER_OPEN_DM__?: (name: string) => void;
     __SHIVER_SELECT_CHANNEL__?: (channelId: number) => void;
     __SHIVER_SET_READ_FLOOR__?: (floor: Record<string, number>) => void;
-    __SHIVER_SET_DM_MODE__?: (enabled: boolean) => void;
     __SHIVER_SET_THEME__?: (theme: ShiverTheme | null) => void;
     /** the window is minimised, which the page cannot otherwise tell */
     __SHIVER_SET_HIDDEN__?: (hidden: boolean) => void;
@@ -191,7 +190,6 @@ function install(shiver: ShiverConfig) {
   defineHook('__SHIVER_OPEN_DM__', openDirectMessage);
   defineHook('__SHIVER_SELECT_CHANNEL__', selectChannelWhenReady);
   defineHook('__SHIVER_SET_READ_FLOOR__', (floor) => void storeReadFloor(floor));
-  defineHook('__SHIVER_SET_DM_MODE__', setDmMode);
   defineHook('__SHIVER_SET_THEME__', applyPageTheme);
   defineHook('__SHIVER_SET_HIDDEN__', setWindowHidden);
 
@@ -310,7 +308,7 @@ function installConversationView(shiver: ShiverConfig) {
     if (shiver.theme) applyPageTheme(shiver.theme);
 
     reserveTopBarSpace();
-    setDmMode(true);
+    hideSidebar();
     installRoleColors();
     installAttachmentCards(shiver.minimiseAttachments);
     installAttachmentFocus();
@@ -320,7 +318,7 @@ function installConversationView(shiver: ShiverConfig) {
     if (shiver.openDm) openDirectMessage(shiver.openDm);
 
     // DM mode has to survive the sidebar being re-rendered as the client connects
-    onDomSettled(() => setDmMode(true));
+    onDomSettled(hideSidebar);
   });
 }
 
@@ -543,9 +541,9 @@ function readDms(origin: string, state: SharkordState, lastSeen: Map<number, num
   return list.sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0) || a.name.localeCompare(b.name));
 }
 
-/** Hides Sharkord's sidebar while Shiver's DM list is beside the page. */
-function setDmMode(enabled: boolean) {
-  ensureStyle('shiver-dm-mode').textContent = enabled ? `${SIDEBAR} { display: none !important; }` : '';
+/** Hides Sharkord's sidebar, since Shiver's DM list is beside the page. */
+function hideSidebar() {
+  ensureStyle('shiver-dm-mode').textContent = `${SIDEBAR} { display: none !important; }`;
 }
 
 let openDmTimer: number | null = null;

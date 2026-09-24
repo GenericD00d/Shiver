@@ -100,7 +100,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `update` | signed self-update: `start`, `check_for_update`, `install_update`, `available_update`, `skip_update`, `open_repository`, `Available`, `Announced` |
 
 Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and core→page
-`__SHIVER_SET_THEME__`, `_SET_MUTED__`, `_SET_HIDDEN__`, `_SET_DM_MODE__`, `_OPEN_DM__`,
+`__SHIVER_SET_THEME__`, `_SET_MUTED__`, `_SET_HIDDEN__`, `_OPEN_DM__`,
 `_SELECT_CHANNEL__`, `_MARK_ALL_READ__`, `_VOICE__`, `_SET_VOICE_LOCK__`, `_SET_SOUND_VOLUME__`,
 `_SET_ATTACHMENT_CARDS__`, `_SET_READ_FLOOR__`.
 
