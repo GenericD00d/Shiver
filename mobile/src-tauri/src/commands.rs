@@ -5,6 +5,7 @@
 
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shiver_push::PushExt;
+use tauri_plugin_shiver_secrets::SecretsExt;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -27,6 +28,12 @@ fn entry_of(store: &Store, id: &str) -> Result<ServerEntry> {
         .server(id)
         .cloned()
         .ok_or(Error::UnknownServer)
+}
+
+fn wipe_page(app: &AppHandle, origin: &str) {
+    if let Err(error) = app.shiver_secrets().wipe_origin(origin) {
+        eprintln!("[shiver] could not clear {origin} from the webview: {error}");
+    }
 }
 
 #[tauri::command]
@@ -124,11 +131,12 @@ pub fn forget_password(app: AppHandle, id: String) {
 /// Removes a server and everything Shiver keeps for it.
 #[tauri::command]
 pub async fn remove_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
-    entry_of(&store, &id)?;
+    let origin = entry_of(&store, &id)?.origin;
 
     // before the entry goes: unregistering needs its push token
     crate::push::unregister(&app, &id);
     inbox::forget_everywhere(&app, &id);
+    wipe_page(&app, &origin);
 
     store.update(|registry| {
         registry.servers.retain(|server| server.id != id);
@@ -265,20 +273,20 @@ pub fn forget_sessions(app: AppHandle, store: State<'_, Store>) {
     }
 }
 
-/// Logs out of a server: forgets Shiver's session, password and carried state for it and its
-/// identity. The page's own storage was already wiped when it was left.
+/// Logs out of a server: forgets Shiver's session, password and identity for it, and wipes what
+/// its page stored in the webview.
 #[tauri::command]
 pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
-    store.update(|registry| {
-        registry
-            .server_mut(&id)
-            .ok_or(Error::UnknownServer)?
-            .identity = None;
+    let origin = store.update(|registry| {
+        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
 
-        Ok(())
+        server.identity = None;
+
+        Ok(server.origin.clone())
     })?;
 
     inbox::forget_everywhere(&app, &id);
+    wipe_page(&app, &origin);
 
     Ok(())
 }
