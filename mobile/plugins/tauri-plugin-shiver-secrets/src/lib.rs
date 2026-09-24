@@ -1,5 +1,5 @@
 //! Encrypted at-rest storage on Android (`EncryptedSharedPreferences` under a Keystore master key)
-//! for sessions, remembered passwords and carried page state, plus wiping an origin's web storage.
+//! for sessions, remembered passwords and unread floors, plus wiping an origin's web storage.
 //! `keyring` has no Android backend, hence this plugin.
 //!
 //! No commands are exposed to any webview; the core is the only caller. On other targets (where

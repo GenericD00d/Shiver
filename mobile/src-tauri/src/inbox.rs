@@ -267,7 +267,7 @@ fn store_off_thread(app: &AppHandle, key: String, value: Option<String>) {
     let _ = sender.send((key, value));
 }
 
-/// Loads sessions, passwords, floors and carried settings at startup (off the main thread), drops
+/// Loads sessions, passwords and floors at startup (off the main thread), drops
 /// anything for entries no longer in the rail, then connects.
 pub fn restore(app: &AppHandle) {
     let app = app.clone();

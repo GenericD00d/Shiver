@@ -33,7 +33,7 @@ class OriginArgs {
 }
 
 /**
- * Encrypted storage for Shiver's sessions, passwords and carried page state:
+ * Encrypted storage for Shiver's sessions, passwords and unread floors:
  * `EncryptedSharedPreferences` (AES-256-SIV keys, AES-256-GCM values) under an Android Keystore
  * master key. (`security-crypto` is deprecated without a successor; replacing it only touches this
  * file.)
