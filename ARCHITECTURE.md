@@ -1,7 +1,6 @@
 # Shiver — codebase map (for agents)
 
-> **Memory rule:** commit this file to memory as the first reference for where things live in Shiver.
-> Read it before searching the tree, and update it in the same commit whenever you add, remove,
+> Read this before searching the tree, and update it in the same commit whenever you add, remove,
 > rename or move a module, command, hook or exported item.
 
 Multi-server client for Sharkord. Two apps (Tauri 2 desktop, Tauri 2 Android), shared Rust crates,
