@@ -81,13 +81,13 @@ pub fn login_error_message(body: &Value) -> String {
         .and_then(Value::as_object)
         .and_then(|errors| errors.values().find_map(Value::as_str))
         .or_else(|| body.get("error").and_then(Value::as_str))
-        .map(presentable)
+        .and_then(presentable)
         .unwrap_or_else(|| "Could not sign in".to_string())
 }
 
-/// A server's words made safe for Shiver's own panel: one line, no control characters, no links,
-/// no bidi tricks, bounded. It is shown while the user is being asked for credentials.
-pub fn presentable(message: &str) -> String {
+/// A server's words made safe for Shiver's own panels: one line, no control characters, no links,
+/// no bidi tricks, bounded; `None` when nothing is left.
+pub fn presentable(message: &str) -> Option<String> {
     let cleaned = message
         .chars()
         .filter(|character| !is_invisible(*character))
@@ -104,11 +104,7 @@ pub fn presentable(message: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ");
 
-    if cleaned.is_empty() {
-        return "Could not sign in".to_string();
-    }
-
-    cleaned.chars().take(MAX_SERVER_MESSAGE).collect()
+    (!cleaned.is_empty()).then(|| cleaned.chars().take(MAX_SERVER_MESSAGE).collect())
 }
 
 fn looks_like_link(word: &str) -> bool {
@@ -173,11 +169,15 @@ mod tests {
         assert_eq!(
             presentable(
                 "Session expired,\nreset it at https://evil.example/x or evil.example/reset now"
-            ),
-            "Session expired, reset it at or now"
+            )
+            .as_deref(),
+            Some("Session expired, reset it at or now")
         );
-        assert_eq!(presentable("ad\u{202e}min"), "admin");
-        assert_eq!(presentable(&"x".repeat(500)).len(), MAX_SERVER_MESSAGE);
-        assert_eq!(presentable("https://only.a.link"), "Could not sign in");
+        assert_eq!(presentable("ad\u{202e}min").as_deref(), Some("admin"));
+        assert_eq!(
+            presentable(&"x".repeat(500)).map(|text| text.len()),
+            Some(MAX_SERVER_MESSAGE)
+        );
+        assert_eq!(presentable("https://only.a.link"), None);
     }
 }

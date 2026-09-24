@@ -16,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
+use shiver_core::login::presentable;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
@@ -163,12 +164,10 @@ fn parse_reply(text: &str) -> Reply {
         let message = error
             .get("message")
             .and_then(Value::as_str)
-            .unwrap_or("The server refused the request");
+            .and_then(presentable)
+            .unwrap_or_else(|| "The server refused the request".into());
 
-        return Reply::Failed {
-            id,
-            message: message.to_string(),
-        };
+        return Reply::Failed { id, message };
     }
 
     let Some(result) = value.get_mut("result") else {
@@ -913,6 +912,16 @@ mod tests {
             Reply::Failed {
                 id: Some(10),
                 message: "You must be authenticated.".into()
+            }
+        );
+        assert_eq!(
+            parse_reply(&format!(
+                r#"{{"id":2,"error":{{"message":"see https://evil.example {}"}}}}"#,
+                "x".repeat(300)
+            )),
+            Reply::Failed {
+                id: Some(2),
+                message: format!("see {}", "x".repeat(196))
             }
         );
         assert_eq!(parse_reply("not json"), Reply::Other);
