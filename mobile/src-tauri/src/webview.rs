@@ -68,6 +68,7 @@ pub fn without_seed(url: &Url) -> Url {
 /// Bounds on what one page's rail may ask of the registry per poll.
 const MAX_CREATES_PER_POLL: usize = 5;
 const MAX_FOLDER_ID: usize = 64;
+const MAX_PAGE_STATE_BYTES: usize = 1024 * 1024;
 const DEFAULT_FOLDER_NAME: &str = "Folder";
 
 #[derive(Default)]
@@ -368,6 +369,10 @@ pub fn read_mutes(app: &AppHandle, entry_id: &str) {
 
     let _ = window.eval_with_callback(READ_SCRIPT, move |raw| {
         // JSON-encoded twice: the result is a string holding the object
+        if raw.len() > MAX_PAGE_STATE_BYTES {
+            return;
+        }
+
         let Ok(Value::String(body)) = serde_json::from_str::<Value>(&raw) else {
             return;
         };

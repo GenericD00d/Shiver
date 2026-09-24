@@ -5,7 +5,7 @@
 //! and everything it says is treated as a claim: bounded, and never trusted beyond its own entry.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -29,6 +29,8 @@ const CONNECT_GRACE: Duration = Duration::from_secs(20);
 
 /// Most notifications taken from one drain; the rest are dropped.
 const MAX_NOTIFICATIONS_PER_DRAIN: usize = 50;
+
+const MAX_DRAIN_BYTES: usize = 4 * 1024 * 1024;
 
 pub const FEED_EVENT: &str = "shiver://feed";
 pub const DM_FAILED_EVENT: &str = "shiver://dm-failed";
@@ -202,6 +204,13 @@ fn drain_webview(
     let script = "(window.__SHIVER_DRAIN__ && window.__SHIVER_DRAIN__()) || null";
 
     let _ = webview.eval_with_callback(script, move |raw| {
+        if raw.len() > MAX_DRAIN_BYTES {
+            return eprintln!(
+                "[shiver] {entry_id} answered a drain with {} bytes",
+                raw.len()
+            );
+        }
+
         let result = match serde_json::from_str::<Option<DrainResult>>(&raw) {
             Ok(Some(result)) => result,
             Ok(None) => return,
@@ -289,14 +298,14 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
     // Mutes: the plugin's reconciled list replaces ours, then toggles from Sharkord's channel menu
     // apply on top. One registry write for the lot.
     if result.synced_mutes.is_some() || !result.mutes.is_empty() {
-        let mut next: Vec<i64> = result.synced_mutes.unwrap_or(muted);
+        let mut next: BTreeSet<i64> = result.synced_mutes.unwrap_or(muted).into_iter().collect();
 
         for mute in &result.mutes {
-            next.retain(|channel_id| *channel_id != mute.channel_id);
-
-            if mute.muted {
-                next.push(mute.channel_id);
-            }
+            let _ = if mute.muted {
+                next.insert(mute.channel_id)
+            } else {
+                next.remove(&mute.channel_id)
+            };
         }
 
         let had_toggles = !result.mutes.is_empty();

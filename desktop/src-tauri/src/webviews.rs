@@ -60,7 +60,7 @@ pub fn dm_webview_label(entry_id: &str) -> String {
     format!("dm::{entry_id}")
 }
 
-fn is_shiver_chrome(label: &str) -> bool {
+pub fn is_shiver_chrome(label: &str) -> bool {
     matches!(label, SHELL_WEBVIEW | OVERLAY_WEBVIEW | POPUP_WEBVIEW)
 }
 
@@ -995,5 +995,7 @@ mod tests {
         assert_eq!(entry_of(&webview_label("x")), Some("x"));
         assert_eq!(entry_of(&dm_webview_label("x")), Some("x"));
         assert_eq!(entry_of(SHELL_WEBVIEW), None);
+        assert!(is_shiver_chrome(POPUP_WEBVIEW) && !is_shiver_chrome(&webview_label("shell")));
+        assert!(!is_shiver_chrome(&dm_webview_label("x")));
     }
 }

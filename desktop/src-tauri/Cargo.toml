@@ -32,7 +32,7 @@ thiserror.workspace = true
 
 # the os credential store; there is no android/ios backend
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 # WebView2 profile access, only for resetting camera/microphone permissions
 [target.'cfg(windows)'.dependencies]

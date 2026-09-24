@@ -61,13 +61,29 @@ fn report_failed_start(error: tauri::Error) -> ! {
     std::process::exit(1);
 }
 
+fn only_shiver_chrome(
+    handler: impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        if webviews::is_shiver_chrome(invoke.message.webview_ref().label()) {
+            return handler(invoke);
+        }
+
+        invoke
+            .resolver
+            .reject("Only Shiver's own pages can call Shiver");
+
+        true
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(only_shiver_chrome(tauri::generate_handler![
             commands::list_registry,
             commands::reset_media_permissions,
             commands::forget_password,
@@ -115,7 +131,7 @@ pub fn run() {
             commands::reorder_rail,
             commands::create_folder_with,
             commands::show_folder_menu,
-        ])
+        ]))
         .setup(|app| {
             let handle = app.handle();
 
