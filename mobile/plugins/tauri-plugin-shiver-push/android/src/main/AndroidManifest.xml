@@ -10,7 +10,7 @@
 
     <application>
         <!-- The cold-start receiver. Exported because the distributor is another app; it acts only on
-             tokens Shiver issued and, from API 34, only on broadcasts from the chosen distributor. -->
+             tokens Shiver issued, and refuses a sender it can identify as another app (API 34+). -->
         <receiver
             android:name="com.shiver.push.PushReceiver"
             android:exported="true">
