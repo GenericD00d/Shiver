@@ -115,6 +115,11 @@ declare global {
 
 const OPEN_DM_TIMEOUT_MS = 25_000;
 
+// taken before the page's scripts run, so a page cannot fake fullscreen to hide Shiver's chrome
+const nativeFullscreenElement = Object.getOwnPropertyDescriptor(Document.prototype, 'fullscreenElement')?.get;
+const nativeApply = Reflect.apply;
+const isFullscreen = () => !!nativeFullscreenElement && nativeApply(nativeFullscreenElement, document, []) !== null;
+
 function install(shiver: ShiverConfig) {
   seedSession(shiver.token);
 
@@ -170,7 +175,7 @@ function install(shiver: ShiverConfig) {
       openDmFailed: openDmFailure,
       ready: isClientReady(state),
       signedOut: isSignedOut(),
-      fullscreen: document.fullscreenElement !== null,
+      fullscreen: isFullscreen(),
       voice: readVoice(state),
       // an open DM first: `selectedChannelId` keeps naming the last ordinary channel
       viewingChannelId: openDmChannelId(state) ?? (typeof state.selectedChannelId === 'number' ? state.selectedChannelId : null)

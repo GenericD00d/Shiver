@@ -266,8 +266,8 @@ pub fn relayout(app: &AppHandle) -> Result<()> {
 /// Takes Shiver's chrome away while the page on screen is fullscreen: the page is widened over the
 /// rail and the bell (and popup) are hidden. Lags by up to one drain, since pages cannot call in.
 ///
-/// The page decides this, so a page can hide Shiver's chrome at will; Escape or switching away
-/// always restores it (`show_server` resets it).
+/// Only real fullscreen counts (the bridge reads the browser's own getter), and switching away
+/// restores the chrome (`show_server` resets it).
 pub fn set_page_fullscreen(app: &AppHandle, entry_id: &str, on: bool) -> Result<()> {
     if app
         .state::<ActiveServer>()
