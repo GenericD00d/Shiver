@@ -25,6 +25,7 @@ mobile/bridge/             mobile bridge + rail drawn inside server pages; docum
 mobile/plugins/            tauri-plugin-shiver-push (UnifiedPush), tauri-plugin-shiver-secrets (Keystore)
 plugin/                    Sharkord companion plugin (server/ + client/, plain JS, node tests)
 scripts/check-rails.py     checks mobile's two rails draw badges identically
+scripts/check-version.py   checks the workspace and tauri.conf.json versions agree
 .github/workflows/checks.yml  CI
 ```
 
@@ -33,6 +34,7 @@ scripts/check-rails.py     checks mobile's two rails draw badges identically
 `cargo fmt --all --check` · `cargo clippy --workspace --all-targets -- -D warnings` ·
 `cargo test --workspace` · `bunx tsc --noEmit` in `desktop` and `mobile` · `bun test shared/web` ·
 `node --test test/*.test.js` in `plugin` · `python3 scripts/check-rails.py` ·
+`python3 scripts/check-version.py` ·
 `bun run build:bridge` in each app (bridges must build before the Rust crates compile).
 
 ## Conventions

@@ -61,6 +61,8 @@ Bump the version in **two** places:
 - `version` in `mobile/src-tauri/tauri.conf.json`, which Android needs and cannot get from the
   crate.
 
+`python3 scripts/check-version.py` (run in CI) fails when they disagree.
+
 **Android is the exception and it fails quietly.** Gradle reads the version from
 `gen/android/app/tauri.properties`, which the CLI writes from `tauri.conf.json` — not from the
 crate, and not from the workspace. With no `version` there, nothing writes that file, and

@@ -162,3 +162,6 @@ jobs:
       # mobile draws its rail badge twice (React and the bridge's shadow root)
       - name: Mobile's two rails agree
         run: python3 scripts/check-rails.py
+
+      - name: Versions agree
+        run: python3 scripts/check-version.py
