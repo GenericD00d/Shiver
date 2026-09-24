@@ -715,15 +715,18 @@ fn build_page_webview(
     Ok(())
 }
 
-/// Opens a link from a page in the user's browser (http/https only), within the entry's allowance.
+/// Opens a link from a page in the user's browser, within the entry's allowance.
 pub fn open_for_page(app: &AppHandle, entry_id: &str, url: &Url) {
-    if !matches!(url.scheme(), "http" | "https") {
-        return;
-    }
-
-    if app.state::<Openings>().take(entry_id, 1) == 0 {
+    if app.state::<Openings>().take(entry_id, 1) == 1 {
+        open_in_browser(app, url);
+    } else {
         eprintln!("[shiver] {entry_id} is opening links too quickly; {url} was not opened");
+    }
+}
 
+/// Opens an http(s) link in the user's browser.
+pub fn open_in_browser(app: &AppHandle, url: &Url) {
+    if !matches!(url.scheme(), "http" | "https") {
         return;
     }
 

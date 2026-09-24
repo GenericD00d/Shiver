@@ -257,11 +257,13 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
         }
     }
 
-    for address in std::mem::take(&mut result.open) {
-        match url::Url::parse(&address) {
-            Ok(url) => webviews::open_for_page(app, entry_id, &url),
-            Err(error) => eprintln!("[shiver] {entry_id} asked to open {address}: {error}"),
-        }
+    for url in app
+        .state::<webviews::Openings>()
+        .grant(entry_id, &result.open)
+        .iter()
+        .filter_map(|address| url::Url::parse(address).ok())
+    {
+        webviews::open_in_browser(app, &url);
     }
 
     let feed = app.state::<Feed>();

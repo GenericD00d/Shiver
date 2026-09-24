@@ -385,20 +385,13 @@ pub fn read_mutes(app: &AppHandle, entry_id: &str) {
 
 fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
     // links Sharkord opens in a new window, which Android's webview refuses to make
-    let granted = app.state::<Openings>().take(entry_id, state.open.len());
-
-    if granted < state.open.len() {
-        eprintln!(
-            "[shiver] {entry_id} asked to open {} addresses, opening {granted}",
-            state.open.len()
-        );
-    }
-
-    for address in state.open.iter().take(granted) {
-        match Url::parse(address) {
-            Ok(url) => crate::open_externally(app, &url),
-            Err(error) => eprintln!("[shiver] the page asked to open {address}: {error}"),
-        }
+    for url in app
+        .state::<Openings>()
+        .grant(entry_id, &state.open)
+        .iter()
+        .filter_map(|address| Url::parse(address).ok())
+    {
+        crate::open_externally(app, &url);
     }
 
     if let Some(channels) = state.muted {
