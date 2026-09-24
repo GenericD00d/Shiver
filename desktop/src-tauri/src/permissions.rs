@@ -12,9 +12,13 @@ use crate::{
     webviews,
 };
 
-/// Resets every entry's answers: open pages now, the rest when next opened. Returns how many
-/// answers were forgotten now.
+/// Resets every entry's answers: open pages now, the rest (and any page that failed) when next
+/// opened. Returns how many answers were forgotten now.
 pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
+    if !cfg!(windows) {
+        return Err(unsupported());
+    }
+
     let entries: Vec<String> = app
         .state::<Store>()
         .registry()
@@ -22,12 +26,15 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
         .iter()
         .map(|entry| entry.id.clone())
         .collect();
-    let mut forgotten = 0;
-    let mut later = Vec::new();
+    let (mut forgotten, mut later, mut failure) = (0, Vec::new(), None);
 
     for entry_id in entries {
-        match page_of(app, &entry_id) {
-            Some(webview) => forgotten += reset_webview(&webview)?,
+        match page_of(app, &entry_id).map(|webview| reset_webview(&webview)) {
+            Some(Ok(count)) => forgotten += count,
+            Some(Err(error)) => {
+                failure.get_or_insert(error);
+                later.push(entry_id);
+            }
             None => later.push(entry_id),
         }
     }
@@ -38,19 +45,21 @@ pub fn clear_media_permissions(app: &AppHandle) -> Result<usize> {
         Ok(())
     })?;
 
-    Ok(forgotten)
+    match failure {
+        Some(error) if forgotten == 0 => Err(error),
+        _ => Ok(forgotten),
+    }
 }
 
-/// If this entry is waiting for a reset, performs it (off this thread) now that it has a page.
+/// If this entry is waiting for a reset, attempts it once (off this thread) now that it has a page.
 pub fn apply_pending_reset(app: &AppHandle, entry_id: &str) {
-    let pending = app
+    if !app
         .state::<Store>()
         .registry()
         .pending_permission_resets
         .iter()
-        .any(|id| id == entry_id);
-
-    if !pending {
+        .any(|id| id == entry_id)
+    {
         return;
     }
 
@@ -58,23 +67,22 @@ pub fn apply_pending_reset(app: &AppHandle, entry_id: &str) {
     let entry_id = entry_id.to_string();
 
     std::thread::spawn(move || {
-        let Some(webview) = page_of(&app, &entry_id) else {
-            return;
-        };
-
-        match reset_webview(&webview) {
-            Ok(_) => {
-                let _ = app.state::<Store>().update(|registry| {
-                    registry
-                        .pending_permission_resets
-                        .retain(|id| id != &entry_id);
-
-                    Ok(())
-                });
-            }
-            Err(error) => eprintln!("[shiver] could not reset permissions for {entry_id}: {error}"),
+        if let Some(Err(error)) = page_of(&app, &entry_id).map(|webview| reset_webview(&webview)) {
+            eprintln!("[shiver] could not reset permissions for {entry_id}: {error}");
         }
+
+        let _ = app.state::<Store>().update(|registry| {
+            registry
+                .pending_permission_resets
+                .retain(|id| id != &entry_id);
+
+            Ok(())
+        });
     });
+}
+
+fn unsupported() -> Error {
+    Error::Webview("Resetting site permissions is only supported with WebView2, on Windows".into())
 }
 
 fn page_of(app: &AppHandle, entry_id: &str) -> Option<tauri::Webview> {
@@ -291,7 +299,5 @@ fn reset_webview(webview: &tauri::Webview) -> Result<usize> {
 /// WebView2 only.
 #[cfg(not(windows))]
 fn reset_webview(_webview: &tauri::Webview) -> Result<usize> {
-    Err(Error::Webview(
-        "Resetting site permissions is only supported with WebView2, on Windows".to_string(),
-    ))
+    Err(unsupported())
 }
