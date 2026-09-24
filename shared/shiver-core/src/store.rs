@@ -44,8 +44,7 @@ impl<R> Deref for ReadGuard<'_, R> {
 }
 
 pub struct Store<R> {
-    /// `None` for an in-memory store (tests).
-    path: Option<PathBuf>,
+    path: PathBuf,
     registry: Mutex<R>,
 }
 
@@ -68,14 +67,6 @@ impl<R> Store<R>
 where
     R: Default + Clone + Serialize + DeserializeOwned,
 {
-    /// An in-memory store that is never written.
-    pub fn for_tests(registry: R) -> Self {
-        Self {
-            path: None,
-            registry: Mutex::new(registry),
-        }
-    }
-
     /// Loads `servers.json` from `dir`. A missing file is a first launch; a corrupt one is moved
     /// aside (never overwritten) and the store starts empty; an unreadable one is an error rather
     /// than something to replace with an empty registry.
@@ -109,7 +100,7 @@ where
         };
 
         Ok(Self {
-            path: Some(path),
+            path,
             registry: Mutex::new(registry),
         })
     }
@@ -139,10 +130,7 @@ where
     }
 
     fn persist(&self, registry: &R) -> Result<()> {
-        let Some(path) = self.path.as_ref() else {
-            return Ok(());
-        };
-
+        let path = &self.path;
         let json = serde_json::to_string_pretty(registry)
             .map_err(|error| Error::Storage(error.to_string()))?;
         let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
@@ -191,7 +179,8 @@ mod tests {
 
     #[test]
     fn a_failed_edit_leaves_the_registry_untouched() {
-        let store = Store::for_tests(Registry::default());
+        let dir = temp_dir("failed-edit");
+        let store: Store<Registry> = Store::load(&dir).unwrap();
 
         let failed = store.edit(|registry| {
             registry.servers.push("first".into());
@@ -201,6 +190,9 @@ mod tests {
 
         assert!(failed.is_err());
         assert!(store.registry().servers.is_empty());
+        assert!(!dir.join(REGISTRY_FILE).exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

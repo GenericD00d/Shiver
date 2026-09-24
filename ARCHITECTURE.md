@@ -58,7 +58,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 |---|---|
 | `error` | `Error` {InvalidOrigin, Storage, Unreachable, NotSharkord, Refused, InvalidInput, UnknownServer, UnknownFolder}, `Result` |
 | `origin` | `normalize_origin`, `is_same_origin` (the one webview-boundary comparison) |
-| `store` | `Store<R>` (`load`, `for_tests`, `registry`→`ReadGuard`, `edit`); `LockExt::locked` (poison-tolerant lock). An edit applies only once written; atomic writes |
+| `store` | `Store<R>` (`load`, `registry`→`ReadGuard`, `edit`); `LockExt::locked` (poison-tolerant lock). An edit applies only once written; atomic writes |
 | `model` | `Folder`, `MutedChannel`, `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `MAX_SOUND_VOLUME`, `MAX_MUTED_PER_ENTRY`, `sanitised_color`, `sanitised_optional_color`, `uses_default_colors`, `rgb`, `theme_payload`, `muted_for`, `set_muted_for` |
 | `rail` | `RailServer` trait + `rail_server!(Type)` macro; `RailRef {kind,id}`; `next_position`; `folder_name`; `MAX_FOLDER_NAME`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder`, `reorder_servers`, `prune_folders` |
 | `http` | `client()` (pooled, no redirects), `bytes_within_limit`, `json_within_limit`, `MAX_BODY` |
