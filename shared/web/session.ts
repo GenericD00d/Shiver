@@ -138,7 +138,7 @@ export function installSessionShim(token: string | null): Shim {
 }
 
 /** Name of the URL fragment parameter that carries a session into a freshly loaded page (mobile). */
-export const SEED_PARAM = 'shiver-seed';
+const SEED_PARAM = 'shiver-seed';
 
 /**
  * Takes a `#shiver-seed=<key>.<token>` parameter out of the URL (before any page script can see it)

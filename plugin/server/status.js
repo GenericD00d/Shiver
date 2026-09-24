@@ -5,7 +5,7 @@
 
 import { createLimiter } from './rows.js';
 
-export const MAX_STATUS = 100;
+const MAX_STATUS = 100;
 const STATUS_LIMIT = 10;
 
 /** Bidi overrides, zero-width and other invisible format characters: only useful for spoofing. */

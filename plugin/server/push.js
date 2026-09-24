@@ -16,8 +16,8 @@ import { connect as tlsConnect } from 'node:tls';
 
 import { createLimiter } from './rows.js';
 
-export const MAX_ENDPOINTS = 5;
-export const MAX_ENDPOINT_LENGTH = 512;
+const MAX_ENDPOINTS = 5;
+const MAX_ENDPOINT_LENGTH = 512;
 const DEBOUNCE_MS = 10_000;
 const PUSH_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 16 * 1024;
@@ -31,7 +31,7 @@ export const REFUSED = 'That push endpoint was refused';
 /* ── addresses ── */
 
 /** The eight 16-bit groups of an IPv6 address, or null. */
-export const ipv6Groups = (address) => {
+const ipv6Groups = (address) => {
   if ((address.match(/::/g) ?? []).length > 1) return null;
 
   let text = address;

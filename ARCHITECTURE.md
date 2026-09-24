@@ -133,7 +133,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 | `rail.ts` | `initials`, `byPosition`, `membersOf` |
 | `colors.ts` | `automaticTextColor`, `lift` |
 | `theme.ts` | `applyTheme` (`--shiver-*` vars on Shiver's own pages) |
-| `session.ts` | `installSessionShim`, `takeSeedFromLocation`, `SEED_PARAM`, `AUTO_LOGIN*` (session kept off disk) |
+| `session.ts` | `installSessionShim`, `takeSeedFromLocation`, `AUTO_LOGIN*` (session kept off disk) |
 | `bridge/dom.ts` | `ensureStyle`, `defineHook`, `onDomSettled`, `isTopFrame`, `whenDocumentReady`, `openMenuOnScreen`, `addedMenu`, `installExternalLinks` |
 | `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `addMuteItem` |
 | `bridge/plugin.ts` | `callPlugin`, `waitForPlugin`, `syncMutesWithPlugin`, `pushMutesToPlugin`, `storeReadFloor` |

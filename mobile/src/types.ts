@@ -45,7 +45,7 @@ export type PushStatus = {
   servers: PushServer[];
 };
 
-export type PushServer = {
+type PushServer = {
   id: string;
   name: string;
   wanted: boolean;
