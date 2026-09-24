@@ -45,6 +45,9 @@ pub struct ServerEntry {
     /// carry a known token are trusted; the entry id cannot serve, because every page sees those.
     #[serde(default)]
     pub push_token: Option<String>,
+    /// endpoints this server should forget, handed to its page on the next load
+    #[serde(default)]
+    pub retired_push_endpoints: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

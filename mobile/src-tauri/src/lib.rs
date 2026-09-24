@@ -231,6 +231,26 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
     let read_floor = inbox.baseline(&entry_id);
     let carried = inbox.carried(&entry_id);
     let push_endpoint = app.state::<push::Push>().endpoint(&entry_id);
+    let retired: Vec<String> = entry
+        .retired_push_endpoints
+        .iter()
+        .filter(|endpoint| push_endpoint.as_ref() != Some(*endpoint))
+        .cloned()
+        .collect();
+
+    if !entry.retired_push_endpoints.is_empty() {
+        let (handle, id) = (app.clone(), entry_id.clone());
+
+        tauri::async_runtime::spawn_blocking(move || {
+            handle.state::<Store>().update(|registry| {
+                if let Some(server) = registry.server_mut(&id) {
+                    server.retired_push_endpoints.clear();
+                }
+
+                Ok(())
+            })
+        });
+    }
 
     webview::install_bridge(
         app,
@@ -246,6 +266,7 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
             read_floor: read_floor.as_ref(),
             folders: &folders,
             push_endpoint: push_endpoint.as_deref(),
+            retired_push_endpoints: &retired,
         },
     );
 

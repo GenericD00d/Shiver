@@ -36,6 +36,8 @@ export type ShiverConfig = {
   openDms: boolean;
   /** open the DM with this person on arrival */
   openDmUser: string | null;
+  /** endpoints this server's plugin should forget (push was turned off for it) */
+  retiredPushEndpoints: string[];
   /** this server's own session, used to reconnect; never another server's */
   session: string | null;
   /** this server's per-channel unread floor to store in the companion plugin */

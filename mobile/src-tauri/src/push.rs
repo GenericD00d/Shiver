@@ -145,6 +145,7 @@ pub fn register_wanted(app: &AppHandle) {
 
 /// Turns one server's waking on or off.
 pub fn set_wanted(app: &AppHandle, entry_id: &str, wanted: bool) -> Result<()> {
+    let retired = app.state::<Push>().endpoint(entry_id).filter(|_| !wanted);
     let target = app.state::<Store>().update(|registry| {
         registry.settings.push_servers.retain(|id| id != entry_id);
 
@@ -152,9 +153,20 @@ pub fn set_wanted(app: &AppHandle, entry_id: &str, wanted: bool) -> Result<()> {
             registry.settings.push_servers.push(entry_id.to_string());
         }
 
-        Ok(registry
-            .server(entry_id)
-            .and_then(|server| Some((server.push_token.clone()?, server.name.clone()))))
+        let Some(server) = registry.server_mut(entry_id) else {
+            return Ok(None);
+        };
+
+        if let Some(endpoint) =
+            retired.filter(|endpoint| !server.retired_push_endpoints.contains(endpoint))
+        {
+            server.retired_push_endpoints.push(endpoint);
+        }
+
+        Ok(server
+            .push_token
+            .clone()
+            .map(|token| (token, server.name.clone())))
     })?;
 
     let Some((token, name)) = target else {

@@ -78,12 +78,15 @@ function install(shiver: ShiverConfig) {
     paint();
   });
 
-  if (shiver.pushEndpoint) {
-    const endpoint = shiver.pushEndpoint;
+  const { pushEndpoint, retiredPushEndpoints } = shiver;
 
-    // the plugin checks the endpoint before storing it against this user
+  if (pushEndpoint || retiredPushEndpoints.length) {
     void waitForPlugin().then((present) => {
-      if (present) void callPlugin('setPushEndpoint', { endpoint });
+      if (!present) return;
+
+      // the plugin checks the endpoint before storing it against this user
+      if (pushEndpoint) void callPlugin('setPushEndpoint', { endpoint: pushEndpoint });
+      for (const endpoint of retiredPushEndpoints) void callPlugin('clearPushEndpoint', { endpoint });
     });
   }
 

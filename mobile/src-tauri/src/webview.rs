@@ -251,6 +251,8 @@ pub struct PageContext<'a> {
     pub folders: &'a [Folder],
     /// this entry's own push endpoint, for the plugin's relay
     pub push_endpoint: Option<&'a str>,
+    /// endpoints the plugin should forget
+    pub retired_push_endpoints: &'a [String],
 }
 
 /// Evaluates the bridge in a server page that has just finished loading.
@@ -282,6 +284,7 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
         "rail": rail_payload(page.servers, page.unread, page.signed_out),
         "folders": folder_payload(page.folders),
         "pushEndpoint": page.push_endpoint,
+        "retiredPushEndpoints": page.retired_push_endpoints,
         "openDms": showing.take_pending_dms(),
         "openDmUser": showing.take_pending_dm_user(),
         "session": page.session,

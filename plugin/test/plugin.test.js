@@ -279,6 +279,14 @@ test('deliveries in flight are capped server-wide', async () => {
   assert.equal(sends, 1);
 });
 
+test('clearing an endpoint forgets only that one, however it is written', async () => {
+  const ctx = fakeCtx({ 1: { pushEndpoints: ['https://relay.example/one', 'https://relay.example/two'], status: 'hi' } });
+  const { push } = await pushFor(ctx);
+
+  assert.deepEqual(await push.unregister(1, 'HTTPS://Relay.Example/one#x'), ['https://relay.example/two']);
+  assert.equal(ctx.data.get(1).status, 'hi');
+});
+
 test('a refused registration says only that it was refused, and is rate limited', async () => {
   const ctx = fakeCtx({});
   const rows = createRows(ctx);
