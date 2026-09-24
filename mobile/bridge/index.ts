@@ -45,7 +45,7 @@ function install(shiver: ShiverConfig) {
   installReactionNames();
   installReturnMakesALine();
   installStatusButton(true);
-  installAutoReconnect(shiver.session, shiver.serverName);
+  installAutoReconnect(shiver.session, shiver.serverName, shiver.entryId);
 
   const openQueue: string[] = [];
 

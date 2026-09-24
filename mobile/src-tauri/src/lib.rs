@@ -92,7 +92,14 @@ pub fn run() {
                         return true;
                     }
 
-                    open_externally(&handle, target);
+                    if handle.state::<Showing>().loading() {
+                        eprintln!(
+                            "[shiver] refused a redirect to {} before the server loaded",
+                            target.origin().ascii_serialization()
+                        );
+                    } else {
+                        open_externally(&handle, target);
+                    }
 
                     false
                 }
@@ -215,6 +222,8 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
         return;
     }
 
+    app.state::<Showing>().set_loaded();
+
     let inbox = app.state::<Inbox>();
     let unread = inbox.unread();
     let signed_out = inbox.signed_out();
@@ -277,6 +286,8 @@ pub fn open_externally(app: &AppHandle, url: &Url) {
     if !matches!(url.scheme(), "http" | "https") {
         return;
     }
+
+    let url = webview::without_seed(url);
 
     use tauri_plugin_opener::OpenerExt;
 

@@ -111,7 +111,7 @@ Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and
 | `model` | `ServerEntry` (+`icon_data`, `push_token`), `Settings`, `Registry` (+`entry_for_push_token`, `ensure_push_tokens`) |
 | `store` | as desktop |
 | `inbox` | core sockets for servers not on screen + secret storage: `Inbox` (tokens, problems, plugins, dms, unread, signed_out, baselines), `sync`, `restore`, `remember_session`, `remember_password`, `forget_password`, `forget_everywhere`, `harvest_token`, `replace_mutes`, `watch_mutes`, `collect_dms`, `DmEntry`, `INBOX_EVENT` |
-| `webview` | the single webview: `Showing` (home, current server, pending DMs), `show_server`, `install_bridge`/`PageContext`, `read_mutes`, rail polling (`__SHIVER_RAIL_STATE__` → `apply_creates/moves/order`), navigation guard (`is_allowed`, `navigation_allowed`, `is_home`, `landed_home`), `background_color`, `DOCUMENT_START`, `Openings` |
+| `webview` | the single webview: `Showing` (home, current server and whether it loaded, pending DMs), `show_server`, `without_seed`, `install_bridge`/`PageContext`, `read_mutes`, rail polling (`__SHIVER_RAIL_STATE__` → `apply_creates/moves/order`), navigation guard (`is_allowed`, `navigation_allowed`, `is_home`, `landed_home`), `background_color`, `DOCUMENT_START`, `Openings` |
 | `push` | UnifiedPush per chosen server: `Push`, `start`, `register_wanted`, `set_wanted`, `unregister`, `migrate_tokens`, `PUSH_EVENT` |
 | `update` | notify-only: `start`, `check_for_update`, `update_available`, `skip_update`, `open_releases`, `open_repository` |
 
@@ -151,7 +151,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
   `Boot` (confirms rail actions), `Rail` (`RailRef`), `ServerList`, `AddServer`, `SignInServer`,
   `SettingsScreen`, `BackgroundNotifications`, `Sessions`, `DirectMessages`, `UpdateNotice`, `icons`.
 - **mobile/bridge**: `index.ts` (install, `seedSession`, `restoreCarried`), `rail.ts` (`mountRail`,
-  `openDrawer`, `installGestures`), `touch.ts` (touch adaptations, channel menu, DM opening),
+  `openDrawer`, `installGestures`, `goHome`), `touch.ts` (touch adaptations, channel menu, DM opening),
   `reconnect.ts` (`installAutoReconnect`), `document-start.ts`, `types.ts` (`ShiverConfig`, `RailEntry`,
   `RailFolder`, `RailMove`, `RailCreate`).
 

@@ -37,7 +37,7 @@ const pendingCreates: RailCreate[] = [];
 let home = '';
 
 /** Leaves for Shiver's own page, carrying at most an entry id in `hash`. */
-function goHome(hash: string) {
+export function goHome(hash: string) {
   if (home) window.location.assign(home.replace(/#.*$/, '') + hash);
 }
 
@@ -674,7 +674,7 @@ function openServerMenu(
             closeRail();
           }
         ] as const)
-      : (['Open', () => goHome(`#open=${id}`)] as const),
+      : (['Open', () => goHome(`#open=${encodeURIComponent(id)}`)] as const),
     ['Refresh name and icon', () => goHome(`#do=refresh:${id}`)],
     'divider',
     ...moves,

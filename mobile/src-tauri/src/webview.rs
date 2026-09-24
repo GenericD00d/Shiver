@@ -35,6 +35,19 @@ pub const DOCUMENT_START: &str = include_str!("../generated/document-start.js");
 /// The fragment parameter `DOCUMENT_START` reads the session from (`SEED_PARAM` in shared/web).
 const SEED_PARAM: &str = "shiver-seed";
 
+pub fn without_seed(url: &Url) -> Url {
+    let mut url = url.clone();
+
+    if url
+        .fragment()
+        .is_some_and(|fragment| fragment.contains(SEED_PARAM))
+    {
+        url.set_fragment(None);
+    }
+
+    url
+}
+
 /// Bounds on what one page's rail may ask of the registry per poll.
 const MAX_CREATES_PER_POLL: usize = 5;
 const MAX_FOLDER_ID: usize = 64;
@@ -46,6 +59,7 @@ struct ShowingState {
     home: Option<String>,
     /// the entry on screen, if any
     server: Option<String>,
+    loaded: bool,
     /// open Sharkord's DM list on arrival (consumed once)
     pending_dms: bool,
     /// open the conversation with this user on arrival (consumed once)
@@ -66,7 +80,20 @@ impl Showing {
     }
 
     pub fn set_server(&self, entry_id: Option<String>) {
-        self.0.locked().server = entry_id;
+        let mut state = self.0.locked();
+
+        state.server = entry_id;
+        state.loaded = false;
+    }
+
+    pub fn set_loaded(&self) {
+        self.0.locked().loaded = true;
+    }
+
+    pub fn loading(&self) -> bool {
+        let state = self.0.locked();
+
+        state.server.is_some() && !state.loaded
     }
 
     pub fn server(&self) -> Option<String> {
@@ -631,6 +658,33 @@ mod tests {
                 "the script must not contain {forbidden}"
             );
         }
+    }
+
+    #[test]
+    fn a_seed_never_leaves_in_a_url() {
+        let seeded = url("https://sso.example.com/login#shiver-seed=secret");
+
+        assert_eq!(
+            without_seed(&seeded).as_str(),
+            "https://sso.example.com/login"
+        );
+        assert_eq!(
+            without_seed(&url("https://example.com/a#part")).as_str(),
+            "https://example.com/a#part"
+        );
+    }
+
+    #[test]
+    fn only_a_server_still_loading_is_loading() {
+        let showing = Showing::default();
+
+        assert!(!showing.loading());
+        showing.set_server(Some("a".into()));
+        assert!(showing.loading());
+        showing.set_loaded();
+        assert!(!showing.loading());
+        showing.set_server(Some("b".into()));
+        assert!(showing.loading());
     }
 
     #[test]
