@@ -113,7 +113,7 @@ Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and
 | `model` | `ServerEntry` (+`icon_data`, `push_token`, `retired_push_endpoints`), `Settings`, `Registry` (+`entry_for_push_token`, `ensure_push_tokens`) |
 | `store` | as desktop |
 | `inbox` | core sockets for servers not on screen + secret storage: `Inbox` (tokens, problems, plugins, dms, unread, signed_out, baselines), `sync`, `restore`, `remember_session`, `remember_password`, `forget_password`, `forget_everywhere`, `harvest_token`, `replace_mutes`, `watch_mutes`, `collect_dms`, `DmEntry`, `INBOX_EVENT` |
-| `webview` | the single webview: `Showing` (home, current server and whether it loaded, pending DM user), `show_server`, `show_failed` (back to Shiver's page with `#failed=<id>`), `without_seed`, `install_bridge`/`PageContext`, `read_mutes`, rail polling (`__SHIVER_RAIL_STATE__` → `apply_creates/moves/order`), navigation guard (`is_allowed`, `navigation_allowed`, `is_home`, `landed_home`), `background_color`, `document_start` (bundle wrapped with the per-launch seed key), `Openings` |
+| `webview` | the single webview: `Showing` (home, current server and whether it loaded, pending DM user), `show_server`, `show_failed` (back to Shiver's page with `#failed=<id>`), `without_seed`, `install_bridge`/`PageContext`, `read_mutes`, rail polling (`__SHIVER_RAIL_STATE__` → `apply_creates/moves/order`), navigation guard (`is_allowed`, `navigation_allowed`, `is_home`, `landed_home`), `background_color`, `document_start` (bundle wrapped with the per-launch seed secret; `seed_key_for` derives each origin's key), `Openings` |
 | `push` | UnifiedPush per chosen server: `Push`, `start`, `register_wanted`, `set_wanted` (turning off retires the endpoint; the page clears it with the plugin), `unregister`, `migrate_tokens`, `PUSH_EVENT` |
 | `update` | notify-only: `start`, `check_for_update`, `update_available`, `skip_update`, `open_releases`, `open_repository` |
 
@@ -152,7 +152,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 - **mobile/src**: `App.tsx` (screens; `boot` opens last server), `api.ts`, `types.ts`, `components/`:
   `Boot` (confirms rail actions), `Rail` (`RailRef`), `ServerList`, `AddServer`, `SignInServer`,
   `SettingsScreen`, `BackgroundNotifications`, `Sessions`, `DirectMessages`, `UpdateNotice`, `icons`.
-- **mobile/bridge**: `index.ts` (install, `seedSession`, `restoreCarried`), `rail.ts` (`mountRail`,
+- **mobile/bridge**: `index.ts` (install, `seedSession`), `rail.ts` (`mountRail`,
   `openDrawer`, `installGestures`, `goHome`), `touch.ts` (touch adaptations, channel menu, `openConversation`),
   `reconnect.ts` (`installAutoReconnect`), `document-start.ts`, `types.ts` (`ShiverConfig`, `RailEntry`,
   `RailFolder`, `RailMove`, `RailCreate`).

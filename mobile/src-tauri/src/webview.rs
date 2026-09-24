@@ -4,9 +4,10 @@
 //! Shiver's own pages or one server's client, and opening a server is a navigation. The server's
 //! session travels in a `#shiver-seed=<key>.<token>` fragment that the document-start script takes
 //! out of the URL before the page's scripts run and serves from memory (see `shared/web/session.ts`),
-//! so it is never written to the webview's storage. The key is per launch and lives only in that
-//! script's closure. The bridge runs after load; anything it reads back
-//! out of a page is a request, never trusted state.
+//! so it is never written to the webview's storage. The key is SHA-256 of a per-launch secret, which
+//! lives only in that script's closure, and the page's origin, so one server's key is no use on
+//! another. The bridge runs after load; anything it reads back out of a page is a request, never
+//! trusted state.
 
 use std::{
     collections::HashMap,
@@ -15,6 +16,7 @@ use std::{
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use shiver_core::{rail::RailRef, LockExt};
 use tauri::{window::Color, AppHandle, Manager, Url, WebviewWindow};
 
@@ -42,6 +44,13 @@ fn seed_key() -> &'static str {
     static KEY: OnceLock<String> = OnceLock::new();
 
     KEY.get_or_init(|| uuid::Uuid::new_v4().simple().to_string())
+}
+
+fn seed_key_for(secret: &str, url: &Url) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(format!("{secret}{}", url.origin().ascii_serialization()))
+    )
 }
 
 pub fn document_start() -> String {
@@ -139,7 +148,9 @@ pub fn show_server(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) ->
     if let Some(token) = token.filter(|token| !token.is_empty()) {
         let encoded: String = url::form_urlencoded::byte_serialize(token.as_bytes()).collect();
 
-        url.set_fragment(Some(&format!("{SEED_PARAM}={}.{encoded}", seed_key())));
+        let key = seed_key_for(seed_key(), &url);
+
+        url.set_fragment(Some(&format!("{SEED_PARAM}={key}.{encoded}")));
     }
 
     app.state::<Showing>().set_server(Some(entry.id.clone()));
@@ -614,6 +625,24 @@ mod tests {
                 "the script must not contain {forbidden}"
             );
         }
+    }
+
+    #[test]
+    fn seed_keys_are_per_origin() {
+        let key = |value| seed_key_for("secret", &url(value));
+
+        assert_eq!(
+            key("https://chat.example.com/a"),
+            "98aee65411ec7dc40877b6a4f3f4215e6b200ca75c91c8f218a22d4c7f8a43ff"
+        );
+        assert_eq!(
+            key("https://chat.example.com:443"),
+            key("https://chat.example.com")
+        );
+        assert_ne!(
+            key("https://chat.example.com"),
+            key("https://other.example.com")
+        );
     }
 
     #[test]

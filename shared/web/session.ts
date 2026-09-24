@@ -142,9 +142,9 @@ const SEED_PARAM = 'shiver-seed';
 
 /**
  * Takes a `#shiver-seed=<key>.<token>` parameter out of the URL (before any page script can see it)
- * and returns the token when `key` matches. Other fragment parameters are left in place.
+ * and returns its key and token. Other fragment parameters are left in place.
  */
-export function takeSeedFromLocation(key?: string): string | null {
+export function takeSeedFromLocation(): [key: string, token: string] | null {
   const params = new URLSearchParams(window.location.hash.slice(1));
   const value = params.get(SEED_PARAM);
 
@@ -156,5 +156,7 @@ export function takeSeedFromLocation(key?: string): string | null {
 
   history.replaceState(history.state, '', `${window.location.pathname}${window.location.search}${rest ? `#${rest}` : ''}`);
 
-  return key && value.startsWith(`${key}.`) ? value.slice(key.length + 1) || null : null;
+  const dot = value.indexOf('.');
+
+  return dot > 0 && dot < value.length - 1 ? [value.slice(0, dot), value.slice(dot + 1)] : null;
 }

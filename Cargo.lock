@@ -3953,6 +3953,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "sha2",
  "sharkord-client",
  "shiver-core",
  "tauri",

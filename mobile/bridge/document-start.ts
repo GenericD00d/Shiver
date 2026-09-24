@@ -4,7 +4,9 @@
  *
  * 1. Takes a `#shiver-seed=<key>.<token>` Shiver navigated with out of the URL and installs the session
  *    shim, so the server's client signs in without the token ever being written to storage. The key
- *    exists only in this script's closure, so a link cannot seed a session.
+ *    must be SHA-256 of this script's secret and the page's origin, so a link cannot seed a session
+ *    and a server that reads its own key learns nothing usable on another. Sharkord auto-logs in
+ *    only after its plugins load, well after the digest.
  * 2. Applies Sharkord's light/dark class before first paint (its own effect runs only after React
  *    mounts, so its light-first stylesheet would flash white on every server switch). Same rule as
  *    Sharkord's `ThemeProvider`: the stored `vite-ui-theme`, default dark, `system` follows the OS.
@@ -14,10 +16,18 @@ import { installSessionShim, takeSeedFromLocation } from '../../shared/web/sessi
 
 declare const SHIVER_SEED_KEY: string;
 
-try {
-  const token = takeSeedFromLocation(SHIVER_SEED_KEY);
+const hex = (digest: ArrayBuffer) => Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 
-  if (token) installSessionShim(token);
+try {
+  const seed = takeSeedFromLocation();
+
+  if (seed)
+    crypto.subtle
+      .digest('SHA-256', new TextEncoder().encode(SHIVER_SEED_KEY + location.origin))
+      .then((digest) => {
+        if (hex(digest) === seed[0] && !window.__SHIVER_SESSION_SHIM__) installSessionShim(seed[1]);
+      })
+      .catch(() => {});
 } catch {
   // never take a page down; without the shim the bridge falls back to seeding storage
 }
