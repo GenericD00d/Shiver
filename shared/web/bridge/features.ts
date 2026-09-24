@@ -1,5 +1,6 @@
 /** Page features both bridges install in a Sharkord client. */
 
+import { MAX_SOUND_VOLUME } from '../settings';
 import { defineHook, ensureStyle, onDomSettled } from './dom';
 import { callPlugin, waitForPlugin } from './plugin';
 import {
@@ -23,7 +24,7 @@ declare global {
   }
 }
 
-const toLevel = (percent: number) => (Number.isFinite(percent) ? Math.max(0, percent) / 100 : 1);
+const toLevel = (percent: number) => (Number.isFinite(percent) ? Math.min(Math.max(0, percent), MAX_SOUND_VOLUME) / 100 : 1);
 
 /** `AudioNode.prototype.connect`, narrowed to the node-to-node overload. */
 type Connect = (this: AudioNode, destination: AudioNode, output?: number, input?: number) => AudioNode;
