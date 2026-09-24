@@ -10,6 +10,7 @@ the core through `window.__SHIVER_*__` hooks that the core polls or calls.
 ## Layout
 
 ```
+icon.png                   1024px master icon, the input to `tauri icon` for both apps
 Cargo.toml                 workspace (rust 1.77.2): shared/*, desktop/src-tauri, mobile/src-tauri, mobile/plugins/*
 shared/shiver-core/        Rust: origin rules, registry store, rail, http, login, probe, rate limit
 shared/sharkord-client/    Rust: read-only Sharkord tRPC-over-WebSocket client, watch loop, add-server check
