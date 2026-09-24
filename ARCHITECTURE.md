@@ -160,8 +160,8 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 ## plugin (Sharkord companion)
 
 - `server/index.js`: registers actions `setStatus`, `getStatuses`, `getOwnStatus`, `getMutedChannels`,
-  `setMutedChannels`, `setReadFloor`, `setPushEndpoint`, `clearPushEndpoint`; `adoptOldStore`,
-  `primeFromUserRows`.
+  `setMutedChannels`, `setReadFloor`, `setPushEndpoint`, `clearPushEndpoint` (writes rate limited per
+  user); `adoptOldStore`, `primeFromUserRows`.
 - `server/rows.js` (`createRows`, `createLimiter`: serialised per-user rows), `settings.js` (mutes,
   unread floor), `status.js` (custom statuses), `push.js` (UnifiedPush delivery, SSRF vetting:
   `isPrivateAddress`, `vetEndpoint`, `deliver`), `files.js` (`installFileNaming`).

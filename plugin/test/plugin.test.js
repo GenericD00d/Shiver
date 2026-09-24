@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { splitName, uniqueName } from '../server/files.js';
-import { adoptOldStore, primeFromUserRows } from '../server/index.js';
+import { adoptOldStore, onLoad, onUnload, primeFromUserRows } from '../server/index.js';
 import {
   createPush,
   deliver,
@@ -327,6 +327,30 @@ test('mute lists and floors are validated on the way in', () => {
   assert.deepEqual(mutedFrom([3, 3, -1, 1.5, '4', 7]), [3, 7]);
   assert.deepEqual(floorFrom({ 12: 3, 40: 2.6, x: 1, 5: -1, '07': 1 }), { 12: 3, 40: 3 });
   assert.equal(floorFrom([1, 2]), null);
+});
+
+test('writes through the actions are rate limited per user', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'shiver-plugin-'));
+  const actions = new Map();
+  const ctx = {
+    ...fakeCtx({}),
+    dataPath: dir,
+    path: dir,
+    ui: { enable: () => {} },
+    actions: { register: ({ name, executes }) => actions.set(name, executes) },
+    hooks: { onBeforeFileSave: () => () => {} },
+    events: { on: () => () => {} }
+  };
+
+  await onLoad(ctx);
+
+  const floor = (userId) => actions.get('setReadFloor')({ userId }, { floor: { 1: 0 } });
+
+  for (let index = 0; index < 29; index += 1) await floor(1);
+  await actions.get('setMutedChannels')({ userId: 1 }, { mutedChannels: [4] });
+  await assert.rejects(actions.get('clearPushEndpoint')({ userId: 1 }, {}), /Too many/);
+  assert.deepEqual(await floor(2), { ok: true });
+  await onUnload(ctx, { quiet: true });
 });
 
 /* ── migration ── */

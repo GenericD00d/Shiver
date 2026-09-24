@@ -88,7 +88,7 @@ overwritten.
 | `clearPushEndpoint` | Drops one endpoint, or all of the caller's when none is named |
 
 Each acts on `invoker.userId`, which Sharkord authenticates, so none of them can be aimed at
-another account.
+another account. The other writes share a limit of 30 a minute per user.
 
 ## Merge behaviour
 
