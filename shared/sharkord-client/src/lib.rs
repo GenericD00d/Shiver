@@ -278,6 +278,12 @@ fn plugin_version(data: &Value, plugin_id: &str) -> Option<String> {
         .find(|plugin| plugin.get("pluginId").and_then(Value::as_str) == Some(plugin_id))?
         .get("version")?
         .as_str()
+        .filter(|version| {
+            version.len() <= 32
+                && version
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || ".+-".contains(character))
+        })
         .map(str::to_string)
 }
 
@@ -945,6 +951,13 @@ mod tests {
             Some("Smiddy")
         );
         assert_eq!(joined.plugin_version.as_deref(), Some("0.1.0"));
+        assert_eq!(
+            plugin_version(
+                &serde_json::json!({ "pluginsMetadata": [{ "pluginId": "shiver", "version": "1.0\u{202e}" }] }),
+                SHIVER_PLUGIN_ID
+            ),
+            None
+        );
         assert_eq!(parse_join(&serde_json::json!({})), Joined::default());
     }
 

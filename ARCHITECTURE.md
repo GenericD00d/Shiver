@@ -64,7 +64,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `rail` | `RailServer` trait + `rail_server!(Type)` macro; `RailRef {kind,id}`; `next_position`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder`, `reorder_servers`, `prune_folders` |
 | `http` | `client()` (pooled, no redirects), `bytes_within_limit`, `MAX_BODY` |
 | `login` | `sign_in` (`POST /login` → token), `presentable` |
-| `probe` | `ServerInfo`, `fetch_info` (`GET /info`), `fetch_icon` (data URI) |
+| `probe` | `ServerInfo`, `fetch_info` (`GET /info`, name and description cleaned and bounded), `fetch_icon` (data URI) |
 | `limit` | `Openings`: `take(key, n)` (5/s, 10/10s per key), `grant`, `forget` |
 | `hash` | `java_string` (Java `String.hashCode`) |
 

@@ -8,10 +8,12 @@ use serde_json::Value;
 use crate::{
     error::{Error, Result},
     http,
-    login::unreachable,
+    login::{presentable, unreachable},
 };
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+const MAX_NAME: usize = 64;
 
 /// The largest logo Shiver will inline as a `data:` uri.
 const MAX_ICON_BYTES: usize = 256 * 1024;
@@ -38,23 +40,29 @@ pub async fn fetch_info(origin: &str) -> Result<ServerInfo> {
         .await
         .map_err(|error| unreachable(origin, &error))?;
 
-    let not_sharkord = || Error::NotSharkord(origin.to_string());
+    let body = match response.status().is_success() {
+        true => http::json_within_limit(response).await,
+        false => None,
+    };
 
-    if !response.status().is_success() {
-        return Err(not_sharkord());
-    }
+    body.and_then(|body| parse_info(origin, &body))
+        .ok_or_else(|| Error::NotSharkord(origin.to_string()))
+}
 
-    let body = http::json_within_limit(response)
-        .await
-        .ok_or_else(not_sharkord)?;
-    let text = |key: &str| body.get(key).and_then(Value::as_str).map(str::to_string);
+/// `serverId` and `name` are required. The words are cleaned and bounded: they are shown in the
+/// rail (other servers' pages included), notifications and menus.
+fn parse_info(origin: &str, body: &Value) -> Option<ServerInfo> {
+    let text = |key: &str| body.get(key).and_then(Value::as_str);
 
-    Ok(ServerInfo {
+    Some(ServerInfo {
         origin: origin.to_string(),
-        server_id: text("serverId").ok_or_else(not_sharkord)?,
-        name: text("name").ok_or_else(not_sharkord)?,
-        description: text("description"),
-        icon_url: logo_url(origin, &body),
+        server_id: text("serverId")?.to_string(),
+        name: presentable(text("name")?).map_or_else(
+            || origin.trim_start_matches("https://").to_string(),
+            |name| name.chars().take(MAX_NAME).collect(),
+        ),
+        description: text("description").and_then(presentable),
+        icon_url: logo_url(origin, body),
     })
 }
 
@@ -145,6 +153,28 @@ mod tests {
                 "{url}"
             );
         }
+    }
+
+    #[test]
+    fn info_words_are_cleaned_and_bounded() {
+        let info = |body| parse_info("https://chat.example.com", &body);
+        let long = "x".repeat(500);
+        let parsed = info(serde_json::json!({
+            "serverId": "a", "name": "Chat\u{202e}\n room", "description": "see https://evil.example"
+        }))
+        .unwrap();
+
+        assert_eq!(parsed.name, "Chat room");
+        assert_eq!(parsed.description.as_deref(), Some("see"));
+        assert_eq!(
+            info(serde_json::json!({ "serverId": "a", "name": long })).map(|info| info.name.len()),
+            Some(MAX_NAME)
+        );
+        assert_eq!(
+            info(serde_json::json!({ "serverId": "a", "name": "\u{200b}" })).map(|info| info.name),
+            Some("chat.example.com".into())
+        );
+        assert_eq!(info(serde_json::json!({ "name": "Chat" })), None);
     }
 
     #[test]
