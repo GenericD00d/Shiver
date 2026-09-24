@@ -285,8 +285,8 @@ test('a refused registration says only that it was refused, and is rate limited'
 
 test('a status loses invisible and control characters and is capped', () => {
   assert.equal(statusFrom('  hello\n\tthere  '), 'hello there');
-  assert.equal(statusFrom('ad‮min'), 'admin');
-  assert.equal(statusFrom('a​b﻿c'), 'abc');
+  assert.equal(statusFrom('ad\u202emin'), 'admin');
+  assert.equal(statusFrom('a\u200bb\ufeffc'), 'abc');
   assert.equal([...statusFrom('😀'.repeat(200))].length, 100);
   assert.equal(statusFrom(42), '');
 });
