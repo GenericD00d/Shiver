@@ -49,10 +49,12 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
 
 ## Things worth knowing before you look
 
-- **Only Mozilla's root set is trusted**, not the OS trust store — `rustls-tls-webpki-roots` for the
-  websocket and reqwest's `rustls-tls` for http. A server behind a private CA will not connect even
-  if the machine trusts it. That is a deliberate trade and it is also why "could not reach the
-  server" is sometimes a certificate problem.
+- **Servers are checked against Mozilla's root set only**, not the OS trust store —
+  `rustls-tls-webpki-roots` for the websocket and reqwest's `rustls-tls` for http. A server behind a
+  private CA will not connect even if the machine trusts it. That is a deliberate trade and it is
+  also why "could not reach the server" is sometimes a certificate problem. The desktop updater is
+  the exception: `tauri-plugin-updater` brings its own client, which uses the OS trust store; what it
+  downloads must still carry a valid signature.
 - **https is required everywhere**, with no exemption for localhost or a private address.
 - **Server pages cannot call Shiver.** Tauri refuses commands from remote origins, and desktop also
   refuses any command not sent by Shiver's own webviews. Android reports a new page's origin late,
