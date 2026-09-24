@@ -53,17 +53,26 @@ pub async fn sign_in(origin: &str, identity: &str, password: &str) -> Result<Str
     let body = http::json_within_limit(response).await;
 
     if !status.is_success() {
-        return Err(Error::Refused(match body {
-            Some(body) => login_error_message(&body),
-            None => format!("The server refused the sign-in ({status})"),
-        }));
+        return Err(failure(origin, status, body));
     }
 
-    body.ok_or_else(|| Error::NotSharkord(origin.to_string()))?
-        .get("token")
+    body.as_ref()
+        .and_then(|body| body.get("token"))
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| Error::Refused("The server did not return a session".into()))
+        .ok_or_else(|| Error::NotSharkord(origin.to_string()))
+}
+
+/// Only a 4xx (bar 408 and 429) refuses the credentials; anything else is the server's trouble.
+fn failure(origin: &str, status: reqwest::StatusCode, body: Option<Value>) -> Error {
+    if !status.is_client_error() || matches!(status.as_u16(), 408 | 429) {
+        return Error::Unreachable(format!("{origin} (it answered {status})"));
+    }
+
+    Error::Refused(body.map_or_else(
+        || format!("The server refused the sign-in ({status})"),
+        |body| login_error_message(&body),
+    ))
 }
 
 /// Sharkord's `{ errors: { field: msg } }` or `{ error: msg }`, made presentable.
@@ -125,6 +134,23 @@ mod tests {
         let refused = sign_in("http://chat.example.com", "someone", "hunter2").await;
 
         assert!(matches!(refused, Err(Error::Refused(message)) if message.contains("https")));
+    }
+
+    #[test]
+    fn only_a_client_error_refuses_the_credentials() {
+        use reqwest::StatusCode;
+
+        for (status, refused) in [
+            (StatusCode::UNAUTHORIZED, true),
+            (StatusCode::BAD_REQUEST, true),
+            (StatusCode::TOO_MANY_REQUESTS, false),
+            (StatusCode::BAD_GATEWAY, false),
+            (StatusCode::FOUND, false),
+        ] {
+            let error = failure("https://chat.example.com", status, None);
+
+            assert_eq!(matches!(error, Error::Refused(_)), refused, "{status}");
+        }
     }
 
     #[test]
