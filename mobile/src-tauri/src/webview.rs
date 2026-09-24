@@ -17,13 +17,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use shiver_core::{rail::RailRef, LockExt};
 use tauri::{window::Color, AppHandle, Manager, Url, WebviewWindow};
-use tauri_plugin_shiver_secrets::SecretsExt;
 
 pub use shiver_core::limit::Openings;
 
 use crate::{
     error::{Error, Result},
-    inbox::{self, Inbox},
+    inbox,
     model::{is_same_origin, Folder, ServerEntry, Settings, MAX_SOUND_VOLUME},
     store::{RegistryStore, Store},
 };
@@ -140,77 +139,6 @@ pub fn main_window(app: &AppHandle) -> Result<WebviewWindow> {
         .ok_or_else(|| Error::Webview("The Shiver window is not open".into()))
 }
 
-/// Asks the page being left to drop a session Shiver seeded into it (a no-op when the session shim
-/// kept it in memory, or when the user chose to be remembered by the server). Queued before the
-/// navigation, so it runs first.
-fn forget_page_session(window: &WebviewWindow) {
-    let _ = window.eval("window.__SHIVER_FORGET_SESSION__ && window.__SHIVER_FORGET_SESSION__()");
-}
-
-/// Collects the user's Sharkord settings, drafts and Shiver's own keys from the page being left
-/// (excluding the session keys; `null` over 64 KB), stores them encrypted, and only then wipes the
-/// origin's storage. A bare expression, because `eval_with_callback` returns nothing for an IIFE
-/// containing `try`.
-const CARRY_SCRIPT: &str = concat!(
-    "JSON.stringify((function(){var out={},total=0;",
-    "var skip=['sharkord-identity','sharkord-auto-login','sharkord-auto-login-token'];",
-    "for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);",
-    "if(!k||skip.indexOf(k)>=0)continue;",
-    "if(k.indexOf('sharkord-')!==0&&k.indexOf('shiver-')!==0&&k!=='vite-ui-theme')continue;",
-    "var v=localStorage.getItem(k);if(v===null)continue;",
-    "total+=k.length+v.length;if(total>65536)return null;out[k]=v}",
-    "return out})())"
-);
-
-/// Carries and wipes the storage of the server being left. Skipped when the next page shares its
-/// origin (two entries can share a server). A failed read wipes nothing, so drafts are never lost.
-fn leaving(app: &AppHandle, window: &WebviewWindow, next_origin: Option<&str>) {
-    let Some(entry_id) = app.state::<Showing>().server() else {
-        return;
-    };
-
-    let Some(origin) = app
-        .state::<Store>()
-        .registry()
-        .server(&entry_id)
-        .map(|server| server.origin.clone())
-    else {
-        return;
-    };
-
-    if next_origin == Some(origin.as_str()) {
-        return;
-    }
-
-    let handle = app.clone();
-
-    let _ = window.eval_with_callback(CARRY_SCRIPT, move |raw| {
-        let Ok(Value::String(carried)) = serde_json::from_str::<Value>(&raw) else {
-            return;
-        };
-
-        let (app, entry_id, origin) = (handle.clone(), entry_id.clone(), origin.clone());
-
-        // off the callback thread: a blocking JVM call from an eval callback deadlocks the app
-        std::thread::spawn(move || {
-            if let Err(error) = app
-                .shiver_secrets()
-                .set(&inbox::carried_store_key(&entry_id), &carried)
-            {
-                eprintln!("[shiver] could not keep {entry_id}'s drafts across the wipe: {error}");
-
-                return;
-            }
-
-            app.state::<Inbox>().remember_carried(&entry_id, &carried);
-
-            if let Err(error) = app.shiver_secrets().wipe_origin(&origin) {
-                eprintln!("[shiver] could not clear {origin} from the webview: {error}");
-            }
-        });
-    });
-}
-
 /// Navigates to a server's client, seeding `token` through the URL fragment when there is one.
 pub fn show_server(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) -> Result<()> {
     let window = main_window(app)?;
@@ -224,8 +152,6 @@ pub fn show_server(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) ->
         url.set_fragment(Some(&format!("{SEED_PARAM}={}.{encoded}", seed_key())));
     }
 
-    forget_page_session(&window);
-    leaving(app, &window, Some(&entry.origin));
     app.state::<Showing>().set_server(Some(entry.id.clone()));
 
     Ok(window.navigate(url)?)
@@ -244,8 +170,6 @@ pub struct PageContext<'a> {
     pub signed_out: &'a [String],
     /// this entry's own session, never another's (used by the bridge to reconnect)
     pub session: Option<&'a str>,
-    /// what was kept from this entry's storage when it was last wiped
-    pub carried: Option<&'a str>,
     /// the unread floor to share with the user's other devices through the companion plugin
     pub read_floor: Option<&'a HashMap<i64, u32>>,
     pub folders: &'a [Folder],
@@ -288,7 +212,6 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
         "openDms": showing.take_pending_dms(),
         "openDmUser": showing.take_pending_dm_user(),
         "session": page.session,
-        "carried": page.carried,
     });
 
     let _ = window.eval(format!("window.__SHIVER__ = {config};\n{BRIDGE_SOURCE}"));

@@ -117,7 +117,7 @@ Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and
 | `push` | UnifiedPush per chosen server: `Push`, `start`, `register_wanted`, `set_wanted` (turning off retires the endpoint; the page clears it with the plugin), `unregister`, `migrate_tokens`, `PUSH_EVENT` |
 | `update` | notify-only: `start`, `check_for_update`, `update_available`, `skip_update`, `open_releases`, `open_repository` |
 
-Page hooks (mobile): `__SHIVER__` (config), `__SHIVER_UNREAD__`, `__SHIVER_FORGET_SESSION__`,
+Page hooks (mobile): `__SHIVER__` (config), `__SHIVER_UNREAD__`,
 `__SHIVER_MUTED__`, `__SHIVER_OPEN__`, `__SHIVER_RAIL_STATE__`, `__SHIVER_BACK__`,
 `__SHIVER_MOBILE_INSTALLED__`, `__SHIVER_SESSION_SHIM__`.
 

@@ -44,8 +44,6 @@ export type ShiverConfig = {
   readFloor?: Record<string, number> | null;
   /** this entry's own UnifiedPush endpoint, for the plugin's relay */
   pushEndpoint: string | null;
-  /** the settings and drafts kept when this origin's storage was last wiped, as JSON */
-  carried: string | null;
   minimiseAttachments: boolean;
   /** percentage of Sharkord's own sound level */
   soundVolume: number;
@@ -58,7 +56,6 @@ declare global {
     /** the core pushes unread counts in */
     __SHIVER_UNREAD__?: (unread: Record<string, number>) => void;
     /** the core calls this before navigating away */
-    __SHIVER_FORGET_SESSION__?: () => void;
     /** polled by the core: this server's muted channels */
     __SHIVER_MUTED__?: () => number[];
     /** polled by the core: links to open in the browser (handed over once) */

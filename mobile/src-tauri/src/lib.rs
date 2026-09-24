@@ -230,7 +230,6 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
     let signed_out = inbox.signed_out();
     let session = inbox.token(&entry_id);
     let read_floor = inbox.baseline(&entry_id);
-    let carried = inbox.carried(&entry_id);
     let push_endpoint = app.state::<push::Push>().endpoint(&entry_id);
     let retired: Vec<String> = entry
         .retired_push_endpoints
@@ -263,7 +262,6 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
             unread: &unread,
             signed_out: &signed_out,
             session: session.as_deref(),
-            carried: carried.as_deref(),
             read_floor: read_floor.as_ref(),
             folders: &folders,
             push_endpoint: push_endpoint.as_deref(),

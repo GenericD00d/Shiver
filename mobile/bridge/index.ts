@@ -11,7 +11,7 @@ import { installAttachmentCards, installRoleColors, installSoundVolume, installS
 import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, waitForPlugin } from '../../shared/web/bridge/plugin';
 import { installMuteStyles, paintMuted } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme } from '../../shared/web/bridge/theme';
-import { AUTO_LOGIN, installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
+import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
 import { installGestures, mountRail } from './rail';
 import { installAutoReconnect } from './reconnect';
 import {
@@ -32,8 +32,6 @@ function install(shiver: ShiverConfig) {
   defineHook('__SHIVER_MOBILE_INSTALLED__', true);
 
   seedSession(shiver.session);
-
-  if (shiver.carried) restoreCarried(shiver.carried);
 
   applyPageTheme(shiver.theme);
   installMuteStyles();
@@ -113,27 +111,6 @@ function seedSession(session: string | null) {
   takeSeedFromLocation();
 
   if (session && !window.__SHIVER_SESSION_SHIM__) installSessionShim(session);
-
-  defineHook('__SHIVER_FORGET_SESSION__', () => window.__SHIVER_SESSION_SHIM__?.seed(null));
-}
-
-/**
- * Puts back the settings and drafts kept when this origin's storage was last wiped, filling only
- * gaps (anything the page wrote since is newer) and never the session keys.
- */
-function restoreCarried(carried: string) {
-  try {
-    const state = JSON.parse(carried) as Record<string, unknown> | null;
-
-    if (!state || typeof state !== 'object') return;
-
-    for (const [key, value] of Object.entries(state)) {
-      if (typeof value !== 'string' || key === 'sharkord-identity' || key.startsWith(AUTO_LOGIN)) continue;
-      if (localStorage.getItem(key) === null) localStorage.setItem(key, value);
-    }
-  } catch {
-    // unreadable carried state
-  }
 }
 
 // read and removed from the page at once; only the top frame installs

@@ -1,8 +1,8 @@
 //! The core's own connections to every server the webview is not showing (Android has one webview).
 //!
 //! Each connection keeps that server's unread count (above its floor), its DM list, and posts one
-//! Android notification per server that summarises what arrived. Sessions, passwords, floors and
-//! carried page settings live in the encrypted store (`tauri-plugin-shiver-secrets`), written by one
+//! Android notification per server that summarises what arrived. Sessions, passwords and floors live
+//! in the encrypted store (`tauri-plugin-shiver-secrets`), written by one
 //! background thread in order.
 
 use std::{
@@ -36,7 +36,6 @@ const NOTIFY_AFTER: Duration = Duration::from_millis(900);
 
 const MUTE_POLL: Duration = Duration::from_secs(1);
 
-const CARRIED_PREFIX: &str = "carried:";
 const BASELINE_PREFIX: &str = "baseline:";
 const PASSWORD_PREFIX: &str = "password:";
 
@@ -118,8 +117,6 @@ struct State {
     signed_out: HashSet<String>,
     /// entries with a stored password
     remembered: HashSet<String>,
-    /// page settings kept across the wipe of a server's storage (mirrored from the store)
-    carried: HashMap<String, String>,
     problems: HashMap<String, String>,
     plugins: HashMap<String, Option<String>>,
 }
@@ -169,7 +166,6 @@ impl Inbox {
             state.remembered.remove(entry_id);
             state.dms.remove(entry_id);
             state.baselines.remove(entry_id);
-            state.carried.remove(entry_id);
             state.problems.remove(entry_id);
             state.plugins.remove(entry_id);
         });
@@ -191,18 +187,6 @@ impl Inbox {
 
     pub fn plugins(&self) -> Vec<(String, Option<String>)> {
         self.with(|state| state.plugins.clone().into_iter().collect())
-    }
-
-    pub fn carried(&self, entry_id: &str) -> Option<String> {
-        self.with(|state| state.carried.get(entry_id).cloned())
-    }
-
-    pub fn remember_carried(&self, entry_id: &str, carried: &str) {
-        self.with(|state| {
-            state
-                .carried
-                .insert(entry_id.to_string(), carried.to_string())
-        });
     }
 
     pub fn dms(&self) -> HashMap<String, Vec<sharkord::DirectMessage>> {
@@ -232,10 +216,6 @@ impl Inbox {
 
 /* ── the encrypted store ── */
 
-pub fn carried_store_key(entry_id: &str) -> String {
-    format!("{CARRIED_PREFIX}{entry_id}")
-}
-
 fn baseline_store_key(entry_id: &str) -> String {
     format!("{BASELINE_PREFIX}{entry_id}")
 }
@@ -246,7 +226,7 @@ fn password_store_key(entry_id: &str) -> String {
 
 /// The entry a store key belongs to (a bare key is the entry's session).
 fn entry_of(key: &str) -> &str {
-    [CARRIED_PREFIX, PASSWORD_PREFIX, BASELINE_PREFIX]
+    [PASSWORD_PREFIX, BASELINE_PREFIX]
         .iter()
         .find_map(|prefix| key.strip_prefix(prefix))
         .unwrap_or(key)
@@ -329,8 +309,6 @@ pub fn restore(app: &AppHandle) {
                         None
                     }
                 };
-            } else if key.starts_with(CARRIED_PREFIX) {
-                inbox.remember_carried(&entry_id, &value);
             } else if key.starts_with(PASSWORD_PREFIX) {
                 inbox.with(|state| state.remembered.insert(entry_id));
             } else {
@@ -432,7 +410,6 @@ pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
 
     for key in [
         entry_id.to_string(),
-        carried_store_key(entry_id),
         password_store_key(entry_id),
         baseline_store_key(entry_id),
     ] {
@@ -1091,7 +1068,6 @@ mod tests {
     #[test]
     fn store_keys_name_their_entry() {
         assert_eq!(entry_of("abc"), "abc");
-        assert_eq!(entry_of(&carried_store_key("abc")), "abc");
         assert_eq!(entry_of(&password_store_key("abc")), "abc");
         assert_eq!(entry_of(&baseline_store_key("abc")), "abc");
     }
