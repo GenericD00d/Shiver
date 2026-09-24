@@ -53,8 +53,7 @@ export const api = {
   deleteFolder: (id: string) => invoke<void>('delete_folder', { id }),
   setFolderExpanded: (id: string, expanded: boolean) =>
     invoke<void>('set_folder_expanded', { id, expanded }),
-  selectServer: (id: string, dms = false, dmUser?: string) =>
-    invoke<void>('select_server', { id, dms, dmUser }),
+  selectServer: (id: string, dmUser?: string) => invoke<void>('select_server', { id, dmUser }),
 
 
 

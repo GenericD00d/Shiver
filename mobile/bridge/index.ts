@@ -20,8 +20,7 @@ import {
   installReactionNames,
   installReturnMakesALine,
   installTouchStyles,
-  openConversation,
-  openDirectMessages
+  openConversation
 } from './touch';
 import type { ShiverConfig } from './types';
 
@@ -97,7 +96,6 @@ function install(shiver: ShiverConfig) {
   installGestures(rail);
 
   if (shiver.openDmUser) openConversation(shiver.openDmUser);
-  else if (shiver.openDms) openDirectMessages();
 }
 
 /**

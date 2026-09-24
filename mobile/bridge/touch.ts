@@ -383,7 +383,7 @@ function whenPresent(selector: string, use: (element: HTMLElement) => void) {
 }
 
 /** Opens the drawer and Sharkord's DM list, once the client has rendered its toggle. */
-export function openDirectMessages() {
+function openDirectMessages() {
   whenPresent(DM_TOGGLE, (toggle) => {
     openDrawer();
     // after the drawer's transition

@@ -411,20 +411,18 @@ pub fn list_dms(store: State<'_, Store>, inbox: State<'_, Inbox>) -> Vec<inbox::
     inbox::collect_dms(&store.registry().servers, &inbox.dms())
 }
 
-/// Hands the webview to a server's client; `dms` / `dm_user` ask the bridge to open Sharkord's DM
-/// list or one conversation once connected.
+/// Hands the webview to a server's client; `dm_user` asks the bridge to open that conversation once
+/// connected.
 #[tauri::command]
 pub async fn select_server(
     app: AppHandle,
     store: State<'_, Store>,
     id: String,
-    dms: Option<bool>,
     dm_user: Option<String>,
 ) -> Result<()> {
     let entry = entry_of(&store, &id)?;
     let token = app.state::<Inbox>().token(&id);
 
-    app.state::<Showing>().set_pending_dms(dms.unwrap_or(false));
     app.state::<Showing>().set_pending_dm_user(dm_user);
 
     webview::show_server(&app, &entry, token.as_deref())?;

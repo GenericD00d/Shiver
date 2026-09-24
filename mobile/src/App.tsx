@@ -154,7 +154,7 @@ export const App = () => {
     }
 
     try {
-      await api.selectServer(server.id, false, dmUser);
+      await api.selectServer(server.id, dmUser);
     } catch (cause) {
       setError(errorMessage(cause));
     }

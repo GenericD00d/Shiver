@@ -77,8 +77,6 @@ struct ShowingState {
     /// the entry on screen, if any
     server: Option<String>,
     loaded: bool,
-    /// open Sharkord's DM list on arrival (consumed once)
-    pending_dms: bool,
     /// open the conversation with this user on arrival (consumed once)
     pending_dm_user: Option<String>,
 }
@@ -115,14 +113,6 @@ impl Showing {
 
     pub fn server(&self) -> Option<String> {
         self.0.locked().server.clone()
-    }
-
-    pub fn set_pending_dms(&self, pending: bool) {
-        self.0.locked().pending_dms = pending;
-    }
-
-    pub fn take_pending_dms(&self) -> bool {
-        std::mem::take(&mut self.0.locked().pending_dms)
     }
 
     pub fn set_pending_dm_user(&self, user: Option<String>) {
@@ -209,7 +199,6 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
         "folders": folder_payload(page.folders),
         "pushEndpoint": page.push_endpoint,
         "retiredPushEndpoints": page.retired_push_endpoints,
-        "openDms": showing.take_pending_dms(),
         "openDmUser": showing.take_pending_dm_user(),
         "session": page.session,
     });
@@ -725,10 +714,6 @@ mod tests {
     #[test]
     fn pending_requests_are_consumed_once_and_home_is_written_once() {
         let showing = Showing::default();
-
-        showing.set_pending_dms(true);
-        assert!(showing.take_pending_dms());
-        assert!(!showing.take_pending_dms());
 
         showing.set_pending_dm_user(Some("ana".into()));
         assert_eq!(showing.take_pending_dm_user().as_deref(), Some("ana"));

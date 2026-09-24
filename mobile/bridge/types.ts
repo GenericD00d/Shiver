@@ -32,8 +32,6 @@ export type ShiverConfig = {
   home: string;
   rail: RailEntry[];
   folders: RailFolder[];
-  /** open Sharkord's DM list on arrival */
-  openDms: boolean;
   /** open the DM with this person on arrival */
   openDmUser: string | null;
   /** endpoints this server's plugin should forget (push was turned off for it) */
