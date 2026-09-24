@@ -199,8 +199,7 @@ pub fn create_main_window(app: &AppHandle) -> Result<Window> {
 
     // native drag-and-drop would swallow the html5 drags the rail is reordered with
     window.add_child(
-        WebviewBuilder::new(SHELL_WEBVIEW, WebviewUrl::App("index.html".into()))
-            .disable_drag_drop_handler(),
+        chrome_webview(SHELL_WEBVIEW, "index.html").disable_drag_drop_handler(),
         LogicalPosition::new(0.0, 0.0),
         size,
     )?;
@@ -298,6 +297,17 @@ pub fn set_page_fullscreen(app: &AppHandle, entry_id: &str, on: bool) -> Result<
     Ok(())
 }
 
+/// One of Shiver's own webviews, which only ever shows Shiver's pages.
+fn chrome_webview(label: &str, path: &str) -> WebviewBuilder<tauri::Wry> {
+    WebviewBuilder::new(label, WebviewUrl::App(path.into()))
+        .on_navigation(|url| {
+            url.scheme() == "tauri"
+                || url.host_str() == Some("tauri.localhost")
+                || (cfg!(debug_assertions) && url.host_str() == Some("localhost"))
+        })
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+}
+
 /// Rebuilds the bell on top of everything (and closes the popup, which is rebuilt on demand).
 pub fn ensure_overlay(app: &AppHandle) -> Result<()> {
     let window = main_window(app)?;
@@ -311,11 +321,7 @@ pub fn ensure_overlay(app: &AppHandle) -> Result<()> {
     let (position, size) = bell_rect(&window)?;
 
     window.add_child(
-        WebviewBuilder::new(
-            OVERLAY_WEBVIEW,
-            WebviewUrl::App("index.html?view=overlay".into()),
-        )
-        .transparent(true),
+        chrome_webview(OVERLAY_WEBVIEW, "index.html?view=overlay").transparent(true),
         position,
         size,
     )?;
@@ -348,11 +354,7 @@ pub fn set_popup_open(app: &AppHandle, open: bool) -> Result<()> {
 
     // painted before the page loads, so opening does not flash white
     window.add_child(
-        WebviewBuilder::new(
-            POPUP_WEBVIEW,
-            WebviewUrl::App("index.html?view=popup".into()),
-        )
-        .background_color(background),
+        chrome_webview(POPUP_WEBVIEW, "index.html?view=popup").background_color(background),
         position,
         size,
     )?;

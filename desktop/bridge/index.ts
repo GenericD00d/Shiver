@@ -976,13 +976,13 @@ function installAttachmentFocus() {
   });
 }
 
-// Read and removed from the page before anything else runs. Only the top frame installs: the
-// initialization script can also run in embedded cross-origin frames.
+// Read and removed from the page before anything else runs. Only the top frame of the entry's own
+// origin installs: the initialization script can also run in embedded cross-origin frames.
 const config = window.__SHIVER__;
 
 delete window.__SHIVER__;
 
-if (config && isTopFrame()) {
+if (config && isTopFrame() && location.origin === config.origin) {
   try {
     install(config);
   } catch (error) {
