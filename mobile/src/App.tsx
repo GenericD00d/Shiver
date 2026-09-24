@@ -61,7 +61,7 @@ const TITLES: Record<Exclude<Screen, 'boot'>, string> = {
  * destructive actions are confirmed by the user on this page.
  */
 type Intent =
-  | { kind: 'open'; id: string }
+  | { kind: 'open' | 'failed'; id: string }
   | { kind: 'screen'; screen: Screen }
   | { kind: 'do'; action: 'refresh' | ConfirmAction; id: string }
   | null;
@@ -78,6 +78,7 @@ const readIntent = (hash: string): Intent => {
   const value = hash.replace(/^#/, '');
 
   if (value.startsWith('open=')) return { kind: 'open', id: decode(value.slice('open='.length)) };
+  if (value.startsWith('failed=')) return { kind: 'failed', id: decode(value.slice('failed='.length)) };
   if (value === 'add') return { kind: 'screen', screen: 'add' };
   if (value === 'settings') return { kind: 'screen', screen: 'settings' };
   if (value === 'dms') return { kind: 'screen', screen: 'dms' };
@@ -246,14 +247,13 @@ export const App = () => {
         return;
       }
 
-      if (intent?.kind === 'open') {
-        const named = next.servers.find((server) => server.id === intent.id);
+      const named = next.servers.find((server) => server.id === intent?.id);
 
-        if (named) {
-          await connect(named);
+      if (named) {
+        if (intent?.kind === 'failed') setBoot({ kind: 'failed', server: named });
+        else await connect(named);
 
-          return;
-        }
+        return;
       }
 
       await resume(next);

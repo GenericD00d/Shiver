@@ -55,7 +55,8 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   server" is sometimes a certificate problem.
 - **https is required everywhere**, with no exemption for localhost or a private address.
 - **Server pages cannot call Shiver.** Tauri refuses commands from remote origins, and desktop also
-  refuses any command not sent by Shiver's own webviews.
+  refuses any command not sent by Shiver's own webviews. Android reports a new page's origin late,
+  so it refuses every command while a server is on screen or being opened.
 - **Sessions never reach a webview's storage.** A small script that runs before the page's own
   patches `Storage.prototype` so Sharkord's auto-login token and live session are served from
   memory (`shared/web/session.ts`). On desktop it is part of the initialization script; on Android

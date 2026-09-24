@@ -16,6 +16,30 @@ use crate::{
     webview::{Showing, MAIN_WINDOW},
 };
 
+/// Android attributes a call to the page last reported loaded, which lags a new page, so commands
+/// are refused whenever a server is on screen or being opened.
+fn only_home(
+    handler: impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        if invoke
+            .message
+            .webview_ref()
+            .state::<Showing>()
+            .server()
+            .is_none()
+        {
+            return handler(invoke);
+        }
+
+        invoke
+            .resolver
+            .reject("Only Shiver's own page can call Shiver");
+
+        true
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -23,7 +47,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shiver_secrets::init())
         .plugin(tauri_plugin_shiver_push::init())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(only_home(tauri::generate_handler![
             update::update_available,
             update::open_releases,
             commands::forget_password,
@@ -58,7 +82,7 @@ pub fn run() {
             commands::push_status,
             commands::set_push_server,
             commands::set_push_distributor,
-        ])
+        ]))
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -90,6 +114,10 @@ pub fn run() {
                     let server_origin = current_origin(&handle);
 
                     if webview::is_allowed(&handle, target, server_origin.as_deref()) {
+                        if webview::is_home(&handle, target) {
+                            webview::landed_home(&handle);
+                        }
+
                         return true;
                     }
 
@@ -98,6 +126,7 @@ pub fn run() {
                             "[shiver] refused a redirect to {} before the server loaded",
                             target.origin().ascii_serialization()
                         );
+                        webview::show_failed(&handle);
                     } else {
                         open_for_page(&handle, target);
                     }

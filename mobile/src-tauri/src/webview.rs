@@ -147,6 +147,27 @@ pub fn show_server(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) ->
     Ok(window.navigate(url)?)
 }
 
+/// Returns to Shiver's page saying the server on screen could not be opened.
+pub fn show_failed(app: &AppHandle) {
+    let showing = app.state::<Showing>();
+    let (Some(id), Some(Ok(mut url))) = (
+        showing.server(),
+        showing.home().map(|home| Url::parse(&home)),
+    ) else {
+        return;
+    };
+
+    url.set_fragment(Some(&format!("failed={id}")));
+
+    let app = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        if let Ok(window) = main_window(&app) {
+            let _ = window.navigate(url);
+        }
+    });
+}
+
 /// Everything one server page is handed when the bridge is installed in it.
 pub struct PageContext<'a> {
     pub entry: &'a ServerEntry,
