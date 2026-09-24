@@ -61,26 +61,23 @@ const TITLES: Record<Exclude<Screen, 'boot'>, string> = {
  * destructive actions are confirmed by the user on this page.
  */
 type Intent =
-  | { kind: 'open'; id: string; dmUser?: string }
+  | { kind: 'open'; id: string }
   | { kind: 'screen'; screen: Screen }
   | { kind: 'do'; action: 'refresh' | ConfirmAction; id: string }
   | null;
 
+const decode = (text: string) => {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return '';
+  }
+};
+
 const readIntent = (hash: string): Intent => {
   const value = hash.replace(/^#/, '');
 
-  // `open=<id>`, optionally `&dm=<name>` for the conversation to land on
-  if (value.startsWith('open=')) {
-    const [id, ...rest] = value.slice('open='.length).split('&');
-    const dm = rest.find((part) => part.startsWith('dm='));
-
-    return {
-      kind: 'open',
-      id: decodeURIComponent(id),
-      dmUser: dm ? decodeURIComponent(dm.slice('dm='.length)) : undefined
-    };
-  }
-
+  if (value.startsWith('open=')) return { kind: 'open', id: decode(value.slice('open='.length)) };
   if (value === 'add') return { kind: 'screen', screen: 'add' };
   if (value === 'settings') return { kind: 'screen', screen: 'settings' };
   if (value === 'dms') return { kind: 'screen', screen: 'dms' };
@@ -89,7 +86,7 @@ const readIntent = (hash: string): Intent => {
     const [action, id] = value.slice('do='.length).split(':');
 
     if ((action === 'refresh' || action === 'remove' || action === 'forgetpw' || action === 'logout') && id) {
-      return { kind: 'do', action, id: decodeURIComponent(id) };
+      return { kind: 'do', action, id: decode(id) };
     }
   }
 
@@ -253,7 +250,7 @@ export const App = () => {
         const named = next.servers.find((server) => server.id === intent.id);
 
         if (named) {
-          await connect(named, intent.dmUser);
+          await connect(named);
 
           return;
         }

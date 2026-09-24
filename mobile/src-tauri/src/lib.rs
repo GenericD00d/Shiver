@@ -98,7 +98,7 @@ pub fn run() {
                             target.origin().ascii_serialization()
                         );
                     } else {
-                        open_externally(&handle, target);
+                        open_for_page(&handle, target);
                     }
 
                     false
@@ -109,7 +109,7 @@ pub fn run() {
 
                 // `target="_blank"` links; Android does not ask, so its bridge queues them instead
                 move |url, _features| {
-                    open_externally(&handle, &url);
+                    open_for_page(&handle, &url);
 
                     tauri::webview::NewWindowResponse::Deny
                 }
@@ -279,6 +279,14 @@ fn backfill_icons(app: AppHandle) {
             });
         }
     });
+}
+
+fn open_for_page(app: &AppHandle, url: &Url) {
+    let key = app.state::<Showing>().server().unwrap_or_default();
+
+    if app.state::<webview::Openings>().take(&key, 1) == 1 {
+        open_externally(app, url);
+    }
 }
 
 /// Hands an http(s) link to the system browser.

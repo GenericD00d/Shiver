@@ -65,9 +65,10 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
 - **What a server's page can learn on Android.** There is one webview, so the rail is drawn inside
   the server's page. It is handed, for every server in the rail: display name, inlined logo,
   opaque entry id, position and folder, unread count and a signed-out flag; plus folder names. It
-  is never handed another server's address, account, session or push endpoint. Actions the page's
-  rail requests by navigating to Shiver's own page (remove, log out, forget password) need
-  confirmation there.
+  is never handed another server's address, account, session or push endpoint. A page can reorder
+  the rail, move servers between folders and switch Shiver to another server, as the rail does;
+  removing, logging out and forgetting a password need confirmation on Shiver's own page, and links
+  it opens in the browser are rationed.
 - **The plugin's push delivery is pinned.** The endpoint is resolved once, every address is
   checked, and the request is sent over TLS to that vetted address with the hostname as SNI, so
   DNS rebinding cannot redirect it.
