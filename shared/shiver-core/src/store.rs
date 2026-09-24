@@ -1,19 +1,15 @@
 //! The registry file (`servers.json`): the rail, folders and settings. Nothing secret lives here.
 //!
-//! - An edit runs against a copy and is only applied if it returns `Ok`.
-//! - Writes land in edit order: each edit gets a generation, and a write older than one already on
-//!   disk is skipped, so a slow writer cannot put back a stale snapshot.
-//! - Writes go to a temp file that is synced and renamed into place.
+//! - An edit runs against a copy, which replaces the registry only once it is on disk.
+//! - Writes are serialised by the registry lock, and go to a temp file that is synced and renamed
+//!   into place.
 
 use std::{
     fs,
     io::Write,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Mutex, MutexGuard,
-    },
+    sync::{Mutex, MutexGuard},
 };
 
 use serde::{de::DeserializeOwned, Serialize};
@@ -51,10 +47,6 @@ pub struct Store<R> {
     /// `None` for an in-memory store (tests).
     path: Option<PathBuf>,
     registry: Mutex<R>,
-    /// Bumped under the registry lock by every successful edit.
-    generation: AtomicU64,
-    /// The generation last written to disk; held across a write.
-    written: Mutex<u64>,
 }
 
 fn remove_legacy_cache(dir: &Path) {
@@ -81,8 +73,6 @@ where
         Self {
             path: None,
             registry: Mutex::new(registry),
-            generation: AtomicU64::new(0),
-            written: Mutex::new(0),
         }
     }
 
@@ -113,8 +103,7 @@ where
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => R::default(),
             Err(error) => {
                 return Err(Error::Storage(format!(
-                    "{} exists but could not be read ({error})",
-                    path.display()
+                    "{REGISTRY_FILE} exists but could not be read ({error})"
                 )))
             }
         };
@@ -122,8 +111,6 @@ where
         Ok(Self {
             path: Some(path),
             registry: Mutex::new(registry),
-            generation: AtomicU64::new(0),
-            written: Mutex::new(0),
         })
     }
 
@@ -131,7 +118,7 @@ where
         ReadGuard(self.registry.locked())
     }
 
-    /// Runs `edit` on a copy; on `Ok` the copy replaces the registry and is written to disk.
+    /// Runs `edit` on a copy; on `Ok` the copy is written to disk and then replaces the registry.
     ///
     /// Generic over the caller's error type so each client keeps its own.
     pub fn edit<T, E>(
@@ -141,48 +128,23 @@ where
     where
         E: From<Error>,
     {
-        let (value, json, generation) = {
-            let mut registry = self.registry.locked();
-            let mut draft = registry.clone();
-            let value = edit(&mut draft)?;
-            let json = self.serialise(&draft)?;
+        let mut registry = self.registry.locked();
+        let mut draft = registry.clone();
+        let value = edit(&mut draft)?;
 
-            *registry = draft;
-
-            (
-                value,
-                json,
-                self.generation.fetch_add(1, Ordering::SeqCst) + 1,
-            )
-        };
-
-        self.persist(json, generation)?;
+        self.persist(&draft)?;
+        *registry = draft;
 
         Ok(value)
     }
 
-    fn serialise(&self, registry: &R) -> Result<Option<String>> {
-        if self.path.is_none() {
-            return Ok(None);
-        }
-
-        serde_json::to_string_pretty(registry)
-            .map(Some)
-            .map_err(|error| Error::Storage(error.to_string()))
-    }
-
-    fn persist(&self, json: Option<String>, generation: u64) -> Result<()> {
-        let (Some(path), Some(json)) = (self.path.as_ref(), json) else {
+    fn persist(&self, registry: &R) -> Result<()> {
+        let Some(path) = self.path.as_ref() else {
             return Ok(());
         };
 
-        let mut written = self.written.locked();
-
-        // a newer edit already reached the disk, and it includes this one
-        if *written >= generation {
-            return Ok(());
-        }
-
+        let json = serde_json::to_string_pretty(registry)
+            .map_err(|error| Error::Storage(error.to_string()))?;
         let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
 
         let write = (|| -> std::io::Result<()> {
@@ -201,15 +163,11 @@ where
             Ok(())
         })();
 
-        if let Err(error) = write {
+        write.map_err(|error| {
             let _ = fs::remove_file(&temp);
 
-            return Err(Error::Storage(error.to_string()));
-        }
-
-        *written = generation;
-
-        Ok(())
+            Error::Storage(error.to_string())
+        })
     }
 }
 
@@ -304,22 +262,22 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// The write that finishes last must not be allowed to put back an older snapshot.
     #[test]
-    fn an_older_generation_never_overwrites_a_newer_one() {
-        let dir = temp_dir("generation");
+    fn a_write_that_fails_leaves_the_registry_as_it_was() {
+        let dir = temp_dir("failed-write");
         let store: Store<Registry> = Store::load(&dir).unwrap();
 
-        store
-            .persist(Some(r#"{"servers":["new"]}"#.into()), 2)
-            .unwrap();
-        store
-            .persist(Some(r#"{"servers":["old"]}"#.into()), 1)
-            .unwrap();
+        // a directory where the temp file goes makes the write fail
+        fs::create_dir_all(dir.join(format!("servers.json.{}.tmp", std::process::id()))).unwrap();
 
-        let reopened: Store<Registry> = Store::load(&dir).unwrap();
+        let failed = store.edit(|registry| {
+            registry.servers.push("lost".into());
 
-        assert_eq!(reopened.registry().servers, vec!["new".to_string()]);
+            Ok::<_, Error>(())
+        });
+
+        assert!(failed.is_err());
+        assert!(store.registry().servers.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }

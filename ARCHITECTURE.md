@@ -42,8 +42,8 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
   `shiver_core::Error` via `From`. Never put tokens, passwords or paths in messages.
 - The registry (`servers.json`) holds no secrets. Secrets: keychain (desktop `secrets.rs`),
   `tauri-plugin-shiver-secrets` (mobile). Keys are rail-entry ids, never origins.
-- Registry edits go through `store.update(|registry| ...)` (`RegistryStore`): runs on a copy and is
-  persisted only on `Ok`.
+- Registry edits go through `store.update(|registry| ...)` (`RegistryStore`): runs on a copy, which
+  replaces the registry only once it is written.
 - Rail/folder logic lives in `shiver_core::rail`; the clients call `registry.rail().<op>()`.
 - Keep shared constants in step: `shared/web/settings.ts` ↔ `shiver_core::model`.
 - `mobile/src-tauri/gen/android/` is mostly generated, but `MainActivity.kt` (insets, back handling),
@@ -58,7 +58,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 |---|---|
 | `error` | `Error` {InvalidOrigin, Storage, Unreachable, NotSharkord, Refused, InvalidInput, UnknownServer, UnknownFolder}, `Result` |
 | `origin` | `normalize_origin`, `is_same_origin` (the one webview-boundary comparison) |
-| `store` | `Store<R>` (`load`, `for_tests`, `registry`→`ReadGuard`, `edit`); `LockExt::locked` (poison-tolerant lock). Generation-ordered atomic writes |
+| `store` | `Store<R>` (`load`, `for_tests`, `registry`→`ReadGuard`, `edit`); `LockExt::locked` (poison-tolerant lock). An edit applies only once written; atomic writes |
 | `model` | `Folder`, `MutedChannel`, `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `MAX_SOUND_VOLUME`, `MAX_MUTED_PER_ENTRY`, `sanitised_color`, `sanitised_optional_color`, `uses_default_colors`, `rgb`, `theme_payload`, `muted_for`, `set_muted_for` |
 | `rail` | `RailServer` trait + `rail_server!(Type)` macro; `RailRef {kind,id}`; `next_position`; `folder_name`; `MAX_FOLDER_NAME`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder`, `reorder_servers`, `prune_folders` |
 | `http` | `client()` (pooled, no redirects), `bytes_within_limit`, `json_within_limit`, `MAX_BODY` |
