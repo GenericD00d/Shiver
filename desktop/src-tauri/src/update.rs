@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use shiver_core::LockExt;
 use tauri::{AppHandle, Manager};
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::{
     error::{Error, Result},
@@ -33,26 +33,13 @@ impl Available {
     }
 }
 
-/// The version already announced, so a periodic check does not repeat itself.
-#[derive(Default)]
-pub struct Announced(Mutex<Option<String>>);
-
-impl Announced {
-    fn already(&self, version: &str) -> bool {
-        let mut held = self.0.locked();
-
-        if held.as_deref() == Some(version) {
-            return true;
-        }
-
-        *held = Some(version.to_string());
-
-        false
-    }
-}
-
-fn updater_error(error: impl std::fmt::Display) -> Error {
-    Error::Webview(format!("The updater is unavailable: {error}"))
+/// The updater's answer now: the newer release, if there is one.
+async fn check(app: &AppHandle) -> Result<Option<Update>> {
+    app.updater()
+        .map_err(|error| Error::Webview(format!("The updater is unavailable: {error}")))?
+        .check()
+        .await
+        .map_err(|error| Error::Webview(format!("Could not reach the update server: {error}")))
 }
 
 /// Starts the background check: once after `FIRST_CHECK`, then every `EVERY`.
@@ -71,15 +58,10 @@ pub fn start(app: &AppHandle) {
 
 /// One background check. Quiet about failure: being offline is ordinary.
 async fn look(app: &AppHandle) {
-    let found = match app.updater().map_err(updater_error) {
-        Ok(updater) => updater.check().await,
-        Err(error) => return eprintln!("[shiver] {error}"),
-    };
-
-    let version = match found {
+    let version = match check(app).await {
         Ok(Some(update)) => update.version,
         Ok(None) => return,
-        Err(error) => return eprintln!("[shiver] could not check for an update: {error}"),
+        Err(error) => return eprintln!("[shiver] {error}"),
     };
 
     let skipped = app
@@ -90,7 +72,8 @@ async fn look(app: &AppHandle) {
         .as_deref()
         == Some(version.as_str());
 
-    if skipped || app.state::<Announced>().already(&version) {
+    // turned down, or already offered
+    if skipped || app.state::<Available>().get().as_deref() == Some(version.as_str()) {
         return;
     }
 
@@ -103,12 +86,8 @@ async fn look(app: &AppHandle) {
 /// the binary.
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<()> {
-    let update = app
-        .updater()
-        .map_err(updater_error)?
-        .check()
-        .await
-        .map_err(|error| Error::Webview(format!("Could not reach the update server: {error}")))?
+    let update = check(&app)
+        .await?
         .ok_or_else(|| Error::Webview("Shiver is already up to date".into()))?;
 
     update
@@ -154,14 +133,7 @@ pub fn open_repository(app: AppHandle) -> Result<()> {
 /// Checks now, on request. Reports a skipped version too, since the user asked.
 #[tauri::command]
 pub async fn check_for_update(app: AppHandle) -> Result<Option<String>> {
-    let found = app
-        .updater()
-        .map_err(updater_error)?
-        .check()
-        .await
-        .map_err(|error| Error::Webview(format!("Could not reach the update server: {error}")))?;
-
-    let version = found.map(|update| update.version);
+    let version = check(&app).await?.map(|update| update.version);
 
     if version.is_some() {
         app.state::<Available>().set(version.clone());

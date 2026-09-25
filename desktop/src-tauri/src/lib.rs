@@ -144,7 +144,6 @@ pub fn run() {
             app.manage(Recovery::default());
             app.manage(drain::Broadcast::default());
             app.manage(webviews::Openings::default());
-            app.manage(update::Announced::default());
             app.manage(update::Available::default());
             app.manage(Watcher::default());
             app.manage(watch::Missed::default());

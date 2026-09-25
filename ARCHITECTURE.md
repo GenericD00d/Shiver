@@ -100,7 +100,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `hotkey` | global mic-mute shortcut `apply` |
 | `badge` / `badges` | taskbar badge `refresh`; `channel_viewed`, `is_on_screen` |
 | `permissions` | WebView2 camera/mic reset: `clear_media_permissions`, `apply_pending_reset` |
-| `update` | signed self-update: `start`, `check_for_update`, `install_update`, `available_update`, `skip_update`, `open_repository`, `Available`, `Announced` |
+| `update` | signed self-update: `start`, `check_for_update`, `install_update`, `available_update`, `skip_update`, `open_repository`, `Available` |
 
 Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and core→page
 `__SHIVER_SET_THEME__`, `_SET_MUTED__`, `_SET_HIDDEN__`, `_OPEN_DM__`,
