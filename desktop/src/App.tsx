@@ -71,11 +71,10 @@ export const App = () => {
   const [panel, setPanel] = useState<Panel>('server');
   const [dms, setDms] = useState<DmEntry[]>([]);
   const [unread, setUnread] = useState<Record<string, number>>({});
-  // `<entry id>:<channel id>` of the conversation the split is currently showing
+  // `<entry id>:<channel id>` of the conversation shown beside the DM list
   const [openedDm, setOpenedDm] = useState<string | null>(null);
   const [dmError, setDmError] = useState<string | null>(null);
-  // the conversation to restore when the inbox is reopened. its webview is only hidden when the
-  // user goes off to a server, so coming back should land on it rather than on a blank pane.
+  // the conversation to show again when the inbox is reopened, rather than a blank pane
   const [lastDm, setLastDm] = useState<{ entryId: string; name: string } | null>(null);
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -244,8 +243,7 @@ export const App = () => {
     }
   }, [lastDm]);
 
-  /// closing the inbox is the one place a conversation view is torn down, so the second client does
-  /// not stay connected once the user is done with DMs
+  /// closing the inbox gives the conversation's page its channels back
   const closePanel = useCallback(async () => {
     if (panel === 'dms') {
       setOpenedDm(null);
@@ -413,7 +411,7 @@ export const App = () => {
     [refresh]
   );
 
-  // a conversation the page could not open. the split still shows whatever was there before, so
+  // a conversation the page could not open. the page still shows whatever was there before, so
   // Shiver must stop marking the new one as open rather than quietly disagreeing with the screen.
   useCoreEvent<{ name: string }>(EVENTS.dmFailed, ({ name }) => {
     setOpenedDm(null);

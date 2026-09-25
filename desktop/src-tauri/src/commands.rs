@@ -241,7 +241,6 @@ pub async fn remove_server(
     entry_of(&store, &id)?;
 
     webviews::close_server(&app, &id)?;
-    webviews::close_dm_view(&app, &id);
 
     // credentials go first, so a failure cannot leave one behind for a server no longer listed
     secrets::forget_all_off_thread(&id).await?;
@@ -283,7 +282,6 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
     secrets::forget_all_off_thread(&id).await?;
 
     webviews::close_server(&app, &id)?;
-    webviews::close_dm_view(&app, &id);
 
     let entry = store.update(|registry| {
         let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
@@ -336,7 +334,6 @@ pub async fn sign_in_server(
     })?;
 
     webviews::close_server(&app, &id)?;
-    webviews::close_dm_view(&app, &id);
     app.state::<Readiness>().forget_entry(&id);
     app.state::<Recovery>().forget_entry(&id);
     crate::watch::restart(&app, &id);
@@ -623,11 +620,11 @@ pub async fn show_shell(app: AppHandle) -> Result<()> {
 }
 
 #[tauri::command]
-pub async fn exit_dm_split(app: AppHandle) -> Result<()> {
-    webviews::hide_dm_views(&app)
+pub async fn exit_dm_split(app: AppHandle) {
+    webviews::end_conversation(&app);
 }
 
-/// Opens one conversation in the entry's conversation view, beside Shiver's DM list.
+/// Opens one conversation in the entry's own page, beside Shiver's DM list.
 #[tauri::command]
 pub async fn open_dm(
     app: AppHandle,
@@ -635,25 +632,24 @@ pub async fn open_dm(
     entry_id: String,
     name: String,
 ) -> Result<()> {
-    let (entry, settings, _) = page_inputs(&store, &entry_id)?;
-    let token = ensure_session(&entry).await;
+    let (entry, settings, muted) = page_inputs(&store, &entry_id)?;
+    let token = match app.get_webview(&webviews::webview_label(&entry_id)) {
+        Some(_) => None,
+        None => ensure_session(&entry).await,
+    };
 
-    let created = webviews::show_dm_view(&app, &entry, &settings, token.as_deref(), &name)?;
+    webviews::show_conversation(
+        &app,
+        &entry,
+        &settings,
+        token.as_deref(),
+        &muted,
+        voice_locked_for(&app, &entry_id),
+        &name,
+    )?;
 
+    // also stands the entry's socket down, should its page have just been opened
     webviews::trim_pages(&app);
-
-    if created {
-        return Ok(());
-    }
-
-    if let Some(webview) = app.get_webview(&webviews::dm_webview_label(&entry_id)) {
-        let payload =
-            serde_json::to_string(&name).map_err(|error| Error::Webview(error.to_string()))?;
-
-        webview.eval(format!(
-            "window.__SHIVER_OPEN_DM__ && window.__SHIVER_OPEN_DM__({payload})"
-        ))?;
-    }
 
     Ok(())
 }

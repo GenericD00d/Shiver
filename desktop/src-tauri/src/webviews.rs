@@ -1,8 +1,8 @@
 //! Window and webview layout.
 //!
 //! One window holds the shell webview (Shiver's UI, full-window, drawing the rail on the left), a
-//! webview per open server pinned to that server's origin and inset by the rail, an optional
-//! conversation view per server (inset further by the DM list), the bell overlay and its popup.
+//! webview per open server pinned to that server's origin and inset by the rail (and by the DM list
+//! while it shows a conversation), the bell overlay and its popup.
 //! Child webviews stack in creation order with no way to raise one, so the bell is rebuilt after
 //! any server webview is created and the popup is built fresh each time it opens.
 
@@ -51,20 +51,13 @@ pub fn webview_label(entry_id: &str) -> String {
     format!("server::{entry_id}")
 }
 
-/// The conversation view: a second client for the same server, so the server view keeps its channel.
-pub fn dm_webview_label(entry_id: &str) -> String {
-    format!("dm::{entry_id}")
-}
-
 pub fn is_shiver_chrome(label: &str) -> bool {
     matches!(label, SHELL_WEBVIEW | OVERLAY_WEBVIEW | POPUP_WEBVIEW)
 }
 
 /// The entry a page webview belongs to, from its label.
 fn entry_of(label: &str) -> Option<&str> {
-    label
-        .strip_prefix("server::")
-        .or_else(|| label.strip_prefix("dm::"))
+    label.strip_prefix("server::")
 }
 
 #[derive(Default)]
@@ -73,15 +66,15 @@ struct Screen {
     current: Option<String>,
     /// whether that server's page is what is on screen (not a Shiver panel over it)
     showing_server: bool,
-    /// the entry whose conversation view is on screen
-    dm_on_screen: Option<String>,
+    /// the entry whose page is on screen showing a conversation, beside Shiver's DM list
+    conversation: Option<String>,
     popup_open: bool,
     popup_dismissed_at: Option<Instant>,
     /// servers with a page, most recently shown first, then those opened hidden (what `trim_pages`
     /// closes from the back of)
     recent: Vec<String>,
-    /// whether the page on screen is fullscreen
-    fullscreen: bool,
+    /// the entry whose page is fullscreen
+    fullscreen: Option<String>,
 }
 
 impl Screen {
@@ -114,8 +107,12 @@ impl ActiveServer {
         self.screen.locked().showing_server
     }
 
-    pub fn dm_on_screen(&self) -> Option<String> {
-        self.screen.locked().dm_on_screen.clone()
+    /// Whether this entry's page is what is on screen (its server, or a conversation in it).
+    pub fn is_on_screen(&self, entry_id: &str) -> bool {
+        let screen = self.screen.locked();
+
+        (screen.showing_server && screen.current.as_deref() == Some(entry_id))
+            || screen.conversation.as_deref() == Some(entry_id)
     }
 
     pub fn note_popup_dismissed(&self) {
@@ -164,6 +161,23 @@ fn content_rect(window: &Window) -> Result<(LogicalPosition<f64>, LogicalSize<f6
 
 fn dm_content_rect(window: &Window) -> Result<(LogicalPosition<f64>, LogicalSize<f64>)> {
     rect_from(window, RAIL_WIDTH + DM_LIST_WIDTH)
+}
+
+/// Where an entry's page goes when it is not fullscreen.
+fn page_rect(
+    app: &AppHandle,
+    window: &Window,
+    entry_id: &str,
+) -> Result<(LogicalPosition<f64>, LogicalSize<f64>)> {
+    let conversation = app
+        .state::<ActiveServer>()
+        .update(|screen| screen.conversation.as_deref() == Some(entry_id));
+
+    if conversation {
+        dm_content_rect(window)
+    } else {
+        content_rect(window)
+    }
 }
 
 /// The bell, fixed to the top-right corner inside the space the bridge reserves in Sharkord's bar.
@@ -247,20 +261,16 @@ pub fn relayout(app: &AppHandle) -> Result<()> {
     let full = (LogicalPosition::new(0.0, 0.0), logical_size(&window)?);
     let fullscreen = app
         .state::<ActiveServer>()
-        .update(|screen| screen.fullscreen);
-    let current = app
-        .state::<ActiveServer>()
-        .get()
-        .map(|id| webview_label(&id));
+        .update(|screen| screen.fullscreen.clone());
 
     for webview in window.webviews() {
         let label = webview.label();
-        let rect = match label {
-            SHELL_WEBVIEW => full,
-            OVERLAY_WEBVIEW => bell_rect(&window)?,
-            POPUP_WEBVIEW => popup_rect(&window)?,
-            _ if label.starts_with("dm::") => dm_content_rect(&window)?,
-            _ if fullscreen && current.as_deref() == Some(label) => full,
+        let rect = match (label, entry_of(label)) {
+            (SHELL_WEBVIEW, _) => full,
+            (OVERLAY_WEBVIEW, _) => bell_rect(&window)?,
+            (POPUP_WEBVIEW, _) => popup_rect(&window)?,
+            (_, Some(entry_id)) if fullscreen.as_deref() == Some(entry_id) => full,
+            (_, Some(entry_id)) => page_rect(app, &window, entry_id)?,
             _ => content_rect(&window)?,
         };
 
@@ -278,10 +288,12 @@ pub fn relayout(app: &AppHandle) -> Result<()> {
 /// Only real fullscreen counts (the bridge reads the browser's own getter), and switching away
 /// restores the chrome (`show_server` resets it).
 pub fn set_page_fullscreen(app: &AppHandle, entry_id: &str, on: bool) -> Result<()> {
+    let next = on.then(|| entry_id.to_string());
+
     if app
         .state::<ActiveServer>()
-        .update(|screen| std::mem::replace(&mut screen.fullscreen, on))
-        == on
+        .update(|screen| std::mem::replace(&mut screen.fullscreen, next.clone()))
+        == next
     {
         return Ok(());
     }
@@ -294,7 +306,7 @@ pub fn set_page_fullscreen(app: &AppHandle, entry_id: &str, on: bool) -> Result<
             if on {
                 (LogicalPosition::new(0.0, 0.0), logical_size(&window)?)
             } else {
-                content_rect(&window)?
+                page_rect(app, &window, entry_id)?
             },
         )?;
     }
@@ -406,6 +418,8 @@ pub fn show_server(
     let label = webview_label(&entry.id);
     let created = app.get_webview(&label).is_none();
 
+    end_conversation(app);
+
     if created {
         build_page_webview(
             &window,
@@ -413,7 +427,7 @@ pub fn show_server(
             settings,
             token,
             muted,
-            PageRole::Server { voice_locked },
+            (voice_locked, None),
             content_rect(&window)?,
         )
         .inspect_err(|error| eprintln!("[shiver] could not open {}: {error}", entry.origin))?;
@@ -430,9 +444,8 @@ pub fn show_server(
     active.update(|screen| {
         screen.current = Some(entry.id.clone());
         screen.showing_server = true;
-        screen.dm_on_screen = None;
         screen.popup_open = false;
-        screen.fullscreen = false;
+        screen.fullscreen = None;
         screen.hold(&entry.id, true);
     });
 
@@ -470,7 +483,7 @@ pub fn preload_server(
         settings,
         token,
         muted,
-        PageRole::Server { voice_locked },
+        (voice_locked, None),
         content_rect(&window)?,
     )?;
 
@@ -489,23 +502,114 @@ pub fn preload_server(
 pub fn show_shell_only(app: &AppHandle) -> Result<()> {
     let window = main_window(app)?;
 
-    app.state::<ActiveServer>().update(|screen| {
-        screen.showing_server = false;
-        screen.dm_on_screen = None;
-    });
+    end_conversation(app);
+    app.state::<ActiveServer>()
+        .update(|screen| screen.showing_server = false);
 
     hide_all_but(&window, is_shiver_chrome);
 
     Ok(())
 }
 
-/// Closes pages beyond `pages_kept`, oldest first — never the one on screen, never one in a call —
-/// and lets the sockets take over for them.
+/// Shows an entry's own page as the conversation with `name`, beside Shiver's DM list: the page
+/// hides its channels and opens the DM, and gets its channels back when the conversation ends.
+pub fn show_conversation(
+    app: &AppHandle,
+    entry: &ServerEntry,
+    settings: &Settings,
+    token: Option<&str>,
+    muted: &[i64],
+    voice_locked: bool,
+    name: &str,
+) -> Result<()> {
+    let active = app.state::<ActiveServer>();
+    let _gate = active.gate.locked();
+    let window = main_window(app)?;
+    let label = webview_label(&entry.id);
+
+    if active.update(|screen| {
+        screen
+            .conversation
+            .as_ref()
+            .is_some_and(|id| id != &entry.id)
+    }) {
+        end_conversation(app);
+    }
+
+    let created = match app.get_webview(&label) {
+        Some(webview) => {
+            webview.eval(format!(
+                "window.__SHIVER_CONVERSATION__ && window.__SHIVER_CONVERSATION__({})",
+                json!(name)
+            ))?;
+
+            false
+        }
+        None => {
+            build_page_webview(
+                &window,
+                entry,
+                settings,
+                token,
+                muted,
+                (voice_locked, Some(name)),
+                dm_content_rect(&window)?,
+            )?;
+
+            true
+        }
+    };
+
+    hide_all_but(&window, |other| is_shiver_chrome(other) || other == label);
+
+    if let Some(webview) = app.get_webview(&label) {
+        place(&webview, dm_content_rect(&window)?)?;
+        webview.show()?;
+        webview.set_focus()?;
+    }
+
+    active.update(|screen| {
+        screen.showing_server = false;
+        screen.conversation = Some(entry.id.clone());
+        screen.fullscreen = None;
+        screen.hold(&entry.id, true);
+    });
+
+    if created {
+        ensure_overlay(app)?;
+    }
+
+    Ok(())
+}
+
+/// Ends the conversation on screen, if any: its page gets its channels back and is hidden.
+pub fn end_conversation(app: &AppHandle) {
+    let Some(entry_id) = app
+        .state::<ActiveServer>()
+        .update(|screen| screen.conversation.take())
+    else {
+        return;
+    };
+
+    let Some(webview) = app.get_webview(&webview_label(&entry_id)) else {
+        return;
+    };
+
+    let _ = webview.eval("window.__SHIVER_CONVERSATION__ && window.__SHIVER_CONVERSATION__(null)");
+    let _ = webview.hide();
+
+    if let Ok(rect) = main_window(app).and_then(|window| content_rect(&window)) {
+        let _ = place(&webview, rect);
+    }
+}
+
+/// Closes pages beyond `pages_kept`, oldest first — never the selected or on-screen one, never one
+/// in a call — and lets the sockets take over for them.
 pub fn trim_pages(app: &AppHandle) {
     let keep = app.state::<Store>().registry().settings.pages_kept();
     let (showing, excess) = app.state::<ActiveServer>().update(|screen| {
         (
-            screen.current.clone(),
+            [screen.current.clone(), screen.conversation.clone()],
             screen
                 .recent
                 .iter()
@@ -518,15 +622,18 @@ pub fn trim_pages(app: &AppHandle) {
     let in_call = app.state::<crate::voice::VoiceState>().holder();
 
     for entry_id in excess {
-        if Some(&entry_id) == showing.as_ref() || Some(&entry_id) == in_call.as_ref() {
+        if showing
+            .iter()
+            .flatten()
+            .chain(&in_call)
+            .any(|kept| *kept == entry_id)
+        {
             continue;
         }
 
         if let Err(error) = close_server(app, &entry_id) {
             eprintln!("[shiver] could not close the page for {entry_id}: {error}");
         }
-
-        close_dm_view(app, &entry_id);
     }
 
     crate::watch::sync(app);
@@ -539,8 +646,14 @@ pub fn close_server(app: &AppHandle, entry_id: &str) -> Result<()> {
     }
 
     app.state::<ActiveServer>().update(|screen| {
-        if screen.current.as_deref() == Some(entry_id) {
-            screen.current = None;
+        for held in [
+            &mut screen.current,
+            &mut screen.conversation,
+            &mut screen.fullscreen,
+        ] {
+            if held.as_deref() == Some(entry_id) {
+                *held = None;
+            }
         }
 
         screen.recent.retain(|held| held != entry_id);
@@ -684,15 +797,8 @@ pub fn prune_profiles(app: &AppHandle) {
     delete_dirs_later(stale);
 }
 
-#[derive(Clone, Copy)]
-enum PageRole<'a> {
-    /// the page the user browses channels in
-    Server { voice_locked: bool },
-    /// the conversation view: hides its sidebar, reports only which DM is open
-    Dm { open: Option<&'a str> },
-}
-
-/// Builds one page webview pinned to the entry's origin, in the entry's own profile.
+/// Builds one page webview pinned to the entry's origin, in the entry's own profile, voice-locked
+/// or not, and opening a conversation when given one.
 ///
 /// Navigation stays on the origin and new windows are refused: the bridge hands over what the user
 /// opens away from the page, and the drain opens it in the browser.
@@ -702,21 +808,17 @@ fn build_page_webview(
     settings: &Settings,
     token: Option<&str>,
     muted: &[i64],
-    role: PageRole<'_>,
+    opening: (bool, Option<&str>),
     (position, size): (LogicalPosition<f64>, LogicalSize<f64>),
 ) -> Result<()> {
     let url = Url::parse(&entry.origin)
         .map_err(|_| Core::InvalidOrigin(format!("'{}' is not a valid address", entry.origin)))?;
-    let label = match role {
-        PageRole::Server { .. } => webview_label(&entry.id),
-        PageRole::Dm { .. } => dm_webview_label(&entry.id),
-    };
     let origin = entry.origin.clone();
 
-    let mut builder = WebviewBuilder::new(label, WebviewUrl::External(url))
+    let mut builder = WebviewBuilder::new(webview_label(&entry.id), WebviewUrl::External(url))
         // Sharkord uploads by listening for dragover/drop, which the native handler would swallow
         .disable_drag_drop_handler()
-        .initialization_script(bridge_script(entry, settings, token, muted, role))
+        .initialization_script(bridge_script(entry, settings, token, muted, opening))
         .data_store_identifier(data_store(entry))
         .on_navigation(move |target| {
             let allowed = is_same_origin(&origin, target);
@@ -760,115 +862,7 @@ pub fn open_in_browser(app: &AppHandle, url: &Url) {
     }
 }
 
-/// Shows an entry's conversation view beside Shiver's DM list, creating it if needed. Returns
-/// whether it was created (a new page opens `open_dm` itself; an existing one must be told).
-pub fn show_dm_view(
-    app: &AppHandle,
-    entry: &ServerEntry,
-    settings: &Settings,
-    token: Option<&str>,
-    open_dm: &str,
-) -> Result<bool> {
-    let active = app.state::<ActiveServer>();
-    let _gate = active.gate.locked();
-    let window = main_window(app)?;
-    let label = dm_webview_label(&entry.id);
-    let created = app.get_webview(&label).is_none();
-
-    if created {
-        build_page_webview(
-            &window,
-            entry,
-            settings,
-            token,
-            &[],
-            PageRole::Dm {
-                open: Some(open_dm),
-            },
-            dm_content_rect(&window)?,
-        )?;
-    }
-
-    active.update(|screen| screen.showing_server = false);
-    hide_all_but(&window, |other| is_shiver_chrome(other) || other == label);
-
-    if let Some(webview) = app.get_webview(&label) {
-        place(&webview, dm_content_rect(&window)?)?;
-        webview.show()?;
-        webview.set_focus()?;
-        active.update(|screen| {
-            screen.dm_on_screen = Some(entry.id.clone());
-            screen.hold(&entry.id, true);
-        });
-    }
-
-    if created {
-        ensure_overlay(app)?;
-    }
-
-    Ok(created)
-}
-
-/// Opens an entry's conversation view hidden, so opening a DM later is instant.
-pub fn preload_dm_view(
-    app: &AppHandle,
-    entry: &ServerEntry,
-    settings: &Settings,
-    token: Option<&str>,
-) -> Result<()> {
-    let active = app.state::<ActiveServer>();
-    let _gate = active.gate.locked();
-    let label = dm_webview_label(&entry.id);
-
-    if app.get_webview(&label).is_some() {
-        return Ok(());
-    }
-
-    let window = main_window(app)?;
-
-    build_page_webview(
-        &window,
-        entry,
-        settings,
-        token,
-        &[],
-        PageRole::Dm { open: None },
-        dm_content_rect(&window)?,
-    )?;
-
-    if let Some(webview) = app.get_webview(&label) {
-        webview.hide()?;
-    }
-
-    active.update(|screen| screen.hold(&entry.id, false));
-
-    ensure_overlay(app)
-}
-
-pub fn close_dm_view(app: &AppHandle, entry_id: &str) {
-    if let Some(webview) = app.get_webview(&dm_webview_label(entry_id)) {
-        if let Err(error) = webview.close() {
-            eprintln!("[shiver] could not close the conversation view for {entry_id}: {error}");
-        }
-    }
-
-    app.state::<ActiveServer>().update(|screen| {
-        if screen.dm_on_screen.as_deref() == Some(entry_id) {
-            screen.dm_on_screen = None;
-        }
-    });
-}
-
-/// Hides (does not close) every conversation view, for leaving the inbox.
-pub fn hide_dm_views(app: &AppHandle) -> Result<()> {
-    hide_all_but(&main_window(app)?, |label| !label.starts_with("dm::"));
-    app.state::<ActiveServer>()
-        .update(|screen| screen.dm_on_screen = None);
-
-    Ok(())
-}
-
-/// Evaluates `script` in every server and conversation page.
+/// Evaluates `script` in every server page.
 fn eval_in_pages(app: &AppHandle, script: &str) {
     let Ok(window) = main_window(app) else {
         return;
@@ -976,21 +970,15 @@ fn bridge_script(
     settings: &Settings,
     token: Option<&str>,
     muted: &[i64],
-    role: PageRole<'_>,
+    (voice_locked, conversation): (bool, Option<&str>),
 ) -> String {
-    let (role_name, open_dm, voice_locked) = match role {
-        PageRole::Server { voice_locked } => ("server", None, voice_locked),
-        PageRole::Dm { open } => ("dm", open, false),
-    };
-
     let config = json!({
         "entryId": entry.id,
         "origin": entry.origin,
         "theme": theme_payload(settings),
         "token": token,
         "muted": muted,
-        "role": role_name,
-        "openDm": open_dm,
+        "conversation": conversation,
         "soundVolume": settings.sound_volume.min(crate::model::MAX_SOUND_VOLUME),
         "minimiseAttachments": settings.minimise_attachments,
         "voiceLocked": voice_locked,
@@ -1072,9 +1060,7 @@ mod tests {
             &Settings::default(),
             Some("secret"),
             &[],
-            PageRole::Server {
-                voice_locked: false,
-            },
+            (false, None),
         );
 
         assert!(script.starts_with(
@@ -1086,9 +1072,7 @@ mod tests {
     #[test]
     fn labels_map_back_to_their_entry() {
         assert_eq!(entry_of(&webview_label("x")), Some("x"));
-        assert_eq!(entry_of(&dm_webview_label("x")), Some("x"));
         assert_eq!(entry_of(SHELL_WEBVIEW), None);
         assert!(is_shiver_chrome(POPUP_WEBVIEW) && !is_shiver_chrome(&webview_label("shell")));
-        assert!(!is_shiver_chrome(&dm_webview_label("x")));
     }
 }

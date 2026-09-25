@@ -87,7 +87,6 @@ fn unsupported() -> Error {
 
 fn page_of(app: &AppHandle, entry_id: &str) -> Option<tauri::Webview> {
     app.get_webview(&webviews::webview_label(entry_id))
-        .or_else(|| app.get_webview(&webviews::dm_webview_label(entry_id)))
 }
 
 /// Resets camera and microphone answers in one webview's profile. Returns how many were forgotten.

@@ -39,10 +39,8 @@ type ShiverConfig = {
   /** the session Shiver signed in with; served to the page from memory, never stored */
   token: string | null;
   muted: number[];
-  /** `server` browses channels and reports; `dm` shows one conversation and reports nothing else */
-  role: 'server' | 'dm';
-  /** for a `dm` page, the conversation to open once possible */
-  openDm: string | null;
+  /** the page was opened to show this conversation beside Shiver's DM list */
+  conversation: string | null;
   /** another server holds the voice session (which one is never said), so joins are refused */
   voiceLocked: boolean;
   minimiseAttachments: boolean;
@@ -100,7 +98,8 @@ declare global {
       fullscreen: boolean;
     };
     __SHIVER_SET_MUTED__?: (muted: number[]) => void;
-    __SHIVER_OPEN_DM__?: (name: string) => void;
+    /** shows one conversation beside Shiver's DM list, or (null) goes back to the channels */
+    __SHIVER_CONVERSATION__?: (name: string | null) => void;
     __SHIVER_SELECT_CHANNEL__?: (channelId: number) => void;
     __SHIVER_SET_READ_FLOOR__?: (floor: Record<string, number>) => void;
     __SHIVER_SET_THEME__?: (theme: ShiverTheme | null) => void;
@@ -121,13 +120,6 @@ const isFullscreen = () => !!nativeFullscreenElement && nativeApply(nativeFullsc
 
 function install(shiver: ShiverConfig) {
   seedSession(shiver.token);
-
-  if (shiver.role === 'dm') {
-    installConversationView(shiver);
-
-    return;
-  }
-
   seedDefaults();
 
   // prototype patches, which must be in place before the page's scripts; the volume first, since
@@ -189,7 +181,7 @@ function install(shiver: ShiverConfig) {
     return drained;
   });
 
-  defineHook('__SHIVER_OPEN_DM__', openDirectMessage);
+  defineHook('__SHIVER_CONVERSATION__', showConversation);
   defineHook('__SHIVER_SELECT_CHANNEL__', selectChannelWhenReady);
   defineHook('__SHIVER_SET_READ_FLOOR__', (floor) => void storeReadFloor(floor));
   defineHook('__SHIVER_SET_THEME__', applyPageTheme);
@@ -223,6 +215,8 @@ function install(shiver: ShiverConfig) {
     installAttachmentFocus();
     installVoiceColors();
     installVoiceLock(shiver.voiceLocked, () => state);
+
+    if (shiver.conversation) showConversation(shiver.conversation);
 
     let dmInputs: unknown[] = [];
 
@@ -260,65 +254,6 @@ function install(shiver: ShiverConfig) {
 
     // Sharkord re-renders the channel list constantly, dropping the dimming
     onDomSettled(() => paintMuted(muted));
-  });
-}
-
-/**
- * A second page for the same server showing one DM. It hides its sidebar, throws its notifications
- * away (the server page reports them) and reports only a failed open, links and the channel on
- * screen.
- */
-function installConversationView(shiver: ShiverConfig) {
-  const openQueue: string[] = [];
-  let openDmFailure: string | null = null;
-
-  installExternalLinks((href) => openQueue.push(href));
-  installSoundVolume(shiver.soundVolume);
-  silenceMessagePing();
-  installNotificationWrapper(() => undefined);
-
-  reportOpenDmFailure = (name) => {
-    openDmFailure = name;
-  };
-
-  defineHook('__SHIVER_OPEN_DM__', openDirectMessage);
-  defineHook('__SHIVER_SET_THEME__', applyPageTheme);
-
-  defineHook('__SHIVER_DRAIN__', () => {
-    const failure = openDmFailure;
-    const selected = sharkordStore()?.getState().selectedChannelId;
-
-    openDmFailure = null;
-
-    return {
-      notifications: [],
-      mutes: [],
-      dms: null,
-      syncedMutes: null,
-      open: openQueue.splice(0),
-      openDmFailed: failure,
-      ready: false,
-      signedOut: false,
-      fullscreen: false,
-      voice: null,
-      viewingChannelId: typeof selected === 'number' ? selected : null
-    };
-  });
-
-  whenDocumentReady(() => {
-    if (shiver.theme) applyPageTheme(shiver.theme);
-
-    reserveTopBarSpace();
-    hideSidebar();
-    installRoleColors();
-    installAttachmentCards(shiver.minimiseAttachments);
-    installAttachmentFocus();
-    installVoiceColors();
-
-    if (shiver.openDm) openDirectMessage(shiver.openDm);
-
-    // DM mode has to survive the sidebar being re-rendered as the client connects
-    onDomSettled(hideSidebar);
   });
 }
 
@@ -541,13 +476,34 @@ function readDms(origin: string, state: SharkordState, lastSeen: Map<number, num
   return list.sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0) || a.name.localeCompare(b.name));
 }
 
-/** Hides Sharkord's sidebar, since Shiver's DM list is beside the page. */
-function hideSidebar() {
+/** whether the page left Sharkord's channels to show a conversation, so leaving goes back to them */
+let conversationLeftChannels: boolean | null = null;
+
+/**
+ * Shows the conversation with `name` beside Shiver's DM list, hiding Sharkord's sidebar (Shiver's
+ * list stands in for it); `null` shows the sidebar again and, if the page was on its channels
+ * before, goes back to them.
+ */
+function showConversation(name: string | null) {
+  if (name === null) {
+    if (conversationLeftChannels === null) return;
+
+    ensureStyle('shiver-dm-mode').textContent = '';
+
+    if (conversationLeftChannels && document.querySelector(DM_ITEM)) document.querySelector<HTMLElement>(DM_TOGGLE)?.click();
+
+    conversationLeftChannels = null;
+
+    return;
+  }
+
+  conversationLeftChannels ??= !document.querySelector(DM_ITEM);
   ensureStyle('shiver-dm-mode').textContent = `${SIDEBAR} { display: none !important; }`;
+  openDirectMessage(name);
 }
 
 let openDmTimer: number | null = null;
-/** set by the installers, so a failed open reaches the next drain */
+/** set by `install`, so a failed open reaches the next drain */
 let reportOpenDmFailure: (name: string) => void = () => undefined;
 
 /**

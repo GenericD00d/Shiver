@@ -19,7 +19,7 @@ use crate::{
     session,
     store::{RegistryStore, Store},
     voice::VoiceState,
-    webviews::{self, ActiveServer, OVERLAY_WEBVIEW, SHELL_WEBVIEW},
+    webviews::{self, OVERLAY_WEBVIEW, SHELL_WEBVIEW},
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(750);
@@ -137,13 +137,8 @@ fn poll_once(app: &AppHandle) {
         .collect();
 
     for entry_id in &entry_ids {
-        for (label, is_server_page) in [
-            (webviews::webview_label(entry_id), true),
-            (webviews::dm_webview_label(entry_id), false),
-        ] {
-            if let Some(webview) = app.get_webview(&label) {
-                drain_webview(app, &webview, entry_id.clone(), is_server_page);
-            }
+        if let Some(webview) = app.get_webview(&webviews::webview_label(entry_id)) {
+            drain_webview(app, &webview, entry_id.clone());
         }
     }
 
@@ -192,12 +187,7 @@ fn reconcile_voice(app: &AppHandle, entry_ids: &[String]) {
     }
 }
 
-fn drain_webview(
-    app: &AppHandle,
-    webview: &tauri::Webview,
-    entry_id: String,
-    is_server_page: bool,
-) {
+fn drain_webview(app: &AppHandle, webview: &tauri::Webview, entry_id: String) {
     let app = app.clone();
 
     // null until the bridge has installed itself
@@ -222,13 +212,11 @@ fn drain_webview(
         // off the UI thread: applying can write the registry to disk
         let (app, entry_id) = (app.clone(), entry_id.clone());
 
-        tauri::async_runtime::spawn_blocking(move || {
-            apply(&app, &entry_id, result, is_server_page)
-        });
+        tauri::async_runtime::spawn_blocking(move || apply(&app, &entry_id, result));
     });
 }
 
-fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_page: bool) {
+fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
     let (server_name, account_label, muted, has_identity, origin) = {
         let store = app.state::<Store>();
         let registry = store.registry();
@@ -246,21 +234,14 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
         )
     };
 
-    if is_server_page {
-        apply_server_page(
-            app,
-            entry_id,
-            &server_name,
-            &account_label,
-            has_identity,
-            &mut result,
-        );
-    } else if let Some(channel_id) = result.viewing_channel_id {
-        // the conversation view is the only thing that knows which DM is being read
-        if app.state::<ActiveServer>().dm_on_screen().as_deref() == Some(entry_id) {
-            crate::badges::channel_viewed(app, entry_id, channel_id);
-        }
-    }
+    apply_page_state(
+        app,
+        entry_id,
+        &server_name,
+        &account_label,
+        has_identity,
+        &mut result,
+    );
 
     for url in app
         .state::<webviews::Openings>()
@@ -346,9 +327,9 @@ pub fn notify_feed_changed<R: tauri::Runtime>(app: &AppHandle<R>) {
     }
 }
 
-/// The parts of a drain only the server page answers for: fullscreen, sign-in state, readiness,
-/// voice and the channel on screen.
-fn apply_server_page(
+/// The page's own state in a drain: fullscreen, sign-in state, readiness, voice and the channel on
+/// screen.
+fn apply_page_state(
     app: &AppHandle,
     entry_id: &str,
     server_name: &str,

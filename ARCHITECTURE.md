@@ -92,7 +92,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `commands` | all `#[tauri::command]`s for shell/bell/popup: registry & servers (`list_registry`, `check_server`, `add_server`, `remove_server`, `log_out_server`, `sign_in_server`, `forget_password`, `refresh_server_info`, `set_accept_any_size`, `reset_media_permissions`), rail (`reorder_servers`, `reorder_rail`, `create_folder_with`, `rename_folder`, `delete_folder`, `set_server_folder`, `set_folder_expanded`, `show_folder_menu`, `show_server_menu`), navigation (`select_server`, `prepare_server`, `show_shell`, `exit_dm_split`, `open_dm`, `open_message`, `select_channel`), voice (`voice_status`, `voice_control`), settings (`app_version`, `get_settings`, `update_settings`), feed (`list_notifications`, `list_dms`, `feed_summary`, `unread_counts`, `mark_server_read`, `mark_notifications_read`, `clear_notifications`, `set_channel_muted`), popup (`toggle_popup`, `close_popup`, `dismiss_popup`) |
 | `model` | `ServerEntry` (`label`), `Settings` (`sanitised`, `pages_kept`), `Registry` (`registry!` helpers), `*_PAGES_KEPT` |
 | `store` | `Store` alias, `RegistryStore::update`, `load` |
-| `webviews` | window/webview layout and page lifecycle: labels (`MAIN_WINDOW`, `SHELL_WEBVIEW`, `OVERLAY_WEBVIEW`, `POPUP_WEBVIEW`, `webview_label`, `dm_webview_label`, `is_shiver_chrome`), `ActiveServer`, `create_main_window`, `chrome_webview` (Shiver's own webviews, pinned to its pages), `relayout`, `show_server`, `preload_server`, `trim_pages`, `close_server`, DM split (`show_dm_view`, `preload_dm_view`, `close_dm_view`, `hide_dm_views`), profiles (`discard_profiles`, `prune_profiles`; a directory each, a data store on macOS 14+), pushes into pages (`push_visibility`, `push_theme`, `push_voice_lock`, `push_muted`, `run_voice_action`, `mark_all_read`), `open_in_browser`, `Openings` |
+| `webviews` | window/webview layout and page lifecycle: labels (`MAIN_WINDOW`, `SHELL_WEBVIEW`, `OVERLAY_WEBVIEW`, `POPUP_WEBVIEW`, `webview_label`, `is_shiver_chrome`), `ActiveServer` (`is_on_screen`), `create_main_window`, `chrome_webview` (Shiver's own webviews, pinned to its pages), `relayout`, `show_server`, `preload_server`, `trim_pages`, `close_server`, conversations in the server's own page beside the DM list (`show_conversation`, `end_conversation`), profiles (`discard_profiles`, `prune_profiles`; a directory each, a data store on macOS 14+), pushes into pages (`push_visibility`, `push_theme`, `push_voice_lock`, `push_muted`, `run_voice_action`, `mark_all_read`), `open_in_browser`, `Openings` |
 | `drain` | polls pages' `__SHIVER_DRAIN__`; events `shiver://feed|dm-failed|server-ready|voice|signed-out|status|open-message`; `Readiness`, `ServerStatus`, `Broadcast`, `spawn`, `notify_feed_changed` |
 | `watch` | core sockets to servers without an open page (`sharkord_client::watch`): `sync`, `restart`, `forget`, `Missed`, `ReadStates`, `Plugins`, `Reported`, `Watcher`, `channel_read`, `mark_read`, `publish_floor` |
 | `feed` | `Feed` (notifications + DMs): `push`, `push_update`, `set_dms`, `mark_*`, `clear`, `forget_entry`, `unread_*`, `summary`; `FeedSummary` (the feed event's payload), `Notification`, `DmEntry`, `DmChannel`, `DrainResult`, `RawNotification`, `QueuedMute` |
@@ -106,7 +106,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `update` | signed self-update: `start` (announces `shiver://update`), `check_for_update`, `install_update`, `available_update`, `skip_update`, `open_repository`, `Available` |
 
 Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and core→page
-`__SHIVER_SET_THEME__`, `_SET_MUTED__`, `_SET_HIDDEN__`, `_OPEN_DM__`,
+`__SHIVER_SET_THEME__`, `_SET_MUTED__`, `_SET_HIDDEN__`, `_CONVERSATION__`,
 `_SELECT_CHANNEL__`, `_MARK_ALL_READ__`, `_VOICE__`, `_SET_VOICE_LOCK__`, `_SET_SOUND_VOLUME__`,
 `_SET_ATTACHMENT_CARDS__`, `_SET_READ_FLOOR__`.
 
@@ -153,7 +153,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
   `ServerRail`, `AddServerPanel`, `SignInPanel`, `SettingsPanel`, `HotkeyField`, `DirectMessagesPanel`,
   `NotificationList` (`relativeTime`), `RenameFolderPanel`, `RemoveServerPanel`, `ConnectingPanel`, `WelcomePanel`,
   `VoiceTile`, `UpdateNotice`, `icons`.
-- **desktop/bridge/index.ts**: one file: session seeding, DM reading/opening, voice read/control/lock,
+- **desktop/bridge/index.ts**: one file: session seeding, DM reading, conversation mode (`showConversation`), voice read/control/lock,
   channel menu mute, notification capture, drain queue.
 - **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits on the rail after `#home`; `__SHIVER_BACK__` reopens it), `api.ts`, `types.ts`, `components/`:
   `Boot` (confirms rail menu actions, the way back after `#home`), `Rail` (`RailRef`), `ServerList`, `AddServer`, `SignInServer`,

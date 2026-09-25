@@ -183,10 +183,6 @@ fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: &str) {
         active.get().as_deref() == Some(entry.id.as_str()) && active.showing_server()
     };
 
-    let had_dm_view = app
-        .get_webview(&webviews::dm_webview_label(&entry.id))
-        .is_some();
-
     if let Err(error) = webviews::close_server(app, &entry.id) {
         eprintln!(
             "[shiver] could not close {} to rebuild it: {error}",
@@ -196,7 +192,6 @@ fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: &str) {
         return;
     }
 
-    webviews::close_dm_view(app, &entry.id);
     app.state::<Readiness>().forget_entry(&entry.id);
 
     let locked = app
@@ -210,16 +205,7 @@ fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: &str) {
         webviews::preload_server(app, entry, &settings, Some(token), &muted, locked)
     };
 
-    // the conversation view comes back only if there was one: it is a second whole client
-    let rebuilt = built.and_then(|()| {
-        if had_dm_view {
-            webviews::preload_dm_view(app, entry, &settings, Some(token))
-        } else {
-            Ok(())
-        }
-    });
-
-    if let Err(error) = rebuilt {
+    if let Err(error) = built {
         eprintln!("[shiver] could not rebuild {}: {error}", entry.origin);
     }
 }
