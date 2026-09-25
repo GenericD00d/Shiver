@@ -78,6 +78,14 @@ pub struct Notification {
     pub update: Option<String>,
 }
 
+/// What the bell needs: the unread count, and the newest entry (it pings for one newer than the last
+/// it saw). Sent with every feed change.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct FeedSummary {
+    pub unread: usize,
+    pub newest: Option<u64>,
+}
+
 /// A DM conversation as reported by one server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -326,12 +334,20 @@ impl Feed {
     }
 
     pub fn unread_count(&self) -> usize {
-        self.0
-            .locked()
-            .notifications
-            .iter()
-            .filter(|entry| !entry.read)
-            .count()
+        self.summary().unread
+    }
+
+    pub fn summary(&self) -> FeedSummary {
+        let state = self.0.locked();
+
+        FeedSummary {
+            unread: state
+                .notifications
+                .iter()
+                .filter(|entry| !entry.read)
+                .count(),
+            newest: state.notifications.front().map(|entry| entry.id),
+        }
     }
 
     /// Unread per entry; entries with none are absent.

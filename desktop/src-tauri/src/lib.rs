@@ -118,7 +118,7 @@ pub fn run() {
             commands::log_out_server,
             commands::list_notifications,
             commands::list_dms,
-            commands::unread_count,
+            commands::feed_summary,
             commands::unread_counts,
             commands::set_accept_any_size,
             commands::mark_server_read,

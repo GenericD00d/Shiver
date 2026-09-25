@@ -10,19 +10,16 @@ import type { Notification } from './types';
 export const NotificationsPopup = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
-  const refresh = useCallback(async () => {
-    const [feed, settings] = await Promise.all([api.listNotifications(), api.getSettings()]);
-
-    setNotifications(feed);
-    applyTheme(settings);
-  }, []);
+  const refresh = useCallback(async () => setNotifications(await api.listNotifications()), []);
+  const loadTheme = useCallback(async () => applyTheme(await api.getSettings()), []);
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    void loadTheme();
+  }, [refresh, loadTheme]);
 
   useCoreEvent(EVENTS.feed, () => void refresh());
-  useCoreEvent(EVENTS.settings, () => void refresh());
+  useCoreEvent(EVENTS.settings, () => void loadTheme());
 
   const handleClear = useCallback(async () => {
     await api.clearNotifications();

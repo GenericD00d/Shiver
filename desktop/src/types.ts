@@ -16,6 +16,9 @@ export type ServerEntry = {
   position: number;
 };
 
+/** `FeedSummary` in feed.rs: sent with every feed change. */
+export type FeedSummary = { unread: number; newest: number | null };
+
 export type Notification = {
   id: number;
   entryId: string;

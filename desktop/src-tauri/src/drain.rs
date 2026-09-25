@@ -339,8 +339,10 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
 pub fn notify_feed_changed<R: tauri::Runtime>(app: &AppHandle<R>) {
     crate::badge::refresh(app);
 
+    let summary = app.state::<Feed>().summary();
+
     for label in [SHELL_WEBVIEW, OVERLAY_WEBVIEW, webviews::POPUP_WEBVIEW] {
-        let _ = app.emit_to(label, FEED_EVENT, ());
+        let _ = app.emit_to(label, FEED_EVENT, summary);
     }
 }
 

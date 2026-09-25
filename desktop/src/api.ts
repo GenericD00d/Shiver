@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 import type {
   DmEntry,
+  FeedSummary,
   Folder,
   Notification,
   Registry,
@@ -52,7 +53,8 @@ export const api = {
 
   listDms: () => invoke<DmEntry[]>('list_dms'),
 
-  unreadCount: () => invoke<number>('unread_count'),
+  /** the bell's unread count and newest entry, as every feed event also carries them */
+  feedSummary: () => invoke<FeedSummary>('feed_summary'),
 
   /** unread per rail entry, for the badges on the server icons */
   unreadCounts: () => invoke<Record<string, number>>('unread_counts'),

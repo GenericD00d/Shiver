@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 use crate::{
     drain::{self, Readiness},
     error::{Core, Error, Result},
-    feed::{DmEntry, Feed, Notification},
+    feed::{DmEntry, Feed, FeedSummary, Notification},
     hotkey, jwt,
     model::{normalize_origin, Folder, Registry, ServerEntry, Settings},
     secrets::{self, Secret},
@@ -774,10 +774,10 @@ pub fn list_dms(feed: State<'_, Feed>) -> Vec<DmEntry> {
     feed.dms()
 }
 
-/// The bell's count: the feed only, since every entry there has a message to show.
+/// The bell's count (the feed only, since every entry there has a message to show) and newest entry.
 #[tauri::command]
-pub fn unread_count(feed: State<'_, Feed>) -> usize {
-    feed.unread_count()
+pub fn feed_summary(feed: State<'_, Feed>) -> FeedSummary {
+    feed.summary()
 }
 
 /// Per-entry rail badges: the feed's unread plus what arrived while Shiver was closed.
