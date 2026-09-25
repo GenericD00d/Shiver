@@ -100,7 +100,6 @@ export const api = {
   setServerFolder: (id: string, folderId: string | null) =>
     invoke<void>('set_server_folder', { id, folderId }),
 
-
   renameFolder: (id: string, name: string) => invoke<void>('rename_folder', { id, name }),
 
   deleteFolder: (id: string) => invoke<void>('delete_folder', { id }),

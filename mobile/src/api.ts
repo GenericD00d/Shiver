@@ -51,14 +51,12 @@ export const api = {
     invoke<void>('set_folder_expanded', { id, expanded }),
   selectServer: (id: string, dmUser?: string) => invoke<void>('select_server', { id, dmUser }),
 
-
-
   /** which build this is, for the settings screen and for answering "what are you running" */
   appVersion: () => invoke<string>('app_version'),
 
-  /** the newer version, when the core has found one; null otherwise */
   /** takes back the stored password for one server; the session is left alone */
   forgetPassword: (id: string) => invoke<void>('forget_password', { id }),
+  /** the newer version, when the core has found one; null otherwise */
   updateAvailable: () => invoke<string | null>('update_available'),
   /** turn one version down, so nothing mentions it again — not even on the next launch */
   skipUpdate: (version: string) => invoke<void>('skip_update', { version }),
@@ -74,8 +72,7 @@ export const api = {
   /** re-reads a server's name and logo from its public /info */
   refreshServerInfo: (id: string) => invoke<ServerEntry>('refresh_server_info', { id }),
 
-  /** both refuse unless that server is the one on screen; only its own client can do them */
-
+  /** forgets the server's session and password and wipes its page's storage */
   logOutServer: (id: string) => invoke<void>('log_out_server', { id }),
 
   /** Forgets every session and password Shiver holds; pages' own sign-ins are left alone. */
