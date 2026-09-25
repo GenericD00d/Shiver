@@ -151,7 +151,17 @@ where
         let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
 
         let write = (|| -> std::io::Result<()> {
-            let mut file = fs::File::create(&temp)?;
+            let mut options = fs::OpenOptions::new();
+
+            // it names the user's servers and accounts: theirs alone to read
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+
+            let mut file = options
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&temp)?;
 
             file.write_all(json.as_bytes())?;
             file.sync_all()?;
@@ -231,6 +241,14 @@ mod tests {
             .file_name()
             .to_string_lossy()
             .contains(".tmp")));
+
+        #[cfg(unix)]
+        assert_eq!(
+            std::os::unix::fs::PermissionsExt::mode(
+                &fs::metadata(dir.join(REGISTRY_FILE)).unwrap().permissions()
+            ) & 0o777,
+            0o600
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

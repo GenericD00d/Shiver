@@ -6,7 +6,10 @@ const MAX_SERVER_MESSAGE: usize = 200;
 /// Drops invisible characters (bidi overrides, zero-width marks) a server could disguise text
 /// with, then shortens by characters, marking the cut with an ellipsis.
 pub fn clamp(text: String, limit: usize) -> String {
-    let text: String = text.chars().filter(|character| !is_invisible(*character)).collect();
+    let text: String = text
+        .chars()
+        .filter(|character| !is_invisible(*character))
+        .collect();
 
     match text.char_indices().nth(limit) {
         Some((cut, _)) => format!("{}…", &text[..cut]),
