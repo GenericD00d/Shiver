@@ -228,7 +228,6 @@ function install(shiver: ShiverConfig) {
 
     watchStore((next) => {
       state = next;
-      paintMuted(muted);
 
       // the DM list only changes with channels, users or a newly seen message
       const inputs = [next.channels, next.users, next.ownUserId, lastSeenVersion];
