@@ -77,7 +77,8 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   windows are refused. A link it hands over (the bridge queues what the user clicks, but a hostile
   page can queue anything, since the bridge shares its script world) is rationed per server, taken
   only from the page on screen, and opened only after the user says yes in a native dialog the page
-  cannot draw over, unless they chose to trust that site.
+  cannot draw over, unless they chose to trust that site. The dialog names the site first, and a
+  link carrying credentials (`https://bank.example@evil.example/`) is refused.
 - **Sessions never reach a webview's storage.** A small script that runs before the page's own
   patches `Storage.prototype` so Sharkord's auto-login token and live session are served from
   memory (`shared/web/session.ts`). On desktop it is part of the initialization script; on Android

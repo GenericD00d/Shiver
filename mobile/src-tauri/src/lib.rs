@@ -325,7 +325,7 @@ pub fn ask_to_open(app: &AppHandle, server: &str, url: &Url) {
     let app = app.clone();
 
     app.dialog()
-        .message(shiver_core::links::question(server, &url))
+        .message(shiver_core::links::question(server, &site, &url))
         .title("Open link?")
         .buttons(MessageDialogButtons::YesNoCancelCustom(
             "Open".into(),

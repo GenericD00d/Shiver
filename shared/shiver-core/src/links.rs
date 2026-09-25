@@ -10,17 +10,21 @@ const MAX_TRUSTED: usize = 200;
 const MAX_SHOWN: usize = 300;
 
 /// The site a link goes to, as the browser will see it (lowercase, punycode), for http(s) only.
+/// A link carrying credentials has none, so it is refused: `https://bank.example@evil.example/`
+/// reads as one site and goes to another.
 pub fn site(url: &Url) -> Option<String> {
-    matches!(url.scheme(), "http" | "https")
+    let plain = url.username().is_empty() && url.password().is_none();
+
+    (plain && matches!(url.scheme(), "http" | "https"))
         .then(|| url.host_str())
         .flatten()
         .map(str::to_ascii_lowercase)
 }
 
-/// The question put to the user.
-pub fn question(server: &str, url: &Url) -> String {
+/// The question put to the user, naming the site first, where no length of address can hide it.
+pub fn question(server: &str, site: &str, url: &Url) -> String {
     format!(
-        "{server} wants to open this in your browser:\n\n{}",
+        "{server} wants to open a page on {site} in your browser:\n\n{}",
         crate::text::clamp(url.to_string(), MAX_SHOWN)
     )
 }
@@ -54,6 +58,16 @@ mod tests {
             Some("xn--bcher-kva.example")
         );
         assert_eq!(site(&url("mailto:someone@example.com")), None);
+        assert_eq!(site(&url("https://bank.example@evil.example/")), None);
+        assert_eq!(site(&url("https://:secret@evil.example/")), None);
+    }
+
+    #[test]
+    fn the_question_names_the_site_before_the_address() {
+        let long = url(&format!("https://evil.example/{}", "a".repeat(500)));
+
+        assert!(question("Chat", "evil.example", &long)
+            .starts_with("Chat wants to open a page on evil.example in your browser:"));
     }
 
     #[test]

@@ -72,7 +72,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `text` | `presentable` (server words made safe to show), `clamp` |
 | `probe` | `ServerInfo`, `fetch_info` (`GET /info`, name and description cleaned and bounded), `fetch_icon` (data URI) |
 | `limit` | `Openings`: `take(key, n)` (5/s, 10/10s per key), `grant`, `forget` |
-| `links` | links a page asks to open: `site`, `question`, `trust` (the bounded list of sites that open without asking) |
+| `links` | links a page asks to open: `site` (http(s) only, none for a link carrying credentials), `question` (names the site first), `trust` (the bounded list of sites that open without asking) |
 | `hash` | `java_string` (Java `String.hashCode`) |
 
 ## shared/sharkord-client (`sharkord_client`)

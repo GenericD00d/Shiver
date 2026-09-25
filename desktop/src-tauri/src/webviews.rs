@@ -879,7 +879,7 @@ pub fn ask_to_open(app: &AppHandle, server: &str, url: Url) {
     let always = format!("Always for {site}");
     let mut dialog = app
         .dialog()
-        .message(shiver_core::links::question(server, &url))
+        .message(shiver_core::links::question(server, &site, &url))
         .title("Open link?")
         .buttons(MessageDialogButtons::YesNoCancelCustom(
             "Open".into(),
