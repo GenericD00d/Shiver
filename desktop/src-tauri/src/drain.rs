@@ -1,8 +1,11 @@
 //! Polling the server pages.
 //!
-//! A Sharkord page has no Tauri IPC. Every `POLL_INTERVAL` the core evaluates
-//! `__SHIVER_DRAIN__()` in each page and applies what it returns. A page answers only about itself,
-//! and everything it says is treated as a claim: bounded, and never trusted beyond its own entry.
+//! A Sharkord page has no Tauri IPC, so the core evaluates `__SHIVER_DRAIN__` in it and applies
+//! what it returns: every `POLL_INTERVAL` for the page on screen, one still connecting and the one
+//! holding the call, every `BACKGROUND_EVERY`th for the rest. A page answers with nothing when
+//! nothing changed, except the one on screen (its channel counts as read) and a signed-out one
+//! (recovery retries on its reports). A page answers only about itself, and everything it says is
+//! treated as a claim: bounded, and never trusted beyond its own entry.
 
 use std::{
     collections::{BTreeSet, HashMap},
@@ -23,6 +26,9 @@ use crate::{
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(750);
+
+/// Pages in the background are drained on every this many polls (about two seconds).
+const BACKGROUND_EVERY: u64 = 3;
 
 /// How long a server may be connecting before the rail calls it offline.
 const CONNECT_GRACE: Duration = Duration::from_secs(20);
@@ -120,14 +126,14 @@ pub fn spawn(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(POLL_INTERVAL);
 
-        loop {
+        for tick in 0u64.. {
             ticker.tick().await;
-            poll_once(&app);
+            poll_once(&app, tick % BACKGROUND_EVERY == 0);
         }
     });
 }
 
-fn poll_once(app: &AppHandle) {
+fn poll_once(app: &AppHandle, background_turn: bool) {
     let entry_ids: Vec<String> = app
         .state::<Store>()
         .registry()
@@ -135,10 +141,19 @@ fn poll_once(app: &AppHandle) {
         .iter()
         .map(|entry| entry.id.clone())
         .collect();
+    let in_call = app.state::<VoiceState>().holder();
 
     for entry_id in &entry_ids {
-        if let Some(webview) = app.get_webview(&webviews::webview_label(entry_id)) {
-            drain_webview(app, &webview, entry_id.clone());
+        let Some(webview) = app.get_webview(&webviews::webview_label(entry_id)) else {
+            continue;
+        };
+        let on_screen = crate::badges::is_on_screen(app, entry_id);
+        let urgent = on_screen
+            || in_call.as_ref() == Some(entry_id)
+            || !app.state::<Readiness>().is_ready(entry_id);
+
+        if urgent || background_turn {
+            drain_webview(app, &webview, entry_id.clone(), on_screen);
         }
     }
 
@@ -187,11 +202,11 @@ fn reconcile_voice(app: &AppHandle, entry_ids: &[String]) {
     }
 }
 
-fn drain_webview(app: &AppHandle, webview: &tauri::Webview, entry_id: String) {
+fn drain_webview(app: &AppHandle, webview: &tauri::Webview, entry_id: String, full: bool) {
     let app = app.clone();
 
-    // null until the bridge has installed itself
-    let script = "(window.__SHIVER_DRAIN__ && window.__SHIVER_DRAIN__()) || null";
+    // null until the bridge has installed itself, and when nothing changed (unless `full`)
+    let script = format!("(window.__SHIVER_DRAIN__ && window.__SHIVER_DRAIN__({full})) || null");
 
     let _ = webview.eval_with_callback(script, move |raw| {
         if raw.len() > MAX_DRAIN_BYTES {

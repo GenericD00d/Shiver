@@ -76,8 +76,8 @@ type VoiceAction = 'mic' | 'sound' | 'leave';
 declare global {
   interface Window {
     __SHIVER__?: ShiverConfig;
-    /** everything queued since the last call; the core drains it on a timer */
-    __SHIVER_DRAIN__?: () => {
+    /** everything queued since the last call; null when nothing changed, unless `full` (the core drains it on a timer) */
+    __SHIVER_DRAIN__?: (full: boolean) => {
       notifications: QueuedNotification[];
       dms: DmChannel[] | null;
       mutes: QueuedMute[];
@@ -96,7 +96,7 @@ declare global {
       open: string[];
       /** something is fullscreen, so Shiver hides its overlay webviews */
       fullscreen: boolean;
-    };
+    } | null;
     __SHIVER_SET_MUTED__?: (muted: number[]) => void;
     /** shows one conversation beside Shiver's DM list, or (null) goes back to the channels */
     __SHIVER_CONVERSATION__?: (name: string | null) => void;
@@ -158,7 +158,9 @@ function install(shiver: ShiverConfig) {
   defineHook('__SHIVER_VOICE__', runVoiceAction);
   defineHook('__SHIVER_MARK_ALL_READ__', markAllChannelsRead);
 
-  defineHook('__SHIVER_DRAIN__', () => {
+  let reported = '';
+
+  defineHook('__SHIVER_DRAIN__', (full) => {
     const drained = {
       notifications: resolveDmChannels(queue, state).splice(0),
       mutes: muteQueue.splice(0),
@@ -177,6 +179,15 @@ function install(shiver: ShiverConfig) {
     dms = null;
     syncedMutes = null;
     openDmFailure = null;
+
+    const { notifications, mutes, open, ready, signedOut, fullscreen, voice, viewingChannelId } = drained;
+    const now = JSON.stringify([ready, signedOut, fullscreen, voice, viewingChannelId]);
+    const queued = notifications.length || mutes.length || open.length || drained.dms || drained.syncedMutes || drained.openDmFailed;
+
+    // a signed-out page keeps saying so: recovery retries on those reports
+    if (!full && !queued && !signedOut && now === reported) return null;
+
+    reported = now;
 
     return drained;
   });
