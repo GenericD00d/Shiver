@@ -29,7 +29,7 @@ const MAX_DMS: usize = 500;
 const DUPLICATE_WINDOW_MS: u64 = 30 * 1000;
 
 /// Milliseconds from a page, where numbers are doubles (possibly in exponent form).
-pub fn optional_millis<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+fn optional_millis<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

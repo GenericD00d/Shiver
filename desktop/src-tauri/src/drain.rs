@@ -38,12 +38,12 @@ const MAX_NOTIFICATIONS_PER_DRAIN: usize = 50;
 
 const MAX_DRAIN_BYTES: usize = 4 * 1024 * 1024;
 
-pub const FEED_EVENT: &str = "shiver://feed";
-pub const DM_FAILED_EVENT: &str = "shiver://dm-failed";
-pub const SERVER_READY_EVENT: &str = "shiver://server-ready";
+const FEED_EVENT: &str = "shiver://feed";
+const DM_FAILED_EVENT: &str = "shiver://dm-failed";
+const SERVER_READY_EVENT: &str = "shiver://server-ready";
 pub const VOICE_EVENT: &str = "shiver://voice";
-pub const SIGNED_OUT_EVENT: &str = "shiver://signed-out";
-pub const STATUS_EVENT: &str = "shiver://status";
+const SIGNED_OUT_EVENT: &str = "shiver://signed-out";
+const STATUS_EVENT: &str = "shiver://status";
 /// The popup asks the shell to open a message; the shell owns server switching.
 pub const OPEN_MESSAGE_EVENT: &str = "shiver://open-message";
 

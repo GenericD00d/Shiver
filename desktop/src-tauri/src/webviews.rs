@@ -33,11 +33,11 @@ pub const OVERLAY_WEBVIEW: &str = "overlay";
 pub const POPUP_WEBVIEW: &str = "popup";
 
 /// Tells the bell whether its popup is open.
-pub const POPUP_EVENT: &str = "shiver://popup";
+const POPUP_EVENT: &str = "shiver://popup";
 
 /// Width of the rail, and of Shiver's DM list (matching Sharkord's `w-72` sidebar).
-pub const RAIL_WIDTH: f64 = 72.0;
-pub const DM_LIST_WIDTH: f64 = 288.0;
+const RAIL_WIDTH: f64 = 72.0;
+const DM_LIST_WIDTH: f64 = 288.0;
 const BELL_SIZE: (f64, f64) = (48.0, 48.0);
 const POPUP_SIZE: (f64, f64) = (380.0, 540.0);
 
@@ -335,7 +335,7 @@ fn chrome_webview(label: &str, path: &str) -> WebviewBuilder<tauri::Wry> {
 }
 
 /// Rebuilds the bell on top of everything (and closes the popup, which is rebuilt on demand).
-pub fn ensure_overlay(app: &AppHandle) -> Result<()> {
+fn ensure_overlay(app: &AppHandle) -> Result<()> {
     let window = main_window(app)?;
 
     set_popup_open(app, false)?;
