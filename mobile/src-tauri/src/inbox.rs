@@ -475,6 +475,19 @@ pub fn sync(app: &AppHandle) {
     publish(app);
 }
 
+/// Drops a server's connection and any problem with it, so the next attempt uses what changed.
+pub fn restart(app: &AppHandle, entry_id: &str) {
+    app.state::<Inbox>().with(|state| {
+        state.problems.remove(entry_id);
+
+        if let Some(task) = state.running.remove(entry_id) {
+            task.abort();
+        }
+    });
+
+    sync(app);
+}
+
 /// Watches one server with the session Shiver holds. A refused session is renewed from the stored
 /// password; repeated refusals give up and mark the server signed out.
 async fn watch(app: AppHandle, entry_id: String) {

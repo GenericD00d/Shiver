@@ -354,9 +354,14 @@ pub fn remembered_servers(inbox: State<'_, Inbox>, store: State<'_, Store>) -> V
         .collect()
 }
 
-/// Raises (or restores) the message size limit; takes effect on the next connection attempt.
+/// Raises (or restores) the message size limit, and reconnects with it.
 #[tauri::command]
-pub async fn set_accept_any_size(store: State<'_, Store>, id: String, accept: bool) -> Result<()> {
+pub async fn set_accept_any_size(
+    app: AppHandle,
+    store: State<'_, Store>,
+    id: String,
+    accept: bool,
+) -> Result<()> {
     store.update(|registry| {
         registry
             .server_mut(&id)
@@ -364,7 +369,11 @@ pub async fn set_accept_any_size(store: State<'_, Store>, id: String, accept: bo
             .accept_any_size = accept;
 
         Ok(())
-    })
+    })?;
+
+    inbox::restart(&app, &id);
+
+    Ok(())
 }
 
 #[derive(serde::Serialize)]
