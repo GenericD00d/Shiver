@@ -842,9 +842,9 @@ fn build_page_webview(
         );
     }
 
-    window.add_child(builder, position, size)?;
+    let webview = window.add_child(builder, position, size)?;
 
-    crate::permissions::apply_pending_reset(window.app_handle(), &entry.id);
+    crate::permissions::gate(window.app_handle(), &webview, entry);
 
     Ok(())
 }
@@ -1083,6 +1083,7 @@ mod tests {
             position: 0,
             accept_any_size: false,
             profile: profile.map(str::to_string),
+            media_allowed: false,
         }
     }
 

@@ -135,7 +135,7 @@ export const api = {
   /** Lets one server past the message-size limit (offered only once it has hit it), or puts it back. */
   setAcceptAnySize: (id: string, accept: boolean) =>
     invoke<void>('set_accept_any_size', { id, accept }),
-  /** forgets the camera and microphone answers WebView2 stored; resolves with how many there were */
+  /** makes every server ask again for the camera and microphone; resolves with how many had a yes */
   resetMediaPermissions: () => invoke<number>('reset_media_permissions'),
   appVersion: () => invoke<string>('app_version'),
 

@@ -60,11 +60,13 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   refuses any command not sent by Shiver's own webviews. Android reports a new page's origin late,
   so it refuses every command while a server is on screen or being opened, or while a page Shiver
   did not open (a step back through history) is loading on its way home.
-- **Camera and microphone go only where you said yes.** On Android they go only to the server page
-  on screen (never a frame inside it), after Shiver has asked you once for that server; a log out or
-  removal forgets the answer. WebView2 on Windows asks per site itself, and WebKitGTK on Linux
-  refuses. macOS is not yet covered: wry grants every page there, so a macOS build must not ship
-  until Shiver handles it.
+- **Camera and microphone go only where you said yes.** On Android and Windows they go only to the
+  server page on screen (never a frame from elsewhere inside it), after Shiver has asked you once for
+  that server in a dialog the page cannot draw over; a log out or removal forgets the answer. The
+  one exception is the microphone for the page holding your call, which may have it again while
+  hidden (a call can ask anew), and only once you said yes. A stream a page started on screen keeps
+  running when you switch away, as a call must. WebKitGTK on Linux refuses. macOS is not yet
+  covered: wry grants every page there, so a macOS build must not ship until Shiver handles it.
 - **A page cannot open the browser by itself.** Its own navigations off its origin and its new
   windows are refused. A link it hands over (the bridge queues what the user clicks, but a hostile
   page can queue anything, since the bridge shares its script world) is rationed per server, taken

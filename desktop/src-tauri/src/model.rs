@@ -41,6 +41,9 @@ pub struct ServerEntry {
     /// the generation of this entry's browser profile; replaced on log out so nothing carries over
     #[serde(default)]
     pub profile: Option<String>,
+    /// the user let this server's page use the camera and microphone
+    #[serde(default)]
+    pub media_allowed: bool,
 }
 
 impl ServerEntry {
@@ -143,7 +146,4 @@ pub struct Registry {
     /// only what arrives above this floor, so a server's old backlog is not "unread".
     #[serde(default)]
     pub baselines: HashMap<String, HashMap<i64, u32>>,
-    /// entries whose camera/microphone answers should be reset the next time their page opens
-    #[serde(default)]
-    pub pending_permission_resets: Vec<String>,
 }
