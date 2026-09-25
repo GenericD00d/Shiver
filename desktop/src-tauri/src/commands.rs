@@ -303,7 +303,6 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
     let locked = voice_locked_for(&app, &id);
 
     webviews::show_server(&app, &entry, &settings, None, &[], locked)?;
-    webviews::preload_dm_view(&app, &entry, &settings, None)?;
     crate::watch::sync(&app);
     crate::watch::forget(&app, &id);
     drain::notify_feed_changed(&app);
