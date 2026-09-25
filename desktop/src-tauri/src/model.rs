@@ -46,6 +46,16 @@ pub struct ServerEntry {
     pub profile: Option<String>,
 }
 
+impl ServerEntry {
+    /// What tells this account apart in lists: its label, else the username it signs in with.
+    pub fn label(&self) -> String {
+        self.account_label
+            .clone()
+            .or_else(|| self.identity.clone())
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {

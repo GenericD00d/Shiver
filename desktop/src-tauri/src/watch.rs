@@ -355,9 +355,9 @@ fn recount<R: Runtime>(app: &AppHandle<R>, entry_id: &str) -> bool {
         .cloned()
         .unwrap_or_default();
     let muted = muted_set(app, entry_id);
-    let recomputed = app
-        .state::<ReadStates>()
-        .apply(entry_id, |states| missed_since(states, &floor, &muted));
+    let recomputed = app.state::<ReadStates>().apply(entry_id, |states| {
+        sharkord::unread_total(states, &floor, &muted) as usize
+    });
 
     app.state::<Missed>().lower_to(entry_id, recomputed)
 }
@@ -433,25 +433,8 @@ fn count_missed<R: Runtime>(
 
     app.state::<Missed>().set(
         entry_id,
-        missed_since(read_states, &baseline, &muted_set(app, entry_id)),
+        sharkord::unread_total(read_states, &baseline, &muted_set(app, entry_id)) as usize,
     );
-}
-
-/// Unread above the floor, skipping muted channels; a channel below its floor counts zero.
-fn missed_since(
-    read_states: &HashMap<i64, u32>,
-    baseline: &HashMap<i64, u32>,
-    muted: &HashSet<i64>,
-) -> usize {
-    sharkord::unread_total(read_states, baseline, muted) as usize
-}
-
-fn account_label(entry: &ServerEntry) -> String {
-    entry
-        .account_label
-        .clone()
-        .or_else(|| entry.identity.clone())
-        .unwrap_or_default()
 }
 
 /// Hands the join's conversation list to the inbox.
@@ -460,7 +443,7 @@ fn publish_dms(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
         .state::<Store>()
         .registry()
         .server(entry_id)
-        .map(|entry| (entry.name.clone(), account_label(entry)))
+        .map(|entry| (entry.name.clone(), entry.label()))
     else {
         return;
     };
@@ -573,32 +556,6 @@ fn report_too_large(app: &AppHandle, entry_id: &str, size: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn muted<const N: usize>(channels: [i64; N]) -> HashSet<i64> {
-        channels.into_iter().collect()
-    }
-
-    #[test]
-    fn missed_counts_only_what_is_above_the_floor_and_unmuted() {
-        let floor = HashMap::from([(1, 5), (2, 9)]);
-
-        assert_eq!(
-            missed_since(&HashMap::from([(1, 8), (2, 9)]), &floor, &muted([])),
-            3
-        );
-        assert_eq!(
-            missed_since(&HashMap::from([(1, 2)]), &floor, &muted([])),
-            0
-        );
-        assert_eq!(
-            missed_since(&HashMap::from([(7, 4)]), &floor, &muted([])),
-            4
-        );
-        assert_eq!(
-            missed_since(&HashMap::from([(7, 4), (1, 9)]), &floor, &muted([7])),
-            4
-        );
-    }
 
     /// The reported bug: a read elsewhere must bring the badge down, and nothing may push it up.
     #[test]

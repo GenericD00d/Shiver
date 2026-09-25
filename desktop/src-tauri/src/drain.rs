@@ -239,11 +239,7 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
 
         (
             entry.name.clone(),
-            entry
-                .account_label
-                .clone()
-                .or_else(|| entry.identity.clone())
-                .unwrap_or_default(),
+            entry.label(),
             registry.muted_for(entry_id),
             entry.identity.is_some(),
             entry.origin.clone(),
