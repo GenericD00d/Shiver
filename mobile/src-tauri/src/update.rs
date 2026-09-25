@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use shiver_core::LockExt;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
     error::{Core, Error, Result},
@@ -16,6 +16,9 @@ use crate::{
 const MANIFEST: &str = "https://github.com/GenericD00d/Shiver/releases/latest/download/latest.json";
 const RELEASES: &str = "https://github.com/GenericD00d/Shiver/releases/latest";
 const REPOSITORY: &str = "https://github.com/GenericD00d/Shiver";
+
+/// Tells Shiver's page a newer version was found, so its notice appears without asking on a timer.
+const UPDATE_EVENT: &str = "shiver://update";
 const FIRST_CHECK: Duration = Duration::from_secs(45);
 const NOTIFICATION_ID: i32 = 1;
 /// `latest.json` is a few hundred bytes.
@@ -116,6 +119,7 @@ pub fn start(app: &AppHandle) {
         }
 
         app.state::<Available>().set(Some(newest.clone()));
+        let _ = app.emit(UPDATE_EVENT, &newest);
 
         use tauri_plugin_notification::NotificationExt;
 

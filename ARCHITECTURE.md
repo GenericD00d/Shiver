@@ -100,7 +100,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `hotkey` | global mic-mute shortcut `apply` |
 | `badge` / `badges` | taskbar badge `refresh`; `channel_viewed`, `is_on_screen` |
 | `permissions` | WebView2 camera/mic reset: `clear_media_permissions`, `apply_pending_reset` |
-| `update` | signed self-update: `start`, `check_for_update`, `install_update`, `available_update`, `skip_update`, `open_repository`, `Available` |
+| `update` | signed self-update: `start` (announces `shiver://update`), `check_for_update`, `install_update`, `available_update`, `skip_update`, `open_repository`, `Available` |
 
 Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and core→page
 `__SHIVER_SET_THEME__`, `_SET_MUTED__`, `_SET_HIDDEN__`, `_OPEN_DM__`,
@@ -118,7 +118,7 @@ Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and
 | `inbox` | core sockets for servers not on screen + secret storage: `Inbox` (tokens, problems, plugins, dms, unread, signed_out, baselines), `sync`, `restart`, `restore`, `remember_session`, `remember_password`, `forget_password`, `forget_everywhere`, `harvest_token`, `replace_mutes`, `watch_mutes`, `collect_dms`, `DmEntry`, `INBOX_EVENT` |
 | `webview` | the single webview: `Showing` (home, current server and whether it loaded, pending DM user), `show_server`, `show_failed` (back to Shiver's page with `#failed=<id>`), `without_seed`, `install_bridge`/`PageContext`, `read_mutes`, rail polling (`__SHIVER_RAIL_STATE__` → `apply_creates/moves/order`), navigation guard (`is_allowed`, `navigation_allowed`, `is_home`, `landed_home`), `background_color`, `document_start` (bundle wrapped with the per-launch seed secret; `seed_key_for` derives each origin's key), `Openings` |
 | `push` | UnifiedPush per chosen server: `Push`, `start`, `register_wanted`, `set_wanted` (turning off retires the endpoint; the page clears it with the plugin), `unregister`, `migrate_tokens`, `PUSH_EVENT` |
-| `update` | notify-only: `start`, `check_for_update`, `update_available`, `skip_update`, `open_releases`, `open_repository` |
+| `update` | notify-only: `start` (announces `shiver://update`), `check_for_update`, `update_available`, `skip_update`, `open_releases`, `open_repository` |
 
 Page hooks (mobile): `__SHIVER__` (config), `__SHIVER_UNREAD__`,
 `__SHIVER_MUTED__`, `__SHIVER_OPEN__`, `__SHIVER_RAIL_STATE__`, `__SHIVER_BACK__`,

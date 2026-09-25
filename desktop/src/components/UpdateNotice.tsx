@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { api, errorMessage } from '../api';
+import { EVENTS, useCoreEvent } from '../events';
 
 /**
  * A bar announcing a newer release on launch. Install now, Later (the bell keeps the offer) or Skip
@@ -12,29 +13,14 @@ export const UpdateNotice = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let live = true;
-
-    // The check runs on a timer of its own after launch, so the answer is usually not ready the
-    // first time this asks. Polling briefly is what turns "there is an update" into something seen
-    // on the launch it was found, rather than on the next one.
-    const ask = () => {
-      api
-        .availableUpdate()
-        .then((found) => {
-          if (live && found) setVersion(found);
-        })
-        .catch(() => undefined);
-    };
-
-    ask();
-
-    const timer = window.setInterval(ask, 10_000);
-
-    return () => {
-      live = false;
-      window.clearInterval(timer);
-    };
+    api
+      .availableUpdate()
+      .then(setVersion)
+      .catch(() => undefined);
   }, []);
+
+  // found after launch, by the core's own check; "Later" holds until a newer one is found
+  useCoreEvent<string>(EVENTS.update, setVersion);
 
   const handleInstall = useCallback(async () => {
     setBusy('Downloading…');

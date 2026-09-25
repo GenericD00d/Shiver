@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use shiver_core::LockExt;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::{
@@ -18,6 +18,9 @@ use crate::{
 const FIRST_CHECK: Duration = Duration::from_secs(30);
 const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 const REPOSITORY: &str = "https://github.com/GenericD00d/Shiver";
+
+/// Tells the shell a newer version was found, so its bar appears without asking on a timer.
+const UPDATE_EVENT: &str = "shiver://update";
 
 /// The newer version, once known and not turned down.
 #[derive(Default)]
@@ -80,6 +83,7 @@ async fn look(app: &AppHandle) {
     app.state::<Available>().set(Some(version.clone()));
     app.state::<Feed>().push_update(&version);
     crate::drain::notify_feed_changed(app);
+    let _ = app.emit_to(crate::webviews::SHELL_WEBVIEW, UPDATE_EVENT, &version);
 }
 
 /// Downloads, verifies and installs the current release, then exits so the installer can replace

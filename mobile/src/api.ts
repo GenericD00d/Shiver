@@ -104,6 +104,10 @@ export const api = {
   setPushDistributor: (distributor: string) =>
     invoke<void>('set_push_distributor', { distributor }),
 
+  /** fires when the core's own check finds a newer version */
+  onUpdate: (handler: (version: string) => void) =>
+    listen<string>('shiver://update', (event) => handler(event.payload)),
+
   /** fires when an endpoint arrives or a registration is refused, so the screen can redraw */
   onPush: (handler: () => void) => listen('shiver://push', () => handler()),
 

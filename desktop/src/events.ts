@@ -12,7 +12,8 @@ export const EVENTS = {
   serverReady: 'shiver://server-ready',
   voice: 'shiver://voice',
   status: 'shiver://status',
-  signedOut: 'shiver://signed-out'
+  signedOut: 'shiver://signed-out',
+  update: 'shiver://update'
 } as const;
 
 /** Calls the latest `handler` with each payload of `event` for as long as the component is mounted. */
