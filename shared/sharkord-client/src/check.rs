@@ -72,9 +72,7 @@ pub async fn check_server(
     };
 
     let token = Zeroizing::new(login::sign_in(&origin, identity, password).await?);
-    let session = crate::open(&origin, &token, false)
-        .await
-        .map_err(|error| shiver_core::Error::Unreachable(format!("{origin}: {error}")))?;
+    let session = crate::open(&origin, &token, false).await?;
 
     kept.keep(&origin, identity, password, token);
 
@@ -103,5 +101,20 @@ mod tests {
             Some("t")
         );
         assert!(kept.take("https://a", "me", "pw").is_none());
+    }
+
+    #[test]
+    fn a_failed_check_keeps_its_kind_and_says_it_once() {
+        let unreachable =
+            shiver_core::Error::from(crate::Error::Unreachable("https://a (timed out)".into()));
+
+        assert_eq!(
+            unreachable.to_string().matches("Could not reach").count(),
+            1
+        );
+        assert!(matches!(
+            shiver_core::Error::from(crate::Error::Refused("banned".into())),
+            shiver_core::Error::Refused(message) if message == "banned"
+        ));
     }
 }

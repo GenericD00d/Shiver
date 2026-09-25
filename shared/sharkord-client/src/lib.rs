@@ -546,7 +546,7 @@ pub async fn watch(key: &str, mut watcher: impl Watcher) {
                 );
                 watcher.too_large(size);
             }
-            Err(error) => eprintln!("[shiver] could not watch {origin}: {error}"),
+            Err(error) => eprintln!("[shiver] could not watch a server: {error}"),
         }
 
         watcher.disconnected();
@@ -602,15 +602,22 @@ pub(crate) async fn open(origin: &str, token: &str, accept_any_size: bool) -> Re
     .map_err(|_| Error::Unreachable(format!("{origin} (timed out)")))?
     .map_err(|error| Error::Unreachable(format!("{origin} ({error})")))?;
 
-    send(&mut socket, params_frame(token)).await?;
+    // every failure names the server, whichever step it came from
+    let joined = join(&mut socket, origin, token)
+        .await
+        .map_err(|error| match error {
+            Error::Unreachable(detail) => Error::Unreachable(format!("{origin} ({detail})")),
+            other => other,
+        })?;
 
-    let handshake = call(
-        &mut socket,
-        HANDSHAKE_ID,
-        "others.handshake",
-        Some(Value::Null),
-    )
-    .await?;
+    Ok(Session { socket, joined })
+}
+
+/// Authenticates, joins and subscribes on a connected socket.
+async fn join(socket: &mut Socket, origin: &str, token: &str) -> Result<Joined> {
+    send(socket, params_frame(token)).await?;
+
+    let handshake = call(socket, HANDSHAKE_ID, "others.handshake", Some(Value::Null)).await?;
     let hash = handshake
         .get("handshakeHash")
         .and_then(Value::as_str)
@@ -619,7 +626,7 @@ pub(crate) async fn open(origin: &str, token: &str, accept_any_size: bool) -> Re
 
     let mut joined = parse_join(
         &call(
-            &mut socket,
+            socket,
             JOIN_ID,
             "others.joinServer",
             Some(serde_json::json!({ "handshakeHash": hash })),
@@ -628,7 +635,7 @@ pub(crate) async fn open(origin: &str, token: &str, accept_any_size: bool) -> Re
     );
 
     // Optional extras: failing either costs that feature, not the connection.
-    match call(&mut socket, DMS_ID, "dms.get", None).await {
+    match call(socket, DMS_ID, "dms.get", None).await {
         Ok(Value::Array(conversations)) => {
             joined.dms = parse_dms(&conversations, &joined.user_names)
         }
@@ -639,14 +646,7 @@ pub(crate) async fn open(origin: &str, token: &str, accept_any_size: bool) -> Re
     if joined.plugin_version.is_some() {
         let input = serde_json::json!({ "pluginId": SHIVER_PLUGIN_ID });
 
-        match call(
-            &mut socket,
-            PLUGIN_DATA_ID,
-            "plugins.getUserData",
-            Some(input),
-        )
-        .await
-        {
+        match call(socket, PLUGIN_DATA_ID, "plugins.getUserData", Some(input)).await {
             Ok(stored) => joined.shared_floor = parse_shared_floor(&stored),
             Err(error) => {
                 eprintln!("[shiver] could not read {origin}'s shared unread floor: {error}")
@@ -660,13 +660,13 @@ pub(crate) async fn open(origin: &str, token: &str, accept_any_size: bool) -> Re
         (MESSAGE_ID, MESSAGE_PATH),
     ] {
         send(
-            &mut socket,
+            socket,
             request_frame(id, "subscription", path, Some(Value::Null)),
         )
         .await?;
     }
 
-    Ok(Session { socket, joined })
+    Ok(joined)
 }
 
 impl Session {

@@ -22,3 +22,16 @@ pub enum Error {
     #[error("{0}")]
     Refused(String),
 }
+
+/// For the add-server check: the same kind, and the same words, in the shared error.
+impl From<Error> for shiver_core::Error {
+    fn from(error: Error) -> Self {
+        match error {
+            Error::InvalidOrigin(message) => Self::InvalidOrigin(message),
+            Error::Unreachable(detail) => Self::Unreachable(detail),
+            Error::NotSharkord(origin) => Self::NotSharkord(origin),
+            Error::Refused(message) => Self::Refused(message),
+            too_large @ Error::TooLarge { .. } => Self::Refused(too_large.to_string()),
+        }
+    }
+}
