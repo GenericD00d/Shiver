@@ -70,7 +70,8 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   script and the page's origin, so a link cannot seed a session, even one from a server that has seen
   its own key. A URL carrying it is never handed to the browser, and an off-origin redirect
   before the server's first load is refused. It steps aside if the server refuses the token or the
-  user signs in on the page; logging out of or removing a server clears what its page stored.
+  user signs in on the page; logging out of or removing a server clears what its page stored
+  (on Android every account on one address shares that storage, so it is cleared for all of them).
 - **What a server's page can learn on Android.** There is one webview, so the rail is drawn inside
   the server's page. It is handed, for every server in the rail: display name, inlined logo,
   opaque entry id, position and folder, unread count and a signed-out flag; plus folder names. It

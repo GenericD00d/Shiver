@@ -30,6 +30,8 @@ fn entry_of(store: &Store, id: &str) -> Result<ServerEntry> {
         .ok_or(Error::UnknownServer)
 }
 
+/// Clears what an origin's pages stored. The one webview has one storage per origin, so this also
+/// signs out the pages of any other account on the same address; leaving it would keep this one's.
 fn wipe_page(app: &AppHandle, origin: &str) {
     if let Err(error) = app.shiver_secrets().wipe_origin(origin) {
         eprintln!("[shiver] could not clear {origin} from the webview: {error}");
