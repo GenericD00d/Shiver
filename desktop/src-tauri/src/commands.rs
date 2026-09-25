@@ -271,6 +271,7 @@ pub async fn remove_server(
 
     webviews::discard_profiles(&app, &id, None);
     crate::watch::sync(&app);
+    crate::watch::forget(&app, &id);
     drain::notify_feed_changed(&app);
 
     Ok(())
@@ -304,6 +305,8 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
     webviews::show_server(&app, &entry, &settings, None, &[], locked)?;
     webviews::preload_dm_view(&app, &entry, &settings, None)?;
     crate::watch::sync(&app);
+    crate::watch::forget(&app, &id);
+    drain::notify_feed_changed(&app);
 
     Ok(())
 }

@@ -175,6 +175,15 @@ pub fn sync(app: &AppHandle) {
     }
 }
 
+/// Drops what the sockets learnt about a server that was removed or logged out of, so its missed
+/// count leaves the badges.
+pub fn forget(app: &AppHandle, entry_id: &str) {
+    app.state::<Missed>().clear(entry_id);
+    app.state::<ReadStates>().0.locked().remove(entry_id);
+    app.state::<Plugins>().0.locked().remove(entry_id);
+    app.state::<Reported>().0.locked().remove(entry_id);
+}
+
 /// Drops a server's socket (and any park) so the next attempt uses whatever just changed.
 pub fn restart(app: &AppHandle, entry_id: &str) {
     let watcher = app.state::<Watcher>();
