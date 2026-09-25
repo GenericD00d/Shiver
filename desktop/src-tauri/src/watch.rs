@@ -487,7 +487,7 @@ fn announce(
     joined: &sharkord::Joined,
     message: &sharkord::NewMessage,
 ) {
-    if message.user_id.is_some() && message.user_id == joined.own_user_id {
+    if message.is_own(joined) {
         return;
     }
 
@@ -507,25 +507,11 @@ fn announce(
         return;
     };
 
-    let author = message
-        .plugin_id
-        .clone()
-        .or_else(|| {
-            message
-                .user_id
-                .and_then(|id| joined.user_names.get(&id).cloned())
-        })
-        .unwrap_or_else(|| "Someone".into());
-
     let raw = RawNotification {
         channel_id: Some(message.channel_id),
         channel_name: joined.channel_names.get(&message.channel_id).cloned(),
-        author,
-        body: if message.text.is_empty() {
-            "Sent an attachment".into()
-        } else {
-            message.text.clone()
-        },
+        author: message.author(joined),
+        body: message.body().to_string(),
         icon_url: None,
         is_dm: joined.dm_channels.contains(&message.channel_id),
     };
@@ -561,10 +547,7 @@ fn report_too_large(app: &AppHandle, entry_id: &str, size: usize) {
         return;
     }
 
-    let size = match size as f64 / (1024.0 * 1024.0) {
-        mb if mb < 1.0 => format!("{} KB", size / 1024),
-        mb => format!("{mb:.1} MB"),
-    };
+    let size = sharkord::readable_size(size);
 
     app.state::<Feed>().push(
         entry_id,

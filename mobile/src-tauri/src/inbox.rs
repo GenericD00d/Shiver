@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use shiver_core::LockExt;
+use shiver_core::{text::clamp, LockExt};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shiver_secrets::SecretsExt;
 
@@ -38,14 +38,6 @@ const MUTE_POLL: Duration = Duration::from_secs(1);
 
 const BASELINE_PREFIX: &str = "baseline:";
 const PASSWORD_PREFIX: &str = "password:";
-
-/// Shortens by characters, never splitting a codepoint, marking the cut.
-fn clamp(text: String, limit: usize) -> String {
-    match text.char_indices().nth(limit) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-        None => text,
-    }
-}
 
 /// Reads a page's session: Sharkord's persistent auto-login token (`kept:`, which the user asked to
 /// keep, so Shiver stores it) or the live session only (`live:`, used for this run only). A bare
@@ -846,30 +838,12 @@ fn notice(
     muted: &[i64],
     message: &sharkord::NewMessage,
 ) -> Option<String> {
-    if (message.user_id.is_some() && message.user_id == joined.own_user_id)
-        || muted.contains(&message.channel_id)
-    {
+    if message.is_own(joined) || muted.contains(&message.channel_id) {
         return None;
     }
 
-    let author = clamp(
-        message
-            .plugin_id
-            .clone()
-            .or_else(|| {
-                message
-                    .user_id
-                    .and_then(|id| joined.user_names.get(&id).cloned())
-            })
-            .unwrap_or_else(|| "Someone".into()),
-        MAX_AUTHOR,
-    );
-
-    let text = if message.text.is_empty() {
-        "Sent an attachment".to_string()
-    } else {
-        clamp(message.text.clone(), MAX_BODY)
-    };
+    let author = clamp(message.author(joined), MAX_AUTHOR);
+    let text = clamp(message.body().to_string(), MAX_BODY);
 
     if joined.dm_channels.contains(&message.channel_id) {
         return Some(format!("{author}: {text}"));
@@ -941,10 +915,7 @@ fn report_watch_problem(app: &AppHandle, entry_id: &str, size: usize) {
         return;
     };
 
-    let size = match size as f64 / (1024.0 * 1024.0) {
-        mb if mb < 1.0 => format!("{} KB", size / 1024),
-        mb => format!("{mb:.1} MB"),
-    };
+    let size = sharkord::readable_size(size);
 
     let first = app.state::<Inbox>().remember_problem(
         entry_id,

@@ -11,6 +11,7 @@ pub mod origin;
 pub mod probe;
 pub mod rail;
 pub mod store;
+pub mod text;
 
 pub use error::{Error, Result};
 pub use origin::{is_same_origin, normalize_origin};

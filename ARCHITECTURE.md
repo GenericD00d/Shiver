@@ -63,7 +63,8 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `model` | `Folder`, `MutedChannel`, `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `MAX_SOUND_VOLUME`, `sanitised_color`, `sanitised_optional_color`, `rgb`, `theme_payload`, `muted_for`, `normalized_mutes`, `set_muted_for` |
 | `rail` | `RailServer` trait + `rail_server!(Type)` macro; `RailRef {kind,id}`; `next_position`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder`, `reorder_servers`, `prune_folders` |
 | `http` | `client()` (pooled, no redirects), `bytes_within_limit`, `MAX_BODY` |
-| `login` | `sign_in` (`POST /login` → token), `presentable` |
+| `login` | `sign_in` (`POST /login` → token) |
+| `text` | `presentable` (server words made safe to show), `clamp` |
 | `probe` | `ServerInfo`, `fetch_info` (`GET /info`, name and description cleaned and bounded), `fetch_icon` (data URI) |
 | `limit` | `Openings`: `take(key, n)` (5/s, 10/10s per key), `grant`, `forget` |
 | `hash` | `java_string` (Java `String.hashCode`) |
@@ -71,7 +72,8 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 ## shared/sharkord-client (`sharkord_client`)
 
 - Types: `Joined` (join payload: read states, user names, `plugin_version`…), `DirectMessage`,
-  `NewMessage`, `Event`, `Error` (`TooLarge`, `Refused` matter).
+  `NewMessage` (`is_own`, `author`, `body`), `Event`, `Error` (`TooLarge`, `Refused` matter; converts
+  into `shiver_core::Error`), `readable_size`.
 - Watch loop: `watch(key, impl Watcher)`; `Watcher` trait: `target()→Option<Target{origin,token,accept_any_size}>`,
   `joined`, `event`, `refused(n)→retry now?`, `too_large`, `disconnected`; reconnects with backoff.
 - Unread math: `set_unread`, `apply_delta`, `unread_total`.

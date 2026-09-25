@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use shiver_core::login::presentable;
+use shiver_core::text::presentable;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
@@ -95,6 +95,40 @@ pub struct NewMessage {
     pub plugin_id: Option<String>,
     /// the message as plain text
     pub text: String,
+}
+
+impl NewMessage {
+    /// Whether the user wrote it themselves.
+    pub fn is_own(&self, joined: &Joined) -> bool {
+        self.user_id.is_some() && self.user_id == joined.own_user_id
+    }
+
+    /// Who wrote it: a plugin by its id, a user by the name the join gave them.
+    pub fn author(&self, joined: &Joined) -> String {
+        self.plugin_id
+            .clone()
+            .or_else(|| {
+                self.user_id
+                    .and_then(|id| joined.user_names.get(&id).cloned())
+            })
+            .unwrap_or_else(|| "Someone".into())
+    }
+
+    /// The text, or what to say for a message that is only an attachment.
+    pub fn body(&self) -> &str {
+        match self.text.as_str() {
+            "" => "Sent an attachment",
+            text => text,
+        }
+    }
+}
+
+/// A byte count as people read it: KB below a megabyte, MB with one decimal above.
+pub fn readable_size(bytes: usize) -> String {
+    match bytes as f64 / (1024.0 * 1024.0) {
+        mb if mb < 1.0 => format!("{} KB", bytes / 1024),
+        mb => format!("{mb:.1} MB"),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -792,6 +826,12 @@ mod tests {
         assert!(retry_delay(1, "a") > retry_delay(0, "a"));
         assert!(retry_delay(30, "a") <= ceiling + ceiling / 4);
         assert_eq!(retry_delay(2, "a"), retry_delay(2, "a"));
+    }
+
+    #[test]
+    fn sizes_read_as_kilobytes_or_megabytes() {
+        assert_eq!(readable_size(512 * 1024), "512 KB");
+        assert_eq!(readable_size(3 * 1024 * 1024 / 2), "1.5 MB");
     }
 
     #[test]

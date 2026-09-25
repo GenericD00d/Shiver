@@ -10,7 +10,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use shiver_core::LockExt;
+use shiver_core::{text::clamp, LockExt};
 
 use crate::voice::VoiceSnapshot;
 
@@ -27,14 +27,6 @@ const MAX_DMS: usize = 500;
 /// Two identical notifications from one server this close together are one message arriving by two
 /// routes (socket and page). Short, so someone repeating themselves later still gets two lines.
 const DUPLICATE_WINDOW_MS: u64 = 30 * 1000;
-
-/// Shortens by characters (never splitting a codepoint), marking the cut with an ellipsis.
-fn clamp(text: String, limit: usize) -> String {
-    match text.char_indices().nth(limit) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-        None => text,
-    }
-}
 
 /// Milliseconds from a page, where numbers are doubles (possibly in exponent form).
 pub fn optional_millis<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>

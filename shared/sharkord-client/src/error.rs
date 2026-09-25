@@ -15,7 +15,7 @@ pub enum Error {
     NotSharkord(String),
 
     /// A size limit was hit; retrying gets the same oversized answer.
-    #[error("{size} bytes in one message, and Shiver accepts {max}")]
+    #[error("{} in one message, and Shiver accepts {}", crate::readable_size(*size), crate::readable_size(*max))]
     TooLarge { size: usize, max: usize },
 
     /// The server said no (an expired session looks like this); the message is its own.

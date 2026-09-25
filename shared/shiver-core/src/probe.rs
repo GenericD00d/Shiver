@@ -8,7 +8,8 @@ use serde_json::Value;
 use crate::{
     error::{Error, Result},
     http,
-    login::{presentable, unreachable},
+    login::unreachable,
+    text::presentable,
 };
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
