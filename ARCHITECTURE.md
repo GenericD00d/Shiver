@@ -90,7 +90,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 
 | module | role / key items |
 |---|---|
-| `lib` | `run()`: plugins, state, command registration (`only_shiver_chrome`: commands from Shiver's own webviews only), startup |
+| `lib` | `run()`: plugins (`RustOnly`: a plugin without its page script, for the dialog plugin, which would replace `alert`/`confirm` in server pages), state, command registration (`only_shiver_chrome`: commands from Shiver's own webviews only), startup |
 | `commands` | all `#[tauri::command]`s for shell/bell/popup: registry & servers (`list_registry`, `check_server`, `add_server`, `remove_server`, `log_out_server`, `sign_in_server`, `forget_password`, `refresh_server_info`, `set_accept_any_size`, `reset_media_permissions`), rail (`reorder_servers`, `reorder_rail`, `create_folder_with`, `rename_folder`, `delete_folder`, `set_server_folder`, `set_folder_expanded`, `show_folder_menu`, `show_server_menu`), navigation (`select_server`, `prepare_server`, `show_shell`, `exit_dm_split`, `open_dm`, `open_message`, `select_channel`), voice (`voice_status`, `voice_control`), settings (`app_version`, `get_settings`, `update_settings`, `forget_trusted_links`), feed (`list_notifications`, `list_dms`, `feed_summary`, `unread_counts`, `mark_server_read`, `mark_notifications_read`, `clear_notifications`, `set_channel_muted`), popup (`toggle_popup`, `close_popup`, `dismiss_popup`) |
 | `model` | `ServerEntry` (`label`), `Settings` (`sanitised`, `pages_kept`), `Registry` (`registry!` helpers), `*_PAGES_KEPT` |
 | `store` | `Store` alias, `RegistryStore::update`, `load` |
