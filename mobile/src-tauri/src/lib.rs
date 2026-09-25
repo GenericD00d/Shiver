@@ -103,14 +103,12 @@ pub fn run() {
             .on_navigation({
                 let handle = handle.clone();
 
+                // Allowed is not arrived: Android asks here for frames inside a page too, and for
+                // navigations the page then cancels, so arrival is noticed on load (below).
                 move |target| {
                     let server_origin = current_origin(&handle);
 
                     if webview::is_allowed(&handle, target, server_origin.as_deref()) {
-                        if webview::is_home(&handle, target) {
-                            webview::landed_home(&handle);
-                        }
-
                         return true;
                     }
 
@@ -136,10 +134,10 @@ pub fn run() {
                         return install_bridge_if_server(&handle, url);
                     }
 
-                    // Loads the core starts (`navigate`) and steps through history (back,
-                    // `history.go`) pass no navigation guard, so this is where home is noticed for
-                    // them, and where a page that is neither Shiver's nor the server it opened is
-                    // sent home. The very first load is Shiver's own page.
+                    // A load that started in the main frame, however it was asked for (a page, the
+                    // core's `navigate`, a step through history): where home is noticed, and where
+                    // a page that is neither Shiver's nor the server it opened is sent home. The
+                    // very first load is Shiver's own page.
                     handle.state::<Showing>().set_home_if_unset(url.to_string());
 
                     if webview::is_home(&handle, url) {

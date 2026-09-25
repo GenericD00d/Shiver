@@ -349,9 +349,9 @@ fn same_place(home: &str, target: &Url) -> bool {
     })
 }
 
-/// Called on every page load of Shiver's own pages: the bridge's "back" is a plain navigation that
-/// runs no command, so this is where the webview stops showing a server (and `sync` gives that
-/// server a background socket again).
+/// Called when Shiver's own page starts loading in the main frame: going back from a server is a
+/// plain navigation that runs no command, so this is where the webview stops showing a server (and
+/// `sync` gives that server a background socket again).
 pub fn landed_home(app: &AppHandle) {
     let showing = app.state::<Showing>();
 
