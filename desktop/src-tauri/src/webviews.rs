@@ -77,10 +77,24 @@ struct Screen {
     dm_on_screen: Option<String>,
     popup_open: bool,
     popup_dismissed_at: Option<Instant>,
-    /// servers with a page, most recently shown first (what `trim_pages` closes from the back of)
+    /// servers with a page, most recently shown first, then those opened hidden (what `trim_pages`
+    /// closes from the back of)
     recent: Vec<String>,
     /// whether the page on screen is fullscreen
     fullscreen: bool,
+}
+
+impl Screen {
+    /// Records a page for `entry_id`: one shown goes to the front, one opened hidden to the back
+    /// (so it is trimmed first if the user never looks at it).
+    fn hold(&mut self, entry_id: &str, shown: bool) {
+        if shown {
+            self.recent.retain(|held| held != entry_id);
+            self.recent.insert(0, entry_id.to_string());
+        } else if !self.recent.iter().any(|held| held == entry_id) {
+            self.recent.push(entry_id.to_string());
+        }
+    }
 }
 
 /// What is on screen. `gate` serialises webview creation, so overlapping calls cannot race to
@@ -419,8 +433,7 @@ pub fn show_server(
         screen.dm_on_screen = None;
         screen.popup_open = false;
         screen.fullscreen = false;
-        screen.recent.retain(|held| held != &entry.id);
-        screen.recent.insert(0, entry.id.clone());
+        screen.hold(&entry.id, true);
     });
 
     // the bell may have been hidden for a fullscreen page, and a new page sits above it
@@ -466,6 +479,8 @@ pub fn preload_server(
             webview.hide()?;
         }
     }
+
+    active.update(|screen| screen.hold(&entry.id, false));
 
     ensure_overlay(app)
 }
@@ -781,7 +796,10 @@ pub fn show_dm_view(
         place(&webview, dm_content_rect(&window)?)?;
         webview.show()?;
         webview.set_focus()?;
-        active.update(|screen| screen.dm_on_screen = Some(entry.id.clone()));
+        active.update(|screen| {
+            screen.dm_on_screen = Some(entry.id.clone());
+            screen.hold(&entry.id, true);
+        });
     }
 
     if created {
@@ -821,6 +839,8 @@ pub fn preload_dm_view(
     if let Some(webview) = app.get_webview(&label) {
         webview.hide()?;
     }
+
+    active.update(|screen| screen.hold(&entry.id, false));
 
     ensure_overlay(app)
 }
@@ -1022,6 +1042,20 @@ mod tests {
             later,
             data_store(&entry(Some("9f1c0d2e6b7a4c3d8e9f0a1b2c3d4e5f")))
         );
+    }
+
+    #[test]
+    fn hidden_pages_queue_behind_the_ones_shown() {
+        let mut screen = Screen::default();
+
+        screen.hold("a", true);
+        screen.hold("b", false);
+        screen.hold("c", true);
+        screen.hold("a", false);
+        assert_eq!(screen.recent, ["c", "a", "b"]);
+
+        screen.hold("b", true);
+        assert_eq!(screen.recent, ["b", "c", "a"]);
     }
 
     #[test]

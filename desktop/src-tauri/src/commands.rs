@@ -632,7 +632,11 @@ pub async fn open_dm(
     let (entry, settings, _) = page_inputs(&store, &entry_id)?;
     let token = ensure_session(&entry).await;
 
-    if webviews::show_dm_view(&app, &entry, &settings, token.as_deref(), &name)? {
+    let created = webviews::show_dm_view(&app, &entry, &settings, token.as_deref(), &name)?;
+
+    webviews::trim_pages(&app);
+
+    if created {
         return Ok(());
     }
 
