@@ -412,8 +412,8 @@ pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
 /* ── connections ── */
 
 /// Starts a connection for every entry with a session, no connection and no problem that retrying
-/// cannot fix, stops those for entries that left the rail, and settles the notification of the
-/// server on screen.
+/// cannot fix, stops those for entries that left the rail or are on screen (their page has its
+/// own), and settles the notification of the server on screen.
 pub fn sync(app: &AppHandle) {
     let registry_ids: HashSet<String> = app
         .state::<Store>()
@@ -423,19 +423,20 @@ pub fn sync(app: &AppHandle) {
         .map(|server| server.id.clone())
         .collect();
     let showing = app.state::<webview::Showing>().server();
+    let watchable = |id: &String| registry_ids.contains(id) && showing.as_ref() != Some(id);
 
     let (wanted, unwanted) = app.state::<Inbox>().with(|state| {
         let unwanted: Vec<String> = state
             .running
             .keys()
-            .filter(|id| !registry_ids.contains(*id))
+            .filter(|id| !watchable(id))
             .cloned()
             .collect();
         let wanted: Vec<String> = state
             .tokens
             .keys()
             .filter(|id| {
-                registry_ids.contains(*id)
+                watchable(id)
                     && !state.running.contains_key(*id)
                     && !state.problems.contains_key(*id)
             })
