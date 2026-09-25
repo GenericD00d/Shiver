@@ -16,7 +16,7 @@ shared/shiver-core/        Rust: origin rules, registry store, rail, http, login
 shared/sharkord-client/    Rust: read-only Sharkord tRPC-over-WebSocket client, watch loop, add-server check
 shared/web/                TS for both frontends (relative imports; no .tsx: react won't resolve here)
 shared/web/bridge/         TS for both bridges
-desktop/src-tauri/         desktop core (crate `shiver`); capabilities/: Shiver's own webviews only
+desktop/src-tauri/         desktop core (crate `shiver`); capabilities/: event listen only, Shiver's own webviews
 desktop/src/               desktop UI (React): shell, bell, popup — one bundle, picked by webview label
 desktop/bridge/            desktop bridge (IIFE, include_str!'d as an init script)
 mobile/src-tauri/          Android core (crate `shiver-mobile`); capabilities/: event listen only, own page
