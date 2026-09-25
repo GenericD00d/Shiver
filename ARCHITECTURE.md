@@ -143,7 +143,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 | `theme.ts` | `applyTheme` (`--shiver-*` vars on Shiver's own pages) |
 | `session.ts` | `installSessionShim`, `takeSeedFromLocation`, `AUTO_LOGIN*` (session kept off disk) |
 | `bridge/dom.ts` | `ensureStyle`, `defineHook`, `onDomSettled` (hands callbacks what changed), `touched`, `isTopFrame`, `whenDocumentReady`, `openMenuOnScreen`, `addedMenu`, `installExternalLinks` |
-| `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `addMuteItem`, `addMenuItem`, `SHIVER_PLUGIN_ID` |
+| `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `addMuteItem`, `addMenuItem`, `closeDialog` (Sharkord's topmost open dialog, as Escape), `SHIVER_PLUGIN_ID` |
 | `bridge/plugin.ts` | `callPlugin`, `waitForPlugin`, `syncMutesWithPlugin`, `pushMutesToPlugin`, `storeReadFloor` |
 | `bridge/features.ts` | `installSoundVolume`, `installAttachmentCards`, `installVoiceColors`, `installRoleColors`, `installStatusButton` |
 | `bridge/theme.ts` | `ShiverTheme`, `applyPageTheme` |
@@ -155,7 +155,8 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
   `ServerRail`, `AddServerPanel`, `SignInPanel`, `SettingsPanel`, `HotkeyField`, `DirectMessagesPanel`,
   `NotificationList` (`relativeTime`), `RenameFolderPanel`, `RemoveServerPanel`, `ConnectingPanel`, `WelcomePanel`,
   `VoiceTile`, `UpdateNotice`, `icons`.
-- **desktop/bridge/index.ts**: one file: session seeding, DM reading, conversation mode (`showConversation`), voice read/control/lock,
+- **desktop/bridge/index.ts**: one file: session seeding, DM reading, conversation mode (`showConversation`; an open dialog such as
+  Sharkord's settings is closed first, as for a clicked notification's channel), voice read/control/lock,
   channel menu mute, notification capture, drain queue.
 - **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits on the rail after `#home`; `__SHIVER_BACK__` reopens it), `api.ts`, `types.ts`, `components/`:
   `Boot` (confirms rail menu actions, the way back after `#home`), `Rail` (`RailRef`), `ServerList`, `AddServer`, `SignInServer`,

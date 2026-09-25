@@ -192,6 +192,17 @@ export function addMuteItem(menu: HTMLElement, isMuted: boolean, toggle: () => v
   addMenuItem(menu, isMuted ? 'Unmute in Shiver' : 'Mute in Shiver', toggle);
 }
 
+const pressEscape = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+/** Closes the topmost of Sharkord's open dialogs (its settings among them) as Escape does; true when one was open. */
+export function closeDialog() {
+  if (!document.querySelector('[role="dialog"]:not([data-state="closed"])')) return false;
+
+  pressEscape();
+
+  return true;
+}
+
 /** Appends one of Shiver's items to a Sharkord menu, styled as Sharkord's own. */
 export function addMenuItem(menu: HTMLElement, label: string, run: () => void) {
   const sibling = menu.querySelector<HTMLElement>(`[role="menuitem"]:not(.${SHIVER_MENU_ITEM})`);
@@ -208,7 +219,7 @@ export function addMenuItem(menu: HTMLElement, label: string, run: () => void) {
     event.stopPropagation();
     run();
     // lets Sharkord close its menu as it would for any item
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    pressEscape();
   });
 
   menu.appendChild(item);
