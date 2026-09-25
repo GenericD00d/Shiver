@@ -151,9 +151,6 @@ const useLongPress = (
 
 };
 
-/** A server's logo: the copy Shiver inlined (no request to the server), else its address. */
-export const iconOf = (server: ServerEntry) => server.iconData ?? server.iconUrl ?? undefined;
-
 /** The server rail, on Shiver's own page (a server's page is shown nothing of it). */
 export const Rail = ({
   servers,
@@ -431,9 +428,9 @@ export const Rail = ({
         }}
         {...press.handlers(key)}
       >
-        {iconOf(server) ? (
+        {server.icon ? (
           // not draggable: the platform's own image drag would cancel the touch Shiver is using
-          <img src={iconOf(server)} alt="" draggable={false} />
+          <img src={server.icon} alt="" draggable={false} />
         ) : (
           initials(server.name)
         )}
@@ -490,8 +487,8 @@ export const Rail = ({
                 <span className="folder-grid">
                   {members.slice(0, 4).map((member) => (
                     <span className="folder-cell" key={member.id}>
-                      {iconOf(member) ? (
-                        <img src={iconOf(member)} alt="" draggable={false} />
+                      {member.icon ? (
+                        <img src={member.icon} alt="" draggable={false} />
                       ) : (
                         initials(member.name).slice(0, 1)
                       )}

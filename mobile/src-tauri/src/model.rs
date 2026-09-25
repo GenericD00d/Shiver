@@ -23,12 +23,9 @@ pub struct ServerEntry {
     pub id: String,
     pub origin: String,
     pub name: String,
+    /// where the logo is fetched from; Shiver's page draws the copy in `icons`
     #[serde(default)]
     pub icon_url: Option<String>,
-    /// the logo as a `data:` uri: the rail is drawn inside other servers' pages, and a url would
-    /// tell them where this server lives
-    #[serde(default)]
-    pub icon_data: Option<String>,
     /// raises (never removes) the websocket message size limit for a server the user trusts
     #[serde(default)]
     pub accept_any_size: bool,

@@ -40,7 +40,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 - Both apps' error types (`error.rs`) are user-facing strings, serialised as a string: the shared
   `shiver_core::Error` (re-exported as `Core`) plus the platform's own. Never put tokens, passwords
   or paths in messages.
-- The registry (`servers.json`) holds no secrets. Secrets: keychain (desktop `secrets.rs`),
+- The registry (`servers.json`) holds no secrets, and no logos (Android keeps those in `icons/`). Secrets: keychain (desktop `secrets.rs`),
   `tauri-plugin-shiver-secrets` (mobile). Keys are rail-entry ids, never origins.
 - Registry edits go through `store.update(|registry| ...)` (`RegistryStore`): runs on a copy, which
   replaces the registry only once it is written.
@@ -110,9 +110,10 @@ Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and
 | module | role / key items |
 |---|---|
 | `lib` | `run()`, `only_home` (commands refused unless Shiver's own page is on screen), page loads Shiver did not open sent home, `open_externally`; `pub use sharkord_client as sharkord` |
-| `commands` | `list_registry`, `probe_server`, `check_server`, `add_server`, `remove_server`, `refresh_server_info`, `set_accept_any_size`, `log_out_server`, `sign_in_server`, `forget_password`, `forget_sessions`, `session_states`/`SessionStates` (signed out, password kept, problems, plugins), push (`push_status`, `set_push_server`, `set_push_distributor`; `PushStatus`, `PushServer`), `unread_counts`, `list_dms`, `select_server`, `app_version`, `update_settings`, rail (`reorder_rail`, `create_folder_with`, `set_server_folder`, `rename_folder`, `delete_folder`, `set_folder_expanded`) |
-| `model` | `ServerEntry` (+`icon_data`, `push_token`, `retired_push_endpoints`), `Settings`, `Registry` (`registry!` helpers, `entry_for_push_token`, `ensure_push_tokens`) |
+| `commands` | `list_registry`, `probe_server`, `check_server`, `add_server`, `remove_server`, `refresh_server_info`, `server_icons`, `set_accept_any_size`, `log_out_server`, `sign_in_server`, `forget_password`, `forget_sessions`, `session_states`/`SessionStates` (signed out, password kept, problems, plugins), push (`push_status`, `set_push_server`, `set_push_distributor`; `PushStatus`, `PushServer`), `unread_counts`, `list_dms`, `select_server`, `app_version`, `update_settings`, rail (`reorder_rail`, `create_folder_with`, `set_server_folder`, `rename_folder`, `delete_folder`, `set_folder_expanded`) |
+| `model` | `ServerEntry` (+`push_token`, `retired_push_endpoints`), `Settings`, `Registry` (`registry!` helpers, `entry_for_push_token`, `ensure_push_tokens`) |
 | `store` | as desktop |
+| `icons` | logos as files (`icons/<entry id>`, a `data:` uri each): `save` (none deletes), `load`, `restore` (prune the gone, fetch the missing) |
 | `inbox` | core sockets for servers not on screen + secret storage: `Inbox` (tokens, problems, plugins, dms, unread, signed_out, baselines), `sync`, `restart`, `restore`, `remember_session`, `remember_password`, `forget_password`, `forget_everywhere`, `harvest_token`, `replace_mutes`, `watch_mutes`, `collect_dms`, `DmEntry`, `INBOX_EVENT` |
 | `webview` | the single webview: `Showing` (home, current server and whether it loaded, a stray page from history, pending DM user; `at_home`), `show_server`, `show_failed` (back to Shiver's page with `#failed=<id>`), `go_home`, `emit_home` (events only while Shiver's page is up), `without_seed`, `install_bridge`/`PageContext` (that entry's own config only), `read_mutes` (the page's mutes and outside links), navigation guard (`is_allowed`, `navigation_allowed`, `is_home`, `landed_home`), `background_color`, `document_start` (bundle wrapped with the per-launch seed secret; `seed_key_for` derives each origin's key), `Openings` |
 | `push` | UnifiedPush per chosen server: `Push`, `start`, `register_wanted`, `set_wanted` (turning off retires the endpoint; the page clears it with the plugin), `unregister`, `migrate_tokens`, `PUSH_EVENT` |
@@ -150,7 +151,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 - **desktop/bridge/index.ts**: one file: session seeding, DM reading/opening, voice read/control/lock,
   channel menu mute, notification capture, drain queue.
 - **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits on the rail after `#home`; `__SHIVER_BACK__` reopens it), `api.ts`, `types.ts`, `components/`:
-  `Boot` (confirms rail menu actions, the way back after `#home`), `Rail` (`RailRef`, `iconOf`), `ServerList`, `AddServer`, `SignInServer`,
+  `Boot` (confirms rail menu actions, the way back after `#home`), `Rail` (`RailRef`), `ServerList`, `AddServer`, `SignInServer`,
   `SettingsScreen`, `BackgroundNotifications`, `Sessions`, `DirectMessages`, `UpdateNotice`, `icons`.
 - **mobile/bridge**: `index.ts` (install, `seedSession`), `home.ts` (`setHome`, `goHome`, `installHomeSwipe`: back and a
   swipe past the drawer leave for Shiver's page), `touch.ts` (touch adaptations, channel menu with mark all read,

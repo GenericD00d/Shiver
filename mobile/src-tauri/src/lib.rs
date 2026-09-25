@@ -1,5 +1,6 @@
 mod commands;
 mod error;
+mod icons;
 mod inbox;
 mod model;
 mod push;
@@ -68,6 +69,7 @@ pub fn run() {
             commands::session_states,
             commands::list_dms,
             commands::refresh_server_info,
+            commands::server_icons,
             commands::log_out_server,
             commands::forget_sessions,
             commands::push_status,
@@ -177,7 +179,7 @@ pub fn run() {
 
             inbox::watch_mutes(&handle);
             update::start(&handle);
-            backfill_icons(handle);
+            icons::restore(&handle);
 
             Ok(())
         })
@@ -288,34 +290,6 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
 
     // the signed-in page's session lets Shiver keep watching this server after the user leaves
     inbox::harvest_token(app, entry_id);
-}
-
-/// Inlines the logos of servers added before Shiver stored them, once at startup.
-fn backfill_icons(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let missing: Vec<(String, String)> = app
-            .state::<Store>()
-            .registry()
-            .servers
-            .iter()
-            .filter(|server| server.icon_data.is_none())
-            .filter_map(|server| Some((server.id.clone(), server.icon_url.clone()?)))
-            .collect();
-
-        for (id, url) in missing {
-            let Some(data) = shiver_core::probe::fetch_icon(&url).await else {
-                continue;
-            };
-
-            let _ = app.state::<Store>().update(|registry| {
-                if let Some(server) = registry.server_mut(&id) {
-                    server.icon_data = Some(data);
-                }
-
-                Ok(())
-            });
-        }
-    });
 }
 
 /// Hands an http(s) link to the system browser.

@@ -97,9 +97,14 @@ export const App = () => {
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
 
+  const [icons, setIcons] = useState<Record<string, string>>({});
+  const loadIcons = useCallback(() => void api.serverIcons().then(setIcons, () => undefined), []);
+
+  useEffect(loadIcons, [loadIcons]);
+
   const servers = useMemo(
-    () => byPosition(registry.servers),
-    [registry.servers]
+    () => byPosition(registry.servers).map((server) => ({ ...server, icon: icons[server.id] })),
+    [registry.servers, icons]
   );
 
   const refresh = useCallback(async () => {
@@ -342,7 +347,7 @@ export const App = () => {
         onOpenDms={() => setScreen('dms')}
         onAdd={() => setScreen('add')}
         onSettings={() => setScreen('settings')}
-        onRefresh={(id) => void change(() => api.refreshServerInfo(id))}
+        onRefresh={(id) => void change(() => api.refreshServerInfo(id)).then(loadIcons)}
         onAsk={handleAsk}
         onReorder={(ordered: RailRef[]) => void change(() => api.reorderRail(ordered))}
         folders={registry.folders}

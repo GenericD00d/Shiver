@@ -16,6 +16,7 @@ use shiver_core::{login, probe};
 
 use crate::{
     error::{Core, Error, Result},
+    icons,
     inbox::{self, Inbox},
     model::{normalize_origin, Folder, Registry, ServerEntry, ServerInfo, Settings},
     store::{RegistryStore, Store},
@@ -98,8 +99,7 @@ pub async fn add_server(
         _ => None,
     };
 
-    // inlined rather than linked: the rail is drawn in other servers' pages
-    let icon_data = match info.icon_url.as_deref() {
+    let icon = match info.icon_url.as_deref() {
         Some(url) => probe::fetch_icon(url).await,
         None => None,
     };
@@ -110,7 +110,6 @@ pub async fn add_server(
             origin: origin.clone(),
             name: info.name.clone(),
             icon_url: info.icon_url.clone(),
-            icon_data: icon_data.clone(),
             identity: identity.clone().filter(|_| session.is_some()),
             position: registry.next_position(),
             push_token: Some(Uuid::new_v4().simple().to_string()),
@@ -121,6 +120,8 @@ pub async fn add_server(
 
         Ok(entry)
     })?;
+
+    icons::save(&app, &entry.id, icon.as_deref());
 
     if let Some(session) = &session {
         inbox::remember_session(&app, &entry.id, session);
@@ -148,6 +149,7 @@ pub async fn remove_server(app: AppHandle, store: State<'_, Store>, id: String) 
     crate::push::unregister(&app, &id);
     inbox::forget_everywhere(&app, &id);
     wipe_page(&app, &origin);
+    icons::save(&app, &id, None);
 
     store.update(|registry| {
         registry.servers.retain(|server| server.id != id);
@@ -166,24 +168,44 @@ pub async fn remove_server(app: AppHandle, store: State<'_, Store>, id: String) 
     })
 }
 
-/// Re-reads a server's name and logo (including the inlined logo bytes).
+/// Re-reads a server's name and logo.
 #[tauri::command]
-pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<ServerEntry> {
+pub async fn refresh_server_info(
+    app: AppHandle,
+    store: State<'_, Store>,
+    id: String,
+) -> Result<ServerEntry> {
     let info = probe::fetch_info(&entry_of(&store, &id)?.origin).await?;
-    let icon_data = match info.icon_url.as_deref() {
+    let icon = match info.icon_url.as_deref() {
         Some(url) => probe::fetch_icon(url).await,
         None => None,
     };
 
-    store.update(|registry| {
+    let entry = store.update(|registry| {
         let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
 
         server.name = info.name.clone();
         server.icon_url = info.icon_url.clone();
-        server.icon_data = icon_data.clone();
 
         Ok(server.clone())
-    })
+    })?;
+
+    icons::save(&app, &id, icon.as_deref());
+
+    Ok(entry)
+}
+
+/// Every server's logo as a `data:` uri, by entry id.
+#[tauri::command]
+pub fn server_icons(app: AppHandle, store: State<'_, Store>) -> HashMap<String, String> {
+    let ids: Vec<String> = store
+        .registry()
+        .servers
+        .iter()
+        .map(|server| server.id.clone())
+        .collect();
+
+    icons::load(&app, &ids)
 }
 
 /* ── push ── */

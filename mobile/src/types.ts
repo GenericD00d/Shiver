@@ -10,9 +10,8 @@ export type ServerEntry = {
   id: string;
   origin: string;
   name: string;
-  iconUrl: string | null;
-  /** the logo as a `data:` uri, sent to the bridge so a server's page never learns another's address */
-  iconData: string | null;
+  /** the stored logo as a `data:` uri, read separately (`api.serverIcons`) */
+  icon?: string;
   identity: string | null;
   accountLabel: string | null;
   folderId: string | null;

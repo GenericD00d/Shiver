@@ -71,6 +71,8 @@ export const api = {
 
   /** re-reads a server's name and logo from its public /info */
   refreshServerInfo: (id: string) => invoke<ServerEntry>('refresh_server_info', { id }),
+  /** every stored logo as a `data:` uri, by server id */
+  serverIcons: () => invoke<Record<string, string>>('server_icons'),
 
   /** forgets the server's session and password and wipes its page's storage */
   logOutServer: (id: string) => invoke<void>('log_out_server', { id }),
