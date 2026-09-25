@@ -39,8 +39,9 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 
 ## Conventions
 
-- Both apps' error types (`error.rs`) are user-facing strings, serialised as a string; they map
-  `shiver_core::Error` via `From`. Never put tokens, passwords or paths in messages.
+- Both apps' error types (`error.rs`) are user-facing strings, serialised as a string: the shared
+  `shiver_core::Error` (re-exported as `Core`) plus the platform's own. Never put tokens, passwords
+  or paths in messages.
 - The registry (`servers.json`) holds no secrets. Secrets: keychain (desktop `secrets.rs`),
   `tauri-plugin-shiver-secrets` (mobile). Keys are rail-entry ids, never origins.
 - Registry edits go through `store.update(|registry| ...)` (`RegistryStore`): runs on a copy, which

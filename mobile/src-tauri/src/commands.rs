@@ -13,7 +13,7 @@ use sharkord_client::{CheckedSessions, ServerCheck};
 use shiver_core::{login, probe};
 
 use crate::{
-    error::{Error, Result},
+    error::{Core, Error, Result},
     inbox::{self, Inbox},
     model::{normalize_origin, Folder, Registry, ServerEntry, ServerInfo, Settings},
     store::{RegistryStore, Store},
@@ -27,7 +27,7 @@ fn entry_of(store: &Store, id: &str) -> Result<ServerEntry> {
         .registry()
         .server(id)
         .cloned()
-        .ok_or(Error::UnknownServer)
+        .ok_or(Core::UnknownServer.into())
 }
 
 /// Clears what an origin's pages stored. The one webview has one storage per origin, so this also
@@ -175,7 +175,7 @@ pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<
     };
 
     store.update(|registry| {
-        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
+        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
 
         server.name = info.name.clone();
         server.icon_url = info.icon_url.clone();
@@ -292,7 +292,7 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
     }
 
     let origin = store.update(|registry| {
-        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
+        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
 
         server.identity = None;
 
@@ -322,7 +322,7 @@ pub async fn sign_in_server(
     store.update(|registry| {
         registry
             .server_mut(&id)
-            .ok_or(Error::UnknownServer)?
+            .ok_or(Core::UnknownServer)?
             .identity = Some(identity.clone());
 
         Ok(())
@@ -367,7 +367,7 @@ pub async fn set_accept_any_size(
     store.update(|registry| {
         registry
             .server_mut(&id)
-            .ok_or(Error::UnknownServer)?
+            .ok_or(Core::UnknownServer)?
             .accept_any_size = accept;
 
         Ok(())

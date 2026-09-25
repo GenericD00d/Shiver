@@ -23,7 +23,7 @@ use tauri::{window::Color, AppHandle, Manager, Url, WebviewWindow};
 pub use shiver_core::limit::Openings;
 
 use crate::{
-    error::{Error, Result},
+    error::{Core, Error, Result},
     inbox,
     model::{is_same_origin, Folder, ServerEntry, Settings, MAX_SOUND_VOLUME},
     store::{RegistryStore, Store},
@@ -143,7 +143,7 @@ pub fn show_server(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) ->
     let window = main_window(app)?;
 
     let mut url = Url::parse(&entry.origin)
-        .map_err(|_| Error::InvalidOrigin(format!("'{}' is not a valid address", entry.origin)))?;
+        .map_err(|_| Core::InvalidOrigin(format!("'{}' is not a valid address", entry.origin)))?;
 
     if let Some(token) = token.filter(|token| !token.is_empty()) {
         let encoded: String = url::form_urlencoded::byte_serialize(token.as_bytes()).collect();

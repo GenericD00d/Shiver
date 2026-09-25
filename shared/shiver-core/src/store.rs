@@ -59,7 +59,8 @@ fn remove_legacy_cache(dir: &Path) {
 }
 
 fn to_json(registry: &impl Serialize) -> Result<String> {
-    serde_json::to_string_pretty(registry).map_err(|error| Error::Storage(error.to_string()))
+    serde_json::to_string_pretty(registry)
+        .map_err(|error| Error::Storage(format!("Could not save your servers ({error})")))
 }
 
 fn unix_seconds() -> u64 {
@@ -77,7 +78,11 @@ where
     /// aside (never overwritten) and the store starts empty; an unreadable one is an error rather
     /// than something to replace with an empty registry.
     pub fn load(dir: &Path) -> Result<Self> {
-        fs::create_dir_all(dir).map_err(|error| Error::Storage(error.to_string()))?;
+        fs::create_dir_all(dir).map_err(|error| {
+            Error::Storage(format!(
+                "Shiver's settings folder could not be made ({error})"
+            ))
+        })?;
 
         remove_legacy_cache(dir);
 
@@ -164,7 +169,7 @@ where
         write.map_err(|error| {
             let _ = fs::remove_file(&temp);
 
-            Error::Storage(error.to_string())
+            Error::Storage(format!("Could not save your servers ({error})"))
         })
     }
 }

@@ -22,7 +22,7 @@ use tauri::{
 use url::Url;
 
 use crate::{
-    error::{Error, Result},
+    error::{Core, Error, Result},
     model::{is_same_origin, ServerEntry, Settings},
     store::Store,
 };
@@ -706,7 +706,7 @@ fn build_page_webview(
     (position, size): (LogicalPosition<f64>, LogicalSize<f64>),
 ) -> Result<()> {
     let url = Url::parse(&entry.origin)
-        .map_err(|_| Error::InvalidOrigin(format!("'{}' is not a valid address", entry.origin)))?;
+        .map_err(|_| Core::InvalidOrigin(format!("'{}' is not a valid address", entry.origin)))?;
     let label = match role {
         PageRole::Server { .. } => webview_label(&entry.id),
         PageRole::Dm { .. } => dm_webview_label(&entry.id),

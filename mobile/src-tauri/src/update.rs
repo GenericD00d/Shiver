@@ -9,7 +9,7 @@ use shiver_core::LockExt;
 use tauri::{AppHandle, Manager};
 
 use crate::{
-    error::{Error, Result},
+    error::{Core, Error, Result},
     store::{RegistryStore, Store},
 };
 
@@ -68,7 +68,7 @@ fn open(app: &AppHandle, url: &str) -> Result<()> {
 pub async fn check_for_update(app: AppHandle) -> Result<Option<String>> {
     let newest = fetch()
         .await
-        .ok_or_else(|| Error::Unreachable("GitHub, to check for updates".into()))?;
+        .ok_or_else(|| Core::Unreachable("GitHub, to check for updates".into()))?;
 
     if !is_newer(&newest, &app.package_info().version.to_string()) {
         return Ok(None);

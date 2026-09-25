@@ -12,7 +12,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     drain::{self, Readiness},
-    error::{Error, Result},
+    error::{Core, Error, Result},
     feed::{DmEntry, Feed, Notification},
     hotkey, jwt,
     model::{normalize_origin, Folder, Registry, ServerEntry, Settings},
@@ -38,13 +38,13 @@ fn entry_of(store: &Store, id: &str) -> Result<ServerEntry> {
         .registry()
         .server(id)
         .cloned()
-        .ok_or(Error::UnknownServer)
+        .ok_or(Core::UnknownServer.into())
 }
 
 /// The entry, the settings and its mutes: what building a page needs.
 fn page_inputs(store: &Store, id: &str) -> Result<(ServerEntry, Settings, Vec<i64>)> {
     let registry = store.registry();
-    let entry = registry.server(id).cloned().ok_or(Error::UnknownServer)?;
+    let entry = registry.server(id).cloned().ok_or(Core::UnknownServer)?;
 
     Ok((entry, registry.settings.clone(), registry.muted_for(id)))
 }
@@ -285,7 +285,7 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
     webviews::close_dm_view(&app, &id);
 
     let entry = store.update(|registry| {
-        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
+        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
 
         server.identity = None;
         server.profile = Some(Uuid::new_v4().simple().to_string());
@@ -325,7 +325,7 @@ pub async fn sign_in_server(
     store_credentials(&id, &token, &password, remember_password != Some(false)).await?;
 
     store.update(|registry| {
-        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
+        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
 
         server.account_label.get_or_insert_with(|| identity.clone());
         server.identity = Some(identity.clone());
@@ -363,7 +363,7 @@ pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<
     let info = probe::fetch_info(&entry_of(&store, &id)?.origin).await?;
 
     store.update(|registry| {
-        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
+        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
 
         server.name = info.name.clone();
         server.icon_url = info.icon_url.clone();
@@ -383,7 +383,7 @@ pub async fn set_accept_any_size(
     store.update(|registry| {
         registry
             .server_mut(&id)
-            .ok_or(Error::UnknownServer)?
+            .ok_or(Core::UnknownServer)?
             .accept_any_size = accept;
 
         Ok(())
@@ -693,9 +693,7 @@ pub fn voice_status(voice: State<'_, VoiceState>) -> Option<VoiceStatus> {
 #[tauri::command]
 pub async fn voice_control(app: AppHandle, action: String) -> Result<()> {
     if !matches!(action.as_str(), "mic" | "sound" | "leave") {
-        return Err(Error::InvalidInput(format!(
-            "Unknown voice action '{action}'"
-        )));
+        return Err(Core::InvalidInput(format!("Unknown voice action '{action}'")).into());
     }
 
     let voice = app.state::<VoiceState>();
