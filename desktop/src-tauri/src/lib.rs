@@ -19,8 +19,13 @@ mod webviews;
 use tauri::{Emitter, Manager};
 
 use crate::{
-    drain::Readiness, feed::Feed, session::Recovery, store::Store, voice::VoiceState,
-    watch::Watcher, webviews::ActiveServer,
+    drain::Readiness,
+    feed::Feed,
+    session::Recovery,
+    store::{RegistryStore, Store},
+    voice::VoiceState,
+    watch::Watcher,
+    webviews::ActiveServer,
 };
 
 /// Shows why Shiver could not start (a Windows GUI app has no console for stderr), then exits.
@@ -150,6 +155,11 @@ pub fn run() {
             app.manage(watch::Plugins::default());
             app.manage(watch::Reported::default());
             app.manage(watch::ReadStates::default());
+
+            // folders left thin by an older Shiver, which never dissolved them
+            let _ = app
+                .state::<Store>()
+                .update(|registry| Ok(registry.rail().prune_folders()));
 
             let mute_hotkey = app.state::<Store>().registry().settings.mute_hotkey.clone();
 

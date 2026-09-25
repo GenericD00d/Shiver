@@ -497,9 +497,12 @@ pub async fn create_folder_with(
     member_ids: Vec<String>,
 ) -> Result<Folder> {
     store.update(|registry| {
-        Ok(registry
-            .rail()
-            .create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?)
+        let mut rail = registry.rail();
+        let folder = rail.create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?;
+
+        rail.prune_folders();
+
+        Ok(folder)
     })
 }
 

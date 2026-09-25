@@ -257,6 +257,7 @@ pub async fn remove_server(
         registry.servers.retain(|server| server.id != id);
         registry.muted.retain(|muted| muted.entry_id != id);
         registry.baselines.remove(&id);
+        registry.rail().prune_folders();
         registry
             .pending_permission_resets
             .retain(|pending| pending != &id);
@@ -419,9 +420,12 @@ pub async fn create_folder_with(
     member_ids: Vec<String>,
 ) -> Result<Folder> {
     store.update(|registry| {
-        Ok(registry
-            .rail()
-            .create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?)
+        let mut rail = registry.rail();
+        let folder = rail.create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?;
+
+        rail.prune_folders();
+
+        Ok(folder)
     })
 }
 
@@ -436,6 +440,7 @@ pub async fn delete_folder(store: State<'_, Store>, id: String) -> Result<()> {
     store.update(|registry| Ok(registry.rail().delete_folder(&id)?))
 }
 
+/// Moves a server into a folder (or out, with `None`); a folder left with one server dissolves.
 #[tauri::command]
 pub async fn set_server_folder(
     store: State<'_, Store>,
@@ -446,6 +451,7 @@ pub async fn set_server_folder(
         let mut rail = registry.rail();
 
         rail.set_server_folder(&id, folder_id)?;
+        rail.prune_folders();
 
         Ok(())
     })

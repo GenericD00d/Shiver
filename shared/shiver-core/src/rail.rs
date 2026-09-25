@@ -143,18 +143,26 @@ impl<S: RailServer> Rail<'_, S> {
         next_position(self.servers, self.folders)
     }
 
-    /// A folder `id` holding `member_ids` (in that order), where its first member was.
+    /// A folder `id` holding `member_ids` (in that order), where its first member was (a member
+    /// taken from another folder was where that folder is). Callers prune after: a folder a member
+    /// left may now be too thin.
     pub fn create_folder(
         &mut self,
         id: String,
         name: &str,
         member_ids: &[String],
     ) -> Result<Folder> {
+        let slot = |server: &S| {
+            server
+                .folder_id()
+                .and_then(|folder| self.folders.iter().find(|candidate| candidate.id == folder))
+                .map_or(server.position(), |folder| folder.position)
+        };
         let position = self
             .servers
             .iter()
             .filter(|server| member_ids.iter().any(|member| member == server.id()))
-            .map(RailServer::position)
+            .map(slot)
             .min()
             .unwrap_or_else(|| self.next_position());
 
@@ -443,6 +451,29 @@ mod tests {
             folder_name(&"x".repeat(500)).unwrap().len(),
             MAX_FOLDER_NAME
         );
+    }
+
+    #[test]
+    fn a_folder_made_from_another_folders_member_takes_that_folders_place() {
+        let mut servers = vec![
+            at("a", None, 0),
+            at("b", Some("old"), 0),
+            at("c", Some("old"), 1),
+            at("d", None, 2),
+        ];
+        let mut folders = vec![folder("old", 1)];
+        let mut rail = Rail {
+            servers: &mut servers,
+            folders: &mut folders,
+        };
+
+        let made = rail
+            .create_folder("new".into(), "New", &["d".into(), "c".into()])
+            .unwrap();
+
+        assert_eq!(made.position, 1);
+        assert!(rail.prune_folders());
+        assert!(!folders.iter().any(|folder| folder.id == "old"));
     }
 
     #[test]
