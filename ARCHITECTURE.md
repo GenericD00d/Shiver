@@ -49,6 +49,11 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 - `mobile/src-tauri/gen/android/` is mostly generated, but `MainActivity.kt` (insets, back handling),
   `AndroidManifest.xml` and `res/xml/` + `res/values*/` are hand-written: re-running
   `tauri android init` must be merged, not accepted.
+- Compatibility code, to delete once upgrading from those versions is no longer supported:
+  `push::migrate_tokens`/`ensure_push_tokens` (Android ≤0.1.4 registered push under entry ids),
+  `remove_legacy_cache` in `shiver_core::store` (`messages.json`, written by 0.1.0–0.1.2), the
+  version-1 path in `bridge/plugin.ts` (companion plugin 0.1.0, shipped with Shiver ≤0.1.4) and
+  `adoptOldStore` in the plugin (its settings file from Sharkord 0.0.24).
 - Human docs, not covered here: `README.md` (features, building), `RELEASING.md` (signing keys,
   releases), `SECURITY.md` (reporting), `plugin/README.md` (installing the plugin).
 
