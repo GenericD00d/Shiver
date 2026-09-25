@@ -195,6 +195,14 @@ pub async fn refresh_server_info(
     Ok(entry)
 }
 
+/// The still of `id`'s page Android took as the user left it for the rail, given once.
+#[tauri::command]
+pub async fn server_still(app: AppHandle, id: String) -> Option<String> {
+    let origin = app.state::<Store>().registry().server(&id)?.origin.clone();
+
+    webview::take_still(&app, origin).await
+}
+
 /// Every server's logo as a `data:` uri, by entry id.
 #[tauri::command]
 pub fn server_icons(app: AppHandle, store: State<'_, Store>) -> HashMap<String, String> {

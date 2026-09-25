@@ -157,9 +157,72 @@ pub fn main_window(app: &AppHandle) -> Result<WebviewWindow> {
         .ok_or_else(|| Error::Webview("The Shiver window is not open".into()))
 }
 
+/// The still Android took of `origin`'s page as the user left it (`MainActivity.takeStill`), as
+/// a `data:` uri. Taken once; a still of another page is dropped.
+#[cfg(target_os = "android")]
+pub async fn take_still(app: &AppHandle, origin: String) -> Option<String> {
+    use jni::objects::{JString, JValue};
+
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+
+    main_window(app)
+        .ok()?
+        .with_webview(move |platform| {
+            platform.jni_handle().exec(move |env, activity, _| {
+                let take = || -> jni::errors::Result<Option<String>> {
+                    let origin = env.new_string(origin)?;
+                    let still = env
+                        .call_method(
+                            activity,
+                            "takeStill",
+                            "(Ljava/lang/String;)Ljava/lang/String;",
+                            &[JValue::Object(&origin)],
+                        )?
+                        .l()?;
+
+                    if still.is_null() {
+                        return Ok(None);
+                    }
+
+                    Ok(Some(env.get_string(&JString::from(still))?.into()))
+                };
+                let still = take();
+
+                if still.is_err() {
+                    let _ = env.exception_clear();
+                }
+
+                let _ = sender.send(still.ok().flatten());
+            });
+        })
+        .ok()?;
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), receiver)
+        .await
+        .ok()?
+        .ok()?
+}
+
+/// Only Android takes stills.
+#[cfg(not(target_os = "android"))]
+pub async fn take_still(_app: &AppHandle, _origin: String) -> Option<String> {
+    None
+}
+
+/// Drops the still Android may still hold, as a server is opened (no origin matches none).
+fn forget_still(app: &AppHandle) {
+    let app = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        take_still(&app, String::new()).await;
+    });
+}
+
 /// Navigates to a server's client, seeding `token` through the URL fragment when there is one.
 pub fn show_server(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) -> Result<()> {
     let window = main_window(app)?;
+
+    forget_still(app);
 
     let mut url = Url::parse(&entry.origin)
         .map_err(|_| Core::InvalidOrigin(format!("'{}' is not a valid address", entry.origin)))?;

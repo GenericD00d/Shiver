@@ -33,3 +33,7 @@ zeroize.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }
 
+# the version wry uses, for calling into the activity (`webview::take_still`)
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
