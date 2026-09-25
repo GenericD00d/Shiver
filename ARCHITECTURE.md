@@ -169,14 +169,17 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 
 ## plugin (Sharkord companion)
 
-- `server/index.js`: registers actions `setStatus`, `getStatuses`, `getOwnStatus`, `getMutedChannels`,
-  `setMutedChannels`, `setReadFloor`, `setPushEndpoint`, `clearPushEndpoint` (writes rate limited per
-  user); `adoptOldStore`, `primeFromUserRows`.
-- `server/rows.js` (`createRows`, `createLimiter`: serialised per-user rows), `settings.js` (mutes,
-  unread floor: `createSettings`, `mutedFrom`, `floorFrom`), `status.js` (custom statuses:
-  `createStatuses`, `statusFrom`), `push.js` (UnifiedPush delivery: `createPush`, `endpointsFrom`,
-  `normaliseEndpoint`, `deliver`; SSRF vetting: `isPrivateAddress`, `vetEndpoint`, `REFUSED`),
-  `files.js` (`installFileNaming`, `uniqueName`: a random suffix, separators and control characters
-  replaced; `splitName`).
+- `server/index.js`: the whole server half, one file (so a server reloading only its entry cannot mix
+  it with stale copies of others), in sections:
+  - rows: `createRows`, `createLimiter` (serialised per-user rows)
+  - file names: `installFileNaming`, `uniqueName` (a random suffix, separators and control characters
+    replaced), `splitName`
+  - settings: `createSettings`, `mutedFrom`, `floorFrom` (mutes, unread floor)
+  - statuses: `createStatuses`, `statusFrom` (custom statuses)
+  - push: `createPush`, `endpointsFrom`, `normaliseEndpoint`, `deliver` (UnifiedPush delivery); SSRF
+    vetting: `isPrivateAddress`, `vetEndpoint`, `REFUSED`
+  - loading: `onLoad` registers actions `setStatus`, `getStatuses`, `getOwnStatus`, `getMutedChannels`,
+    `setMutedChannels`, `setReadFloor`, `setPushEndpoint`, `clearPushEndpoint` (writes rate limited per
+    user); `onUnload`, `adoptOldStore`, `primeFromUserRows`.
 - `client/index.js`: client half: announces itself as `__SHIVER_PLUGIN__` (`{version}`), relays the bridge's calls to
   server actions (`callPlugin`), plus custom-status UI. Tests: `plugin/test/plugin.test.js`.

@@ -3,6 +3,6 @@
   "name": "Shiver",
   "author": "Shiver",
   "description": "Per-user Shiver settings kept on this server so they follow you to every device: muted channels, custom statuses, and UnifiedPush endpoints for waking a phone while Shiver is closed.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "sdkVersion": 2
 }
