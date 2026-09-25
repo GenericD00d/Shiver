@@ -104,7 +104,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `voice` | `VoiceState` (one call across servers, started only by the page on screen), `VoiceStatus`, `VoiceSnapshot` |
 | `hotkey` | global mic-mute shortcut `apply` |
 | `badge` / `badges` | taskbar badge `refresh`; `channel_viewed`, `is_on_screen` |
-| `permissions` | camera/mic for pages: `gate` (WebView2: on-screen page only, per-server yes in a native dialog, nothing saved in the profile), `forget_consents` |
+| `permissions` | camera/mic and downloads for pages: `gate` (WebView2: on-screen page only; camera/mic after a per-server yes in a native dialog, nothing saved in the profile), `forget_consents` |
 | `update` | signed self-update: `start` (announces `shiver://update`), `check_for_update`, `install_update`, `available_update`, `skip_update`, `open_repository`, `Available` |
 
 Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and core→page

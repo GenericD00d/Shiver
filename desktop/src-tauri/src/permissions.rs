@@ -1,6 +1,8 @@
-//! Camera and microphone for server pages.
+//! Camera, microphone and downloads for server pages.
 //!
-//! On Windows Shiver answers WebView2's requests itself: only the page on screen may ask, and it
+//! On Windows only the page on screen may start a download (a hidden one cannot drop files in the
+//! Downloads folder), and Shiver answers WebView2's camera and microphone requests itself: only the
+//! page on screen may ask, and it
 //! gets them once the user says yes to that server in a native dialog (the page cannot draw over
 //! it). The page holding the call may also have the microphone again while hidden, as a call can
 //! ask anew (a reconnect, another device). The yes is kept on the entry until the user logs out of
@@ -48,14 +50,14 @@ mod webview2 {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         ICoreWebView2Deferral, ICoreWebView2PermissionRequestedEventArgs,
         ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2Profile4, ICoreWebView2_13,
-        COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+        ICoreWebView2_4, COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
         COREWEBVIEW2_PERMISSION_KIND_MICROPHONE, COREWEBVIEW2_PERMISSION_STATE,
         COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DEFAULT,
         COREWEBVIEW2_PERMISSION_STATE_DENY,
     };
     use webview2_com::{
-        GetNonDefaultPermissionSettingsCompletedHandler, PermissionRequestedEventHandler,
-        SetPermissionStateCompletedHandler,
+        DownloadStartingEventHandler, GetNonDefaultPermissionSettingsCompletedHandler,
+        PermissionRequestedEventHandler, SetPermissionStateCompletedHandler,
     };
     use windows::Win32::System::Com::CoTaskMemFree;
     use windows_core::{Interface, PWSTR};
@@ -79,12 +81,21 @@ mod webview2 {
         static WAITING: RefCell<Option<(String, Vec<Request>)>> = const { RefCell::new(None) };
     }
 
-    /// Answers this page's camera and microphone requests, and forgets what its profile saved
-    /// before (off this thread, as that waits on the main thread).
+    /// Answers this page's camera and microphone requests and refuses its downloads while hidden,
+    /// and forgets what its profile saved before (off this thread, as that waits on the main
+    /// thread).
     pub fn gate(app: &AppHandle, webview: &tauri::Webview, entry: &ServerEntry) {
         let (app, entry_id, origin) = (app.clone(), entry.id.clone(), entry.origin.clone());
+        let (downloads_app, downloads_id) = (app.clone(), entry_id.clone());
 
         let registered = webview.with_webview(move |platform| unsafe {
+            let downloads =
+                DownloadStartingEventHandler::create(Box::new(move |_, args| match args {
+                    Some(args) if !is_on_screen(&downloads_app, &downloads_id) => {
+                        args.SetCancel(true)
+                    }
+                    _ => Ok(()),
+                }));
             let handler = PermissionRequestedEventHandler::create(Box::new(move |_, args| {
                 let Some(args) = args else {
                     return Ok(());
@@ -114,17 +125,17 @@ mod webview2 {
             }));
             let mut token = 0;
 
-            if let Err(error) = platform
-                .controller()
-                .CoreWebView2()
-                .and_then(|core| core.add_PermissionRequested(&handler, &mut token))
-            {
-                eprintln!("[shiver] could not guard the camera and microphone: {error}");
+            if let Err(error) = platform.controller().CoreWebView2().and_then(|core| {
+                core.add_PermissionRequested(&handler, &mut token)?;
+                core.cast::<ICoreWebView2_4>()?
+                    .add_DownloadStarting(&downloads, &mut token)
+            }) {
+                eprintln!("[shiver] could not gate a page's camera and downloads: {error}");
             }
         });
 
         if let Err(error) = registered {
-            eprintln!("[shiver] could not guard the camera and microphone: {error}");
+            eprintln!("[shiver] could not gate a page's camera and downloads: {error}");
         }
 
         let webview = webview.clone();
@@ -138,7 +149,7 @@ mod webview2 {
 
     /// `Some` answers at once; `None` asks the user.
     fn verdict(app: &AppHandle, entry_id: &str, camera: bool, same_origin: bool) -> Option<bool> {
-        let on_screen = app.state::<ActiveServer>().is_on_screen(entry_id);
+        let on_screen = is_on_screen(app, entry_id);
         let in_call = !camera && app.state::<VoiceState>().holder().as_deref() == Some(entry_id);
         let allowed = app
             .state::<Store>()
@@ -220,6 +231,10 @@ mod webview2 {
 
             let _ = app.run_on_main_thread(move || settle(allowed));
         });
+    }
+
+    fn is_on_screen(app: &AppHandle, entry_id: &str) -> bool {
+        app.state::<ActiveServer>().is_on_screen(entry_id)
     }
 
     fn settle(allowed: bool) {
