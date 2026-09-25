@@ -31,6 +31,10 @@ const MAX_CHANNEL_NAME: usize = 100;
 /// Refusals in a row, each after a fresh sign-in, before Shiver stops trying for a server.
 const MAX_REFUSALS: u32 = 3;
 
+/// How long a server just left goes unwatched: each trip to the rail and back reloads its page,
+/// and opening and closing a connection of Shiver's own besides doubled what the server saw.
+const WATCH_GRACE: Duration = Duration::from_secs(30);
+
 /// Messages arriving this close together are posted as one notification.
 const NOTIFY_AFTER: Duration = Duration::from_millis(900);
 
@@ -431,7 +435,12 @@ pub fn sync(app: &AppHandle) {
         .map(|server| server.id.clone())
         .collect();
     let showing = app.state::<webview::Showing>().server();
-    let watchable = |id: &String| registry_ids.contains(id) && showing.as_ref() != Some(id);
+    let just_left = app.state::<webview::Showing>().just_left(WATCH_GRACE);
+    let watchable = |id: &String| {
+        registry_ids.contains(id)
+            && showing.as_ref() != Some(id)
+            && just_left.as_ref().map(|(left, _)| left) != Some(id)
+    };
 
     let (wanted, unwanted) = app.state::<Inbox>().with(|state| {
         let unwanted: Vec<String> = state
@@ -471,6 +480,15 @@ pub fn sync(app: &AppHandle) {
 
         app.state::<Inbox>()
             .with(|state| state.running.insert(entry_id, task));
+    }
+
+    if let Some((_, rest)) = just_left {
+        let app = app.clone();
+
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(rest).await;
+            sync(&app);
+        });
     }
 
     publish(app);

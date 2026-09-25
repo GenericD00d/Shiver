@@ -12,6 +12,7 @@
 use std::{
     collections::HashMap,
     sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
@@ -86,6 +87,8 @@ struct ShowingState {
     stray: bool,
     /// open the conversation with this user on arrival (consumed once)
     pending_dm_user: Option<String>,
+    /// the server last left, and when
+    left: Option<(String, Instant)>,
 }
 
 /// Where Shiver's own pages live and which server the webview is on.
@@ -103,6 +106,14 @@ impl Showing {
 
     pub fn set_server(&self, entry_id: Option<String>) {
         let mut state = self.0.locked();
+
+        if let Some(previous) = state
+            .server
+            .take()
+            .filter(|previous| entry_id.as_ref() != Some(previous))
+        {
+            state.left = Some((previous, Instant::now()));
+        }
 
         state.server = entry_id;
         state.loaded = false;
@@ -132,6 +143,17 @@ impl Showing {
 
     pub fn server(&self) -> Option<String> {
         self.0.locked().server.clone()
+    }
+
+    /// The server left less than `grace` ago, with how much of it remains.
+    pub fn just_left(&self, grace: Duration) -> Option<(String, Duration)> {
+        let state = self.0.locked();
+        let (entry_id, at) = state.left.as_ref()?;
+
+        grace
+            .checked_sub(at.elapsed())
+            .filter(|rest| !rest.is_zero())
+            .map(|rest| (entry_id.clone(), rest))
     }
 
     pub fn set_pending_dm_user(&self, user: Option<String>) {
@@ -552,6 +574,26 @@ mod tests {
         assert!(showing.at_home());
         showing.set_server(Some("a".into()));
         assert!(!showing.at_home());
+    }
+
+    #[test]
+    fn the_server_left_is_remembered_for_its_grace() {
+        let showing = Showing::default();
+        let grace = Duration::from_secs(30);
+
+        showing.set_server(Some("a".into()));
+        assert_eq!(showing.just_left(grace), None);
+        showing.set_server(None);
+        assert_eq!(
+            showing.just_left(grace).map(|(id, _)| id).as_deref(),
+            Some("a")
+        );
+        assert_eq!(showing.just_left(Duration::ZERO), None);
+        showing.set_server(Some("b".into()));
+        assert_eq!(
+            showing.just_left(grace).map(|(id, _)| id).as_deref(),
+            Some("a")
+        );
     }
 
     #[test]

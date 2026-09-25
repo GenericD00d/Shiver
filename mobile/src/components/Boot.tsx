@@ -27,7 +27,7 @@ const QUESTIONS: Record<ConfirmAction, { question: (name: string) => string; act
   logout: { question: (name) => `Log out of ${name}?`, action: 'Log out' }
 };
 
-/** Shiver's front page: a spinner, a failure, a confirmation, the way back from the rail, or "add a server". */
+/** Shiver's front page: a spinner, a failure, a confirmation, the way back from the rail (the page left, tapped), or "add a server". */
 const ARM_MS = 1000;
 
 export const Boot = ({ state, onRetry, onAdd, onConfirm }: Props) => {
@@ -65,15 +65,15 @@ export const Boot = ({ state, onRetry, onAdd, onConfirm }: Props) => {
     );
   }
 
+  // the still of the page just left shows behind the rail; tapping it goes back, as for a drawer
   if (state.kind === 'home') {
     return (
-      <div className="boot">
-        <p className="hint">Pick a server from the rail.</p>
-
-        <button type="button" className="primary" onClick={() => onRetry(state.server)}>
-          Back to {state.server.name}
-        </button>
-      </div>
+      <button
+        type="button"
+        className="boot-return"
+        aria-label={`Back to ${state.server.name}`}
+        onClick={() => onRetry(state.server)}
+      />
     );
   }
 
