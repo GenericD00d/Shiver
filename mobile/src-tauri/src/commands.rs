@@ -281,10 +281,14 @@ pub fn forget_sessions(app: AppHandle, store: State<'_, Store>) {
     }
 }
 
-/// Logs out of a server: forgets Shiver's session, password and identity for it, and wipes what
-/// its page stored in the webview.
+/// Logs out of a server: stops its push wake-ups, forgets Shiver's session, password and identity
+/// for it, and wipes what its page stored in the webview.
 #[tauri::command]
 pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
+    if let Err(error) = crate::push::set_wanted(&app, &id, false) {
+        eprintln!("[shiver] could not stop push for {id}: {error}");
+    }
+
     let origin = store.update(|registry| {
         let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
 
