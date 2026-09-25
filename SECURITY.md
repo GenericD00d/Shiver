@@ -60,6 +60,11 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   refuses any command not sent by Shiver's own webviews. Android reports a new page's origin late,
   so it refuses every command while a server is on screen or being opened, or while a page Shiver
   did not open (a step back through history) is loading on its way home.
+- **Camera and microphone go only where you said yes.** On Android they go only to the server page
+  on screen (never a frame inside it), after Shiver has asked you once for that server; a log out or
+  removal forgets the answer. WebView2 on Windows asks per site itself, and WebKitGTK on Linux
+  refuses. macOS is not yet covered: wry grants every page there, so a macOS build must not ship
+  until Shiver handles it.
 - **Only the user opens the browser.** A page's own navigations off its origin and its new windows
   are refused; the browser gets only links the user clicked and one window per click, rationed per
   server.

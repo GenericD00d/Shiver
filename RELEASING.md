@@ -26,7 +26,7 @@ certificate together. Sign with a different key and the system does not see an u
 different app, and refuses to install over the top.
 
 For Android there is no recovery at all. Key rotation exists (APK Signature Scheme v3 lineage, fine
-on `minSdk 24`) but it works by proving continuity *from the old key*, so it helps when a key is
+on `minSdk 26`) but it works by proving continuity *from the old key*, so it helps when a key is
 compromised and still held, not when it is gone. Play App Signing can reset a lost upload key, but
 Shiver ships APKs directly rather than through Play, so that route does not apply either.
 

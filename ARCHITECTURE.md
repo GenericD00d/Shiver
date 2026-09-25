@@ -46,7 +46,8 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
   replaces the registry only once it is written.
 - Rail/folder logic lives in `shiver_core::rail`; the clients call `registry.rail().<op>()`.
 - Keep shared constants in step: `shared/web/settings.ts` ↔ `shiver_core::model`.
-- `mobile/src-tauri/gen/android/` is mostly generated, but `MainActivity.kt` (insets, back handling),
+- `mobile/src-tauri/gen/android/` is mostly generated, but `MainActivity.kt` (insets, back handling,
+  `MediaGate`: camera and microphone only for the server on screen, asked once per server),
   `AndroidManifest.xml` and `res/xml/` + `res/values*/` are hand-written: re-running
   `tauri android init` must be merged, not accepted.
 - Compatibility code, to delete once upgrading from those versions is no longer supported:
