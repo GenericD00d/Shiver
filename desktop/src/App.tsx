@@ -530,83 +530,34 @@ export const App = () => {
 
   // the rail's context menu is a native os menu, so its result comes back as an event
   useEffect(() => {
-    const pending = listen<{ action: string; entryId: string }>(MENU_EVENT, async (event) => {
-      const { action, entryId } = event.payload;
-
-      if (action === 'open') {
-        await openServer(entryId);
-
-        return;
-      }
-
-      if (action === 'remove') {
-        setRemoving(entryId);
+    // ids are `action:id`, the id being a folder's for folder actions
+    const actions: Record<string, (id: string) => Promise<unknown>> = {
+      open: openServer,
+      remove: async (id) => {
+        setRemoving(id);
         await openPanel('remove');
-
-        return;
-      }
-
-      if (action === 'markread') {
-        await api.markServerRead(entryId).catch(() => undefined);
-        await refreshFeed();
-
-        return;
-      }
-
-      if (action === 'signin') {
-        setSigningIn(entryId);
+      },
+      signin: async (id) => {
+        setSigningIn(id);
         await openPanel('signin');
-
-        return;
-      }
-
-      if (action === 'forgetpw') {
-        await api.forgetPassword(entryId);
-
-        return;
-      }
-
-      // two actions rather than a toggle, so this does not have to know which way the server is
-      // currently set — the menu knew, and said so by which item it built
-      if (action === 'anysize' || action === 'normalsize') {
-        await api.setAcceptAnySize(entryId, action === 'anysize').catch(() => undefined);
-
-        return;
-      }
-
-      if (action === 'logout') {
-        await api.logOutServer(entryId).catch(() => undefined);
-        await refresh();
-
-        return;
-      }
-
-      if (action === 'refresh') {
-        await api.refreshServerInfo(entryId).catch(() => undefined);
-        await refresh();
-
-        return;
-      }
-
-      if (action === 'unfolder') {
-        await api.setServerFolder(entryId, null).catch(() => undefined);
-        await refresh();
-
-        return;
-      }
-
-      if (action === 'delete-folder') {
-        await api.deleteFolder(entryId).catch(() => undefined);
-        await refresh();
-
-        return;
-      }
-
-      if (action === 'rename-folder') {
-        // `entryId` carries the folder id for folder actions
-        setRenamingFolder(entryId);
+      },
+      'rename-folder': async (id) => {
+        setRenamingFolder(id);
         await openPanel('folder');
-      }
+      },
+      markread: (id) => api.markServerRead(id).then(refreshFeed),
+      forgetpw: api.forgetPassword,
+      // two actions rather than a toggle: the menu knew which way the server is set
+      anysize: (id) => api.setAcceptAnySize(id, true),
+      normalsize: (id) => api.setAcceptAnySize(id, false),
+      logout: (id) => api.logOutServer(id).then(refresh),
+      refresh: (id) => api.refreshServerInfo(id).then(refresh),
+      unfolder: (id) => api.setServerFolder(id, null).then(refresh),
+      'delete-folder': (id) => api.deleteFolder(id).then(refresh)
+    };
+
+    const pending = listen<{ action: string; entryId: string }>(MENU_EVENT, ({ payload }) => {
+      if (Object.hasOwn(actions, payload.action)) void actions[payload.action](payload.entryId).catch(() => undefined);
     });
 
     return () => {
