@@ -108,7 +108,6 @@ pub async fn add_server(
         let entry = ServerEntry {
             id: Uuid::new_v4().to_string(),
             origin: origin.clone(),
-            server_id: Some(info.server_id.clone()),
             name: info.name.clone(),
             icon_url: info.icon_url.clone(),
             icon_data: icon_data.clone(),
@@ -182,7 +181,6 @@ pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<
         server.name = info.name.clone();
         server.icon_url = info.icon_url.clone();
         server.icon_data = icon_data.clone();
-        server.server_id = Some(info.server_id.clone());
 
         Ok(server.clone())
     })
@@ -196,8 +194,6 @@ pub struct PushStatus {
     /// package names of installed distributors
     pub distributors: Vec<String>,
     pub chosen: Option<String>,
-    pub registered: usize,
-    pub failed: usize,
     pub servers: Vec<PushServer>,
 }
 
@@ -216,7 +212,6 @@ pub struct PushServer {
 pub fn push_status(app: AppHandle, store: State<'_, Store>) -> PushStatus {
     let (distributors, chosen) = app.shiver_push().distributors().unwrap_or_default();
     let push = app.state::<crate::push::Push>();
-    let (registered, failed) = push.snapshot();
     let registry = store.registry();
 
     let servers = registry
@@ -245,8 +240,6 @@ pub fn push_status(app: AppHandle, store: State<'_, Store>) -> PushStatus {
     PushStatus {
         distributors,
         chosen,
-        registered,
-        failed,
         servers,
     }
 }

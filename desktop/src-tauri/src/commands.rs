@@ -205,7 +205,6 @@ pub async fn add_server(
         let entry = ServerEntry {
             id: id.clone(),
             origin: origin.clone(),
-            server_id: Some(info.server_id.clone()),
             name: info.name.clone(),
             icon_url: info.icon_url.clone(),
             identity,
@@ -370,7 +369,6 @@ pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<
 
         server.name = info.name.clone();
         server.icon_url = info.icon_url.clone();
-        server.server_id = Some(info.server_id.clone());
 
         Ok(server.clone())
     })

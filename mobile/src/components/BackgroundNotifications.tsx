@@ -41,7 +41,7 @@ export const BackgroundNotifications = () => {
   useEffect(read, [read]);
 
   // an endpoint arrives as a broadcast some moments after the distributor is picked, so the screen
-  // is told rather than left showing "0 of 2" until something else redraws it
+  // is told rather than left showing "waiting" until something else redraws it
   useEffect(() => {
     const stop = api.onPush(read);
 

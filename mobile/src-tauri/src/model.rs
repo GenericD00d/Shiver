@@ -22,8 +22,6 @@ shiver_core::registry!(Registry, ServerEntry);
 pub struct ServerEntry {
     pub id: String,
     pub origin: String,
-    #[serde(default)]
-    pub server_id: Option<String>,
     pub name: String,
     #[serde(default)]
     pub icon_url: Option<String>,

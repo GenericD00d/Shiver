@@ -1027,7 +1027,6 @@ mod tests {
         ServerEntry {
             id: "0b6d7e4e-1a4f-4bb0-9d3c-2f3b1a9e8c11".into(),
             origin: "https://chat.example.com".into(),
-            server_id: None,
             name: "Chat".into(),
             icon_url: None,
             identity: None,

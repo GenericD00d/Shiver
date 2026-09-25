@@ -9,7 +9,6 @@ export type ServerEntry = {
   acceptAnySize?: boolean;
   id: string;
   origin: string;
-  serverId: string | null;
   name: string;
   iconUrl: string | null;
   /** the logo as a `data:` uri, sent to the bridge so a server's page never learns another's address */
@@ -39,8 +38,6 @@ export type PushStatus = {
   /** package names of the UnifiedPush distributors installed on this phone */
   distributors: string[];
   chosen: string | null;
-  registered: number;
-  failed: number;
   /** every server, with whether it was chosen to wake the phone and how that is going */
   servers: PushServer[];
 };

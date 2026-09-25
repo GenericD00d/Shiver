@@ -24,7 +24,6 @@ const MAX_ICON_BYTES: usize = 256 * 1024;
 #[serde(rename_all = "camelCase")]
 pub struct ServerInfo {
     pub origin: String,
-    pub server_id: String,
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
@@ -55,9 +54,10 @@ pub async fn fetch_info(origin: &str) -> Result<ServerInfo> {
 fn parse_info(origin: &str, body: &Value) -> Option<ServerInfo> {
     let text = |key: &str| body.get(key).and_then(Value::as_str);
 
+    text("serverId")?;
+
     Some(ServerInfo {
         origin: origin.to_string(),
-        server_id: text("serverId")?.to_string(),
         name: presentable(text("name")?).map_or_else(
             || origin.trim_start_matches("https://").to_string(),
             |name| name.chars().take(MAX_NAME).collect(),

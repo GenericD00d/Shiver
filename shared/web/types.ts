@@ -15,7 +15,6 @@ export type Folder = {
 /** What `/info` says about a server (`probe::ServerInfo`). */
 export type ServerInfo = {
   origin: string;
-  serverId: string;
   name: string;
   description: string | null;
   iconUrl: string | null;

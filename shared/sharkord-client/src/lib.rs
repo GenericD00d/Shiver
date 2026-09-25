@@ -71,7 +71,6 @@ pub struct DirectMessage {
 /// What the server says about itself and this user when Shiver joins.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Joined {
-    pub server_id: Option<String>,
     pub own_user_id: Option<i64>,
     /// unread per channel id, the baseline later events are applied to
     pub read_states: HashMap<i64, u32>,
@@ -257,10 +256,6 @@ fn channel_counts(value: &Value) -> Option<HashMap<i64, u32>> {
 /// The parts of `others.joinServer`'s answer Shiver uses. Missing fields read as empty.
 fn parse_join(data: &Value) -> Joined {
     let mut joined = Joined {
-        server_id: data
-            .get("serverId")
-            .and_then(Value::as_str)
-            .map(str::to_string),
         own_user_id: data.get("ownUserId").and_then(Value::as_i64),
         read_states: data
             .get("readStates")
@@ -985,7 +980,6 @@ mod tests {
             "pluginsMetadata": [{ "pluginId": "other", "version": "2.0.0" }, { "pluginId": "shiver", "version": "0.1.0" }]
         }));
 
-        assert_eq!(joined.server_id.as_deref(), Some("019c1482"));
         assert_eq!(joined.read_states.get(&140), Some(&2));
         assert_eq!(joined.dm_channels, vec![9]);
         assert_eq!(

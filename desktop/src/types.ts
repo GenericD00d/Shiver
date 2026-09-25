@@ -7,7 +7,6 @@ export type { Folder, MutedChannel, ServerCheck, ServerInfo };
 export type ServerEntry = {
   id: string;
   origin: string;
-  serverId: string | null;
   name: string;
   iconUrl: string | null;
   identity: string | null;

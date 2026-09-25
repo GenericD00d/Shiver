@@ -38,13 +38,6 @@ impl Push {
         self.0.locked().failed.iter().any(|id| id == entry_id)
     }
 
-    /// (registered, failed)
-    pub fn snapshot(&self) -> (usize, usize) {
-        let state = self.0.locked();
-
-        (state.endpoints.len(), state.failed.len())
-    }
-
     fn update(&self, entry_id: &str, endpoint: Option<String>, failed: bool) {
         let mut state = self.0.locked();
 
