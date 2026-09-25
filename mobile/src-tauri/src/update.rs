@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use shiver_core::LockExt;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 use crate::{
     error::{Core, Error, Result},
@@ -119,7 +119,7 @@ pub fn start(app: &AppHandle) {
         }
 
         app.state::<Available>().set(Some(newest.clone()));
-        let _ = app.emit(UPDATE_EVENT, &newest);
+        crate::webview::emit_home(&app, UPDATE_EVENT, &newest);
 
         use tauri_plugin_notification::NotificationExt;
 

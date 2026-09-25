@@ -77,7 +77,9 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   own page, not in the server's. A server's page is handed its own entry's settings, mutes, session
   and push endpoint, and the address of Shiver's page (going home is a navigation there); nothing
   about other servers. It can navigate to Shiver's page, whose fragment can only ask to show the
-  rail, or reopen a server (or say it failed) by id; nothing is changed from a URL.
+  rail, or reopen a server (or say it failed) by id; nothing is changed from a URL. The core's
+  events (unread counts, push, updates) are sent only while Shiver's page is up, because the one
+  webview keeps that page's event listeners after it navigates to a server.
 - **The plugin's push delivery is pinned.** The endpoint is resolved once, every address is
   checked, and the request is sent over TLS on port 443 to that vetted address with the hostname as
   SNI, so DNS rebinding cannot redirect it. Deliveries in flight are capped server-wide.

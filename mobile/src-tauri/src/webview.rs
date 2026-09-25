@@ -14,11 +14,11 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use shiver_core::LockExt;
-use tauri::{window::Color, AppHandle, Manager, Url, WebviewWindow};
+use tauri::{window::Color, AppHandle, Emitter, Manager, Url, WebviewWindow};
 
 pub use shiver_core::limit::Openings;
 
@@ -139,6 +139,15 @@ impl Showing {
 
     pub fn take_pending_dm_user(&self) -> Option<String> {
         self.0.locked().pending_dm_user.take()
+    }
+}
+
+/// Tells Shiver's own page something, but only while it is on screen: the one webview keeps the
+/// page's listeners across navigations, so an event sent while a server's page is up would be
+/// evaluated in that page. Shiver's page re-reads everything when it next loads.
+pub fn emit_home(app: &AppHandle, event: &str, payload: impl Serialize + Clone) {
+    if app.state::<Showing>().at_home() {
+        let _ = app.emit(event, payload);
     }
 }
 

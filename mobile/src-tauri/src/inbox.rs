@@ -12,7 +12,7 @@ use std::{
 };
 
 use shiver_core::{text::clamp, LockExt};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_shiver_secrets::SecretsExt;
 
 use crate::{
@@ -662,9 +662,9 @@ pub fn watch_mutes(app: &AppHandle) {
     });
 }
 
-/// Sends the unread counts to Shiver's own page (a server's page is never told them).
+/// Sends the unread counts to Shiver's own page.
 fn publish(app: &AppHandle) {
-    let _ = app.emit(INBOX_EVENT, app.state::<Inbox>().unread());
+    webview::emit_home(app, INBOX_EVENT, app.state::<Inbox>().unread());
 }
 
 /// Signs a server in again from its stored password. A refused password is forgotten.

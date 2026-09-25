@@ -7,7 +7,7 @@
 use std::{collections::HashMap, sync::Mutex};
 
 use shiver_core::LockExt;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_shiver_push::{PushEvent, PushExt};
 
 use crate::{
@@ -106,7 +106,7 @@ pub fn start(app: &AppHandle) {
 
         if let Some(entry_id) = entry_for(&handle, token) {
             handle.state::<Push>().update(&entry_id, endpoint, failed);
-            let _ = handle.emit(PUSH_EVENT, ());
+            crate::webview::emit_home(&handle, PUSH_EVENT, ());
         }
     });
 
