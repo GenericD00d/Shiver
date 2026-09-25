@@ -5,10 +5,10 @@
  * hooks in `types.ts`. The session was served from memory since document start (`document-start.ts`).
  */
 
-import { defineHook, isTopFrame, onDomSettled } from '../../shared/web/bridge/dom';
+import { defineHook, isTopFrame, onDomSettled, touched } from '../../shared/web/bridge/dom';
 import { installAttachmentCards, installRoleColors, installSoundVolume, installStatusButton, installVoiceColors } from '../../shared/web/bridge/features';
 import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, waitForPlugin } from '../../shared/web/bridge/plugin';
-import { installMuteStyles, paintMuted } from '../../shared/web/bridge/sharkord';
+import { CHANNEL_ITEM, installMuteStyles, paintMuted } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme } from '../../shared/web/bridge/theme';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
 import { goHome, installHomeSwipe, setHome } from './home';
@@ -58,7 +58,7 @@ function install(shiver: ShiverConfig) {
     }
   });
   paint();
-  onDomSettled(paint);
+  onDomSettled((changed) => paintMuted(muted, touched(changed, CHANNEL_ITEM)));
 
   void syncMutesWithPlugin([...muted]).then((merged) => {
     if (!merged) return;

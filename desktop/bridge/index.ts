@@ -6,7 +6,7 @@
  * controls and the channel menu's mute item, which all use the page's own controls.
  */
 
-import { defineHook, ensureStyle, installExternalLinks, onDomSettled, openMenuOnScreen, addedMenu, whenDocumentReady } from '../../shared/web/bridge/dom';
+import { defineHook, ensureStyle, installExternalLinks, onDomSettled, openMenuOnScreen, addedMenu, touched, whenDocumentReady } from '../../shared/web/bridge/dom';
 import { installAttachmentCards, installRoleColors, installSoundVolume, installStatusButton, installVoiceColors } from '../../shared/web/bridge/features';
 import { pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
 import {
@@ -252,8 +252,8 @@ function install(shiver: ShiverConfig) {
       paintMuted(muted);
     });
 
-    // Sharkord re-renders the channel list constantly, dropping the dimming
-    onDomSettled(() => paintMuted(muted));
+    // rows Sharkord adds or redraws
+    onDomSettled((changed) => paintMuted(muted, touched(changed, CHANNEL_ITEM)));
   });
 }
 
@@ -894,30 +894,21 @@ function setWindowHidden(hidden: boolean) {
   document.dispatchEvent(new Event('visibilitychange'));
 }
 
-/** Sharkord's compose editor, and a file waiting to be sent. */
+/** Sharkord's compose editor. */
 const COMPOSE_EDITOR = '[data-testid="message-compose-editor"]';
-const PENDING_FILE = 'div[class~="w-48"][class~="group"][class~="rounded-lg"]';
 
 /**
- * Returns focus to the compose editor (caret at the end) when a file is attached, so Enter sends
- * it; picking a file leaves focus on the paperclip. Never steals focus from another text field.
+ * Returns focus to the compose editor (caret at the end) once a file is picked or dropped, so Enter
+ * sends it; picking a file leaves focus on the paperclip. Not for a file picked in a dialog (an
+ * avatar), and never taking focus from another text field.
  */
 function installAttachmentFocus() {
-  let pending = 0;
-
-  onDomSettled(() => {
-    const now = document.querySelectorAll(PENDING_FILE).length;
-    const gained = now > pending;
-
-    pending = now;
-
-    if (!gained) return;
-
+  const refocus = () => {
     const editor = document.querySelector<HTMLElement>(COMPOSE_EDITOR);
     const active = document.activeElement;
 
-    if (!editor) return;
-    if (active instanceof HTMLElement && active !== editor && (active.isContentEditable || active.matches('input, textarea, select'))) return;
+    if (!editor || document.querySelector('[role="dialog"]')) return;
+    if (active instanceof HTMLElement && active !== editor && (active.isContentEditable || active.matches('input:not([type="file"]), textarea, select'))) return;
 
     editor.focus();
 
@@ -928,7 +919,15 @@ function installAttachmentFocus() {
     range.collapse(false);
     selection?.removeAllRanges();
     selection?.addRange(range);
-  });
+  };
+
+  // after the page has taken the file
+  document.addEventListener('change', (event) => {
+    if (event.target instanceof HTMLInputElement && event.target.type === 'file') window.setTimeout(refocus);
+  }, true);
+  document.addEventListener('drop', (event) => {
+    if (event.dataTransfer?.files.length) window.setTimeout(refocus);
+  }, true);
 }
 
 // Read and removed from the page before anything else runs (`bridge_script` in webviews.rs runs

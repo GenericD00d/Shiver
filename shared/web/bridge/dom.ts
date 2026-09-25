@@ -28,39 +28,88 @@ export function defineHook<K extends keyof Window>(name: K, value: Window[K]) {
   }
 }
 
-const settledCallbacks = new Set<() => void>();
+const settledCallbacks = new Set<(changed: readonly Element[]) => void>();
 let settledObserver: MutationObserver | null = null;
 let settledScheduled = false;
+/** elements added or re-texted since the last run; the body alone once there are too many to track */
+const settledChanged = new Set<Element>();
+const MAX_TRACKED = 500;
 
 function runSettled() {
   settledScheduled = false;
 
+  const changed = [...settledChanged].filter((element) => element.isConnected && !hasAncestorIn(element, settledChanged));
+
+  settledChanged.clear();
+
   for (const callback of settledCallbacks) {
     try {
-      callback();
+      callback(changed);
     } catch (error) {
       console.error('[shiver] a dom-settled callback failed', error);
     }
   }
 }
 
+function hasAncestorIn(element: Element, set: ReadonlySet<Element>) {
+  for (let up = element.parentElement; up; up = up.parentElement) if (set.has(up)) return true;
+
+  return false;
+}
+
+function noteChanged(node: Node | null) {
+  const element = node instanceof Element ? node : node?.parentElement;
+
+  if (!element || settledChanged.has(document.body)) return;
+
+  if (settledChanged.size < MAX_TRACKED) {
+    settledChanged.add(element);
+
+    return;
+  }
+
+  settledChanged.clear();
+  settledChanged.add(document.body);
+}
+
 /**
- * Runs `callback` after DOM changes, at most once per animation frame. One shared observer for
- * the whole bridge, so a burst of mutations costs one pass; callbacks must be idempotent.
+ * Runs `callback` after DOM changes, at most once per animation frame, with the outermost elements
+ * added or re-texted since the last run, so it can look at just those (`touched`). One shared
+ * observer for the whole bridge; callbacks must be idempotent.
  */
-export function onDomSettled(callback: () => void) {
+export function onDomSettled(callback: (changed: readonly Element[]) => void) {
   settledCallbacks.add(callback);
 
   if (settledObserver) return;
 
-  settledObserver = new MutationObserver(() => {
+  settledObserver = new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type === 'characterData') noteChanged(record.target);
+      else for (const node of record.addedNodes) noteChanged(node);
+    }
+
     if (settledScheduled) return;
 
     settledScheduled = true;
     requestAnimationFrame(runSettled);
   });
 
-  settledObserver.observe(document.body, { childList: true, subtree: true });
+  settledObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+}
+
+/** Elements matching `selector` among, inside or enclosing (the nearest) the `changed` ones. */
+export function touched<T extends Element = HTMLElement>(changed: readonly Element[], selector: string) {
+  const found = new Set<T>();
+
+  for (const root of changed) {
+    const around = root.closest<T>(selector);
+
+    if (around) found.add(around);
+
+    for (const inner of root.querySelectorAll<T>(selector)) found.add(inner);
+  }
+
+  return found;
 }
 
 /** Whether this is the top frame (a cross-origin parent makes `window.top` throw). */

@@ -146,7 +146,8 @@ export function markAllChannelsRead() {
   if (typeof selectedChannelId === 'number') selectChannel(selectedChannelId);
 }
 
-const MUTE_CLASS = 'shiver-muted-channel';
+/** an attribute rather than a class: React rewrites a row's classes, never an attribute it did not set */
+const MUTED = 'data-shiver-muted';
 const SHIVER_MENU_ITEM = 'shiver-menu-item';
 
 /**
@@ -155,8 +156,8 @@ const SHIVER_MENU_ITEM = 'shiver-menu-item';
  */
 export function installMuteStyles() {
   ensureStyle('shiver-mute-style').textContent = `
-.${MUTE_CLASS} { opacity: 0.45; }
-.${MUTE_CLASS} ${UNREAD_COUNT} { display: none !important; }
+[${MUTED}] { opacity: 0.45; }
+[${MUTED}] ${UNREAD_COUNT} { display: none !important; }
 .${SHIVER_MENU_ITEM}:hover, .${SHIVER_MENU_ITEM}:focus { background-color: var(--accent); color: var(--accent-foreground); }
 ${REACTED_PILL} {
   background-color: color-mix(in srgb, var(--primary) 22%, transparent) !important;
@@ -166,17 +167,19 @@ ${REACTED_PILL} {
 }
 
 /**
- * Marks the sidebar rows of muted channels. Rows carry no channel id, so they are matched by name
- * (two channels sharing a name dim together; the mute itself is keyed on the id).
+ * Marks the sidebar rows of muted channels: `rows`, or every row. Rows carry no channel id, so
+ * they are matched by name (two channels sharing a name dim together; the mute is keyed on the id).
  */
-export function paintMuted(muted: ReadonlySet<number>) {
+export function paintMuted(muted: ReadonlySet<number>, rows: Iterable<Element> = document.querySelectorAll(CHANNEL_ITEM)) {
+  const list = [...rows];
+
+  if (!list.length) return;
+
   const names = new Set(
     (sharkordStore()?.getState().channels ?? []).filter((channel) => muted.has(channel.id)).map((channel) => channel.name)
   );
 
-  for (const row of document.querySelectorAll<HTMLElement>(CHANNEL_ITEM)) {
-    row.classList.toggle(MUTE_CLASS, names.has(rowName(row)));
-  }
+  for (const row of list) row.toggleAttribute(MUTED, names.has(rowName(row)));
 }
 
 /**
