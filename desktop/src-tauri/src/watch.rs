@@ -189,7 +189,8 @@ pub fn restart(app: &AppHandle, entry_id: &str) {
     sync(app);
 }
 
-/// Removes this task's own record, and parks the entry if it stopped for want of a session.
+/// Removes this task's own record, and parks the entry if it stopped for want of a session or
+/// because the server sends more than it accepts.
 fn finished(app: &AppHandle, entry_id: &str, task_id: u64, park: bool) {
     let watcher = app.state::<Watcher>();
     let mut tasks = watcher.tasks.locked();
@@ -205,7 +206,8 @@ fn finished(app: &AppHandle, entry_id: &str, task_id: u64, park: bool) {
 }
 
 /// Watches one server; renews its session from the stored password, and parks the entry (until
-/// it is signed in) when there is no session or fresh sessions keep being refused.
+/// it is signed in, or its size limit changes) when there is no session, fresh sessions keep being
+/// refused, or it sends more than Shiver accepts.
 async fn watch(app: AppHandle, entry: ServerEntry, task_id: u64) {
     let key = entry.id.clone();
 
@@ -276,6 +278,7 @@ impl sharkord::Watcher for Watch {
 
     fn too_large(&mut self, size: usize) {
         report_too_large(&self.app, &self.entry.id, size);
+        finished(&self.app, &self.entry.id, self.task_id, true);
     }
 
     fn disconnected(&mut self) {

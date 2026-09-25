@@ -419,8 +419,9 @@ pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
 
 /* ── connections ── */
 
-/// Starts a connection for every entry with a session and no connection, stops those for entries
-/// that left the rail, and settles the notification of the server on screen.
+/// Starts a connection for every entry with a session, no connection and no problem that retrying
+/// cannot fix, stops those for entries that left the rail, and settles the notification of the
+/// server on screen.
 pub fn sync(app: &AppHandle) {
     let registry_ids: HashSet<String> = app
         .state::<Store>()
@@ -441,7 +442,11 @@ pub fn sync(app: &AppHandle) {
         let wanted: Vec<String> = state
             .tokens
             .keys()
-            .filter(|id| registry_ids.contains(*id) && !state.running.contains_key(*id))
+            .filter(|id| {
+                registry_ids.contains(*id)
+                    && !state.running.contains_key(*id)
+                    && !state.problems.contains_key(*id)
+            })
             .cloned()
             .collect();
 
@@ -551,6 +556,9 @@ impl sharkord::Watcher for Watch {
 
     fn too_large(&mut self, size: usize) {
         report_watch_problem(&self.app, &self.entry_id, size);
+        self.app
+            .state::<Inbox>()
+            .with(|state| state.running.remove(&self.entry_id));
     }
 }
 

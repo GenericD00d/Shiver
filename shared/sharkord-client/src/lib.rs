@@ -503,7 +503,7 @@ pub trait Watcher: Send {
     /// The server refused the session (`refusals` in a row). `true` retries at once (after the
     /// watcher renewed the session); `false` stops watching.
     fn refused(&mut self, refusals: u32) -> impl std::future::Future<Output = bool> + Send;
-    /// A message exceeded the frame limit (retrying will not fix it).
+    /// A message exceeded the frame limit. Watching stops, since retrying will not fix it.
     fn too_large(&mut self, size: usize);
     /// The connection is down, before the backoff.
     fn disconnected(&mut self) {}
@@ -545,6 +545,8 @@ pub async fn watch(key: &str, mut watcher: impl Watcher) {
                     "[shiver] {origin} sent {size} bytes in one message; Shiver accepts {max}"
                 );
                 watcher.too_large(size);
+
+                return;
             }
             Err(error) => eprintln!("[shiver] could not watch a server: {error}"),
         }
