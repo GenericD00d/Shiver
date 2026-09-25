@@ -126,9 +126,9 @@ pub fn spawn(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(POLL_INTERVAL);
 
-        for tick in 0u64.. {
+        for turn in (0..BACKGROUND_EVERY).cycle() {
             ticker.tick().await;
-            poll_once(&app, tick % BACKGROUND_EVERY == 0);
+            poll_once(&app, turn == 0);
         }
     });
 }
