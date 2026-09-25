@@ -93,7 +93,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `session` | `Recovery` + `recover`: re-sign-in when a page's seeded session is refused |
 | `secrets` | `Secret` (Session/Password) in the OS keychain; `*_off_thread` helpers |
 | `jwt` | `needs_refresh`, `is_live` (reads `exp` only) |
-| `voice` | `VoiceState` (one call across servers), `VoiceStatus`, `VoiceSnapshot` |
+| `voice` | `VoiceState` (one call across servers, started only by the page on screen), `VoiceStatus`, `VoiceSnapshot` |
 | `hotkey` | global mic-mute shortcut `apply` |
 | `badge` / `badges` | taskbar badge `refresh`; `channel_viewed`, `is_on_screen` |
 | `permissions` | WebView2 camera/mic reset: `clear_media_permissions`, `apply_pending_reset` |

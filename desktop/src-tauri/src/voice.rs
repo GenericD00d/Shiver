@@ -62,13 +62,15 @@ struct State {
 pub struct VoiceState(Mutex<State>);
 
 impl VoiceState {
-    /// Records one page's report. Returns whether the rail's view changed.
+    /// Records one page's report. Returns whether the rail's view changed. A call starts only on
+    /// the page on screen, so a page in the background cannot claim the call to lock out the rest.
     pub fn report(
         &self,
         entry_id: &str,
         server_name: &str,
         account_label: &str,
         snapshot: Option<VoiceSnapshot>,
+        on_screen: bool,
     ) -> bool {
         let mut state = self.0.locked();
 
@@ -91,6 +93,10 @@ impl VoiceState {
             existing.account_label = account_label.to_string();
 
             return true;
+        }
+
+        if !on_screen {
+            return false;
         }
 
         let order = state.next_order;
@@ -184,19 +190,18 @@ impl VoiceState {
 mod tests {
     use super::*;
 
-    fn join(voice: &VoiceState, entry_id: &str, channel_id: i64) {
-        voice.report(
-            entry_id,
-            "server",
-            "account",
-            Some(VoiceSnapshot {
-                channel_id,
-                channel_name: Some(format!("channel {channel_id}")),
-                mic_muted: false,
-                sound_muted: false,
-                mic_locked: false,
-            }),
-        );
+    fn snapshot(channel_id: i64) -> Option<VoiceSnapshot> {
+        Some(VoiceSnapshot {
+            channel_id,
+            channel_name: Some(format!("channel {channel_id}")),
+            mic_muted: false,
+            sound_muted: false,
+            mic_locked: false,
+        })
+    }
+
+    fn join(voice: &VoiceState, entry_id: &str, channel_id: i64) -> bool {
+        voice.report(entry_id, "server", "account", snapshot(channel_id), true)
     }
 
     #[test]
@@ -210,10 +215,22 @@ mod tests {
         assert_eq!(voice.holder().as_deref(), Some("z"));
         assert_eq!(voice.intruders(), vec!["a".to_string()]);
 
-        voice.report("z", "server", "account", None);
+        voice.report("z", "server", "account", None, false);
 
         assert_eq!(voice.holder().as_deref(), Some("a"));
         assert!(voice.intruders().is_empty());
+    }
+
+    #[test]
+    fn only_the_page_on_screen_can_start_a_call() {
+        let voice = VoiceState::default();
+
+        assert!(!voice.report("a", "server", "account", snapshot(1), false));
+        assert_eq!(voice.holder(), None);
+
+        join(&voice, "a", 1);
+        assert!(voice.report("a", "server", "account", snapshot(2), false));
+        assert_eq!(voice.holder().as_deref(), Some("a"));
     }
 
     #[test]
@@ -244,17 +261,6 @@ mod tests {
         let voice = VoiceState::default();
 
         join(&voice, "a", 1);
-        assert!(!voice.report(
-            "a",
-            "server",
-            "account",
-            Some(VoiceSnapshot {
-                channel_id: 1,
-                channel_name: Some("channel 1".into()),
-                mic_muted: false,
-                sound_muted: false,
-                mic_locked: false
-            })
-        ));
+        assert!(!join(&voice, "a", 1));
     }
 }

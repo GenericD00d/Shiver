@@ -390,10 +390,13 @@ fn apply_server_page(
         );
     }
 
-    if app
-        .state::<VoiceState>()
-        .report(entry_id, server_name, account_label, result.voice.take())
-    {
+    if app.state::<VoiceState>().report(
+        entry_id,
+        server_name,
+        account_label,
+        result.voice.take(),
+        crate::badges::is_on_screen(app, entry_id),
+    ) {
         let _ = app.emit_to(SHELL_WEBVIEW, VOICE_EVENT, ());
     }
 

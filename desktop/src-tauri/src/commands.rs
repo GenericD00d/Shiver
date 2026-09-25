@@ -694,8 +694,17 @@ pub async fn voice_control(app: AppHandle, action: String) -> Result<()> {
         )));
     }
 
-    if let Some(holder) = app.state::<VoiceState>().holder() {
+    let voice = app.state::<VoiceState>();
+
+    if let Some(holder) = voice.holder() {
         webviews::run_voice_action(&app, &holder, &action);
+
+        // a page that does not really leave loses the call anyway; only the page on screen can
+        // start one again
+        if action == "leave" {
+            voice.forget_entry(&holder);
+            let _ = app.emit_to(webviews::SHELL_WEBVIEW, drain::VOICE_EVENT, ());
+        }
     }
 
     Ok(())
