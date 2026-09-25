@@ -145,7 +145,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 - **desktop/src**: `main.tsx` (label → `App` | `Bell` | `NotificationsPopup`), `api.ts` (`api.*` invoke
   wrappers, `errorMessage`), `types.ts`, `sounds.ts` (`playNotificationSound`), `components/`:
   `ServerRail`, `AddServerPanel`, `SignInPanel`, `SettingsPanel`, `HotkeyField`, `DirectMessagesPanel`,
-  `NotificationList` (`relativeTime`), `RenameFolderPanel`, `ConnectingPanel`, `WelcomePanel`,
+  `NotificationList` (`relativeTime`), `RenameFolderPanel`, `RemoveServerPanel`, `ConnectingPanel`, `WelcomePanel`,
   `VoiceTile`, `UpdateNotice`, `icons`.
 - **desktop/bridge/index.ts**: one file: session seeding, DM reading/opening, voice read/control/lock,
   channel menu mute, notification capture, drain queue.

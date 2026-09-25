@@ -6,6 +6,7 @@ import { AddServerPanel } from './components/AddServerPanel';
 import { UpdateNotice } from './components/UpdateNotice';
 import { ConnectingPanel } from './components/ConnectingPanel';
 import { DirectMessagesPanel } from './components/DirectMessagesPanel';
+import { RemoveServerPanel } from './components/RemoveServerPanel';
 import { RenameFolderPanel } from './components/RenameFolderPanel';
 import { ServerRail } from './components/ServerRail';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -29,7 +30,7 @@ import { byPosition } from '../../shared/web/rail';
  * Which Shiver surface owns the content area. Anything other than `server` means the active server's
  * webview is hidden and the shell is drawing the whole area.
  */
-type Panel = 'server' | 'add' | 'settings' | 'dms' | 'folder' | 'connecting' | 'signin';
+type Panel = 'server' | 'add' | 'settings' | 'dms' | 'folder' | 'connecting' | 'signin' | 'remove';
 
 /** The server Shiver is waiting on, and whether it has given up on it. */
 type Connecting = {
@@ -83,6 +84,7 @@ export const App = () => {
   // user goes off to a server, so coming back should land on it rather than on a blank pane.
   const [lastDm, setLastDm] = useState<{ entryId: string; name: string } | null>(null);
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState<string | null>(null);
   const [voice, setVoice] = useState<VoiceStatus | null>(null);
   const [statuses, setStatuses] = useState<Record<string, ServerStatus>>({});
@@ -388,7 +390,11 @@ export const App = () => {
 
         if (pendingRef.current === id) pendingRef.current = null;
 
-        if (activeId !== id) return;
+        if (activeId !== id) {
+          await closePanel();
+
+          return;
+        }
 
         setActiveId(null);
         setConnecting(null);
@@ -407,7 +413,7 @@ export const App = () => {
         setError(errorMessage(cause));
       }
     },
-    [activeId, openServer, refresh, refreshFeed]
+    [activeId, closePanel, openServer, refresh, refreshFeed]
   );
 
   const handleRenameFolder = useCallback(
@@ -534,7 +540,8 @@ export const App = () => {
       }
 
       if (action === 'remove') {
-        await handleRemove(entryId);
+        setRemoving(entryId);
+        await openPanel('remove');
 
         return;
       }
@@ -605,7 +612,7 @@ export const App = () => {
     return () => {
       pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
     };
-  }, [handleRemove, openPanel, openServer, refresh, refreshFeed]);
+  }, [openPanel, openServer, refresh, refreshFeed]);
 
   useEffect(() => {
     applyTheme(registry.settings);
@@ -670,6 +677,14 @@ export const App = () => {
             <RenameFolderPanel
               folder={registry.folders.find((folder) => folder.id === renamingFolder)}
               onSave={handleRenameFolder}
+              onCancel={closePanel}
+            />
+          ) : null}
+
+          {panel === 'remove' ? (
+            <RemoveServerPanel
+              server={registry.servers.find((server) => server.id === removing)}
+              onRemove={(id) => void handleRemove(id)}
               onCancel={closePanel}
             />
           ) : null}
