@@ -27,7 +27,7 @@ export const api = {
     origin: string,
     identity: string | null,
     password: string | null,
-    rememberPassword = false
+    rememberPassword: boolean
   ) => invoke<ServerEntry>('add_server', { origin, identity, password, rememberPassword }),
 
   /** Signs an existing server in again (sessions last a week and cannot be refreshed). */

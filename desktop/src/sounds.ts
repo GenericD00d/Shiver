@@ -3,6 +3,8 @@
  * through a x2 master, 50 ms decay), scaled by the volume setting, which may exceed 100%.
  */
 
+import { MAX_SOUND_VOLUME } from '../../shared/web/settings';
+
 const MASTER_GAIN = 2;
 
 let context: AudioContext | null = null;
@@ -26,8 +28,7 @@ const getContext = () => {
  * the audio context cannot start, which is the same rule a browser applies to Sharkord itself.
  */
 export const playNotificationSound = async (percent = 100) => {
-  // clamped to the same ceiling as `MAX_SOUND_VOLUME` in model.rs, and never negative
-  const level = Number.isFinite(percent) ? Math.min(Math.max(percent, 0), 250) / 100 : 1;
+  const level = Number.isFinite(percent) ? Math.min(Math.max(percent, 0), MAX_SOUND_VOLUME) / 100 : 1;
 
   try {
     const ctx = getContext();

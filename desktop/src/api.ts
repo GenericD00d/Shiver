@@ -24,16 +24,15 @@ export const api = {
     invoke<ServerCheck>('check_server', { origin, identity, password }),
 
   /**
-   * `rememberPassword` is the user's choice about the password, and it is off unless they ask.
-   * The session is kept either way — it is what makes a server open straight into the app, and it
-   * expires in a week on its own. The password is what would outlive that.
+   * Signs in first when given credentials. The session is kept either way; `rememberPassword` keeps
+   * the password too, which is what lets Shiver sign in again once the week-long session runs out.
    */
   addServer: (
     origin: string,
-    identity?: string,
-    password?: string,
-    accountLabel?: string,
-    rememberPassword = false
+    identity: string | undefined,
+    password: string | undefined,
+    accountLabel: string | undefined,
+    rememberPassword: boolean
   ) =>
     invoke<ServerEntry>('add_server', {
       origin,
