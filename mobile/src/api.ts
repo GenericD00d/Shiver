@@ -68,6 +68,8 @@ export const api = {
   openReleases: () => invoke<void>('open_releases'),
 
   updateSettings: (settings: Settings) => invoke<void>('update_settings', { settings }),
+  /** every site whose links opened without asking asks again */
+  forgetTrustedLinks: () => invoke<void>('forget_trusted_links'),
 
   /** re-reads a server's name and logo from its public /info */
   refreshServerInfo: (id: string) => invoke<ServerEntry>('refresh_server_info', { id }),

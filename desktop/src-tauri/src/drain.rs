@@ -258,13 +258,16 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
         &mut result,
     );
 
-    for url in app
-        .state::<webviews::Openings>()
-        .grant(entry_id, &result.open)
-        .iter()
-        .filter_map(|address| url::Url::parse(address).ok())
-    {
-        webviews::open_in_browser(app, &url);
+    // links only from the page on screen, and then only if the user agrees
+    if crate::badges::is_on_screen(app, entry_id) {
+        for url in app
+            .state::<webviews::Openings>()
+            .grant(entry_id, &result.open)
+            .iter()
+            .filter_map(|address| url::Url::parse(address).ok())
+        {
+            webviews::ask_to_open(app, &server_name, url);
+        }
     }
 
     let feed = app.state::<Feed>();

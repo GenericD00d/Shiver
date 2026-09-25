@@ -65,9 +65,11 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   removal forgets the answer. WebView2 on Windows asks per site itself, and WebKitGTK on Linux
   refuses. macOS is not yet covered: wry grants every page there, so a macOS build must not ship
   until Shiver handles it.
-- **Only the user opens the browser.** A page's own navigations off its origin and its new windows
-  are refused; the browser gets only links the user clicked and one window per click, rationed per
-  server.
+- **A page cannot open the browser by itself.** Its own navigations off its origin and its new
+  windows are refused. A link it hands over (the bridge queues what the user clicks, but a hostile
+  page can queue anything, since the bridge shares its script world) is rationed per server, taken
+  only from the page on screen, and opened only after the user says yes in a native dialog the page
+  cannot draw over, unless they chose to trust that site.
 - **Sessions never reach a webview's storage.** A small script that runs before the page's own
   patches `Storage.prototype` so Sharkord's auto-login token and live session are served from
   memory (`shared/web/session.ts`). On desktop it is part of the initialization script; on Android

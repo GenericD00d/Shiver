@@ -716,6 +716,16 @@ pub async fn voice_control(app: AppHandle, action: String) -> Result<()> {
 
 /* ── settings ── */
 
+/// Makes every site whose links opened without asking ask again.
+#[tauri::command]
+pub async fn forget_trusted_links(store: State<'_, Store>) -> Result<()> {
+    store.update(|registry| {
+        registry.settings.trusted_link_sites.clear();
+
+        Ok(())
+    })
+}
+
 #[tauri::command]
 pub fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -737,6 +747,7 @@ pub async fn update_settings(
         registry.settings = Settings {
             last_server_id: registry.settings.last_server_id.take(),
             skipped_update: registry.settings.skipped_update.take(),
+            trusted_link_sites: std::mem::take(&mut registry.settings.trusted_link_sites),
             ..settings.sanitised()
         };
 

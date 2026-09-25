@@ -24,7 +24,7 @@ use url::Url;
 use crate::{
     error::{Core, Error, Result},
     model::{is_same_origin, ServerEntry, Settings},
-    store::Store,
+    store::{RegistryStore, Store},
 };
 
 pub const MAIN_WINDOW: &str = "main";
@@ -849,12 +849,72 @@ fn build_page_webview(
     Ok(())
 }
 
-/// Opens an http(s) link in the user's browser.
-pub fn open_in_browser(app: &AppHandle, url: &Url) {
-    if !matches!(url.scheme(), "http" | "https") {
+/// Opens a link a server's page asked for, once the user agrees in a native dialog (the page
+/// cannot draw over it), or at once for a site they chose to trust. One question at a time; links
+/// asked for meanwhile are dropped.
+pub fn ask_to_open(app: &AppHandle, server: &str, url: Url) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
+
+    static ASKING: AtomicBool = AtomicBool::new(false);
+
+    let Some(site) = shiver_core::links::site(&url) else {
         return;
+    };
+
+    if app
+        .state::<Store>()
+        .registry()
+        .settings
+        .trusted_link_sites
+        .contains(&site)
+    {
+        return open_in_browser(app, &url);
     }
 
+    if ASKING.swap(true, Ordering::AcqRel) {
+        return eprintln!("[shiver] {server} asked to open a link while another waited; dropped");
+    }
+
+    let always = format!("Always for {site}");
+    let mut dialog = app
+        .dialog()
+        .message(shiver_core::links::question(server, &url))
+        .title("Open link?")
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            "Open".into(),
+            always.clone(),
+            "Cancel".into(),
+        ));
+
+    if let Ok(window) = main_window(app) {
+        dialog = dialog.parent(&window);
+    }
+
+    let app = app.clone();
+
+    dialog.show_with_result(move |answer| {
+        ASKING.store(false, Ordering::Release);
+
+        let MessageDialogResult::Custom(choice) = answer else {
+            return;
+        };
+
+        if choice == always {
+            let _ = app.state::<Store>().update(|registry| {
+                shiver_core::links::trust(&mut registry.settings.trusted_link_sites, site);
+
+                Ok(())
+            });
+        } else if choice != "Open" {
+            return;
+        }
+
+        open_in_browser(&app, &url);
+    });
+}
+
+fn open_in_browser(app: &AppHandle, url: &Url) {
     use tauri_plugin_opener::OpenerExt;
 
     if let Err(error) = app.opener().open_url(url.as_str(), None::<&str>) {

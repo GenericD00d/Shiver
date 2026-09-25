@@ -86,6 +86,7 @@ fn only_shiver_chrome(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(only_shiver_chrome(tauri::generate_handler![
@@ -113,6 +114,7 @@ pub fn run() {
             commands::app_version,
             commands::get_settings,
             commands::update_settings,
+            commands::forget_trusted_links,
             commands::refresh_server_info,
             commands::sign_in_server,
             commands::log_out_server,

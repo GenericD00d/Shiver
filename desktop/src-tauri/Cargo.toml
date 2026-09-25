@@ -19,6 +19,7 @@ tauri-build.workspace = true
 tauri = { workspace = true, features = ["unstable"] }
 tauri-plugin-updater = "2"
 tauri-plugin-opener.workspace = true
+tauri-plugin-dialog.workspace = true
 tauri-plugin-global-shortcut = "2"
 sharkord-client.workspace = true
 shiver-core.workspace = true
