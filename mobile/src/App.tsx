@@ -264,6 +264,22 @@ export const App = () => {
     applyTheme(registry.settings);
   }, [registry.settings]);
 
+  // Android's back button, from one of Shiver's own screens: back to the last server, opened by
+  // Shiver (a step back through history would bring it without its session or rail)
+  useEffect(() => {
+    window.__SHIVER_BACK__ = () => {
+      if (screen === 'boot') return false;
+
+      void resume();
+
+      return true;
+    };
+
+    return () => {
+      delete window.__SHIVER_BACK__;
+    };
+  }, [screen, resume]);
+
   // unread counts from the core's own connections: read once, then pushed
   useEffect(() => {
     api.unreadCounts().then(setUnread).catch(() => undefined);

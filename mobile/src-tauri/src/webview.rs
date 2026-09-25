@@ -86,6 +86,8 @@ struct ShowingState {
     /// the entry on screen, if any
     server: Option<String>,
     loaded: bool,
+    /// a page Shiver did not open is loading (a step through history), on its way home
+    stray: bool,
     /// open the conversation with this user on arrival (consumed once)
     pending_dm_user: Option<String>,
 }
@@ -108,6 +110,18 @@ impl Showing {
 
         state.server = entry_id;
         state.loaded = false;
+        state.stray = false;
+    }
+
+    pub fn set_stray(&self) {
+        self.0.locked().stray = true;
+    }
+
+    /// Whether Shiver's own page is what the webview shows (or is loading).
+    pub fn at_home(&self) -> bool {
+        let state = self.0.locked();
+
+        state.server.is_none() && !state.stray
     }
 
     pub fn set_loaded(&self) {
@@ -160,15 +174,18 @@ pub fn show_server(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) ->
 
 /// Returns to Shiver's page saying the server on screen could not be opened.
 pub fn show_failed(app: &AppHandle) {
-    let showing = app.state::<Showing>();
-    let (Some(id), Some(Ok(mut url))) = (
-        showing.server(),
-        showing.home().map(|home| Url::parse(&home)),
-    ) else {
+    if let Some(id) = app.state::<Showing>().server() {
+        go_home(app, Some(&format!("failed={id}")));
+    }
+}
+
+/// Sends the webview to Shiver's own page, with a fragment for it to act on.
+pub fn go_home(app: &AppHandle, fragment: Option<&str>) {
+    let Some(Ok(mut url)) = app.state::<Showing>().home().map(|home| Url::parse(&home)) else {
         return;
     };
 
-    url.set_fragment(Some(&format!("failed={id}")));
+    url.set_fragment(fragment);
 
     let app = app.clone();
 
@@ -556,7 +573,7 @@ fn same_place(home: &str, target: &Url) -> bool {
 pub fn landed_home(app: &AppHandle) {
     let showing = app.state::<Showing>();
 
-    if showing.server().is_none() {
+    if showing.at_home() {
         return;
     }
 
@@ -670,6 +687,19 @@ mod tests {
         assert!(!showing.loading());
         showing.set_server(Some("b".into()));
         assert!(showing.loading());
+    }
+
+    #[test]
+    fn home_is_only_home_while_nothing_else_is_on_its_way() {
+        let showing = Showing::default();
+
+        assert!(showing.at_home());
+        showing.set_stray();
+        assert!(!showing.at_home());
+        showing.set_server(None);
+        assert!(showing.at_home());
+        showing.set_server(Some("a".into()));
+        assert!(!showing.at_home());
     }
 
     #[test]

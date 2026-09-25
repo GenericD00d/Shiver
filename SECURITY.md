@@ -58,7 +58,8 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
 - **https is required everywhere**, with no exemption for localhost or a private address.
 - **Server pages cannot call Shiver.** Tauri refuses commands from remote origins, and desktop also
   refuses any command not sent by Shiver's own webviews. Android reports a new page's origin late,
-  so it refuses every command while a server is on screen or being opened.
+  so it refuses every command while a server is on screen or being opened, or while a page Shiver
+  did not open (a step back through history) is loading on its way home.
 - **Only the user opens the browser.** A page's own navigations off its origin and its new windows
   are refused; the browser gets only links the user clicked and one window per click, rationed per
   server.
