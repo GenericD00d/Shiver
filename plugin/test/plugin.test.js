@@ -379,6 +379,7 @@ test('the old settings file is kept when a user could not be carried over', asyn
 test('stored names always get a random suffix and stay within filesystem limits', () => {
   assert.equal(uniqueName('photo.png', 'abc'), 'photo~abc.png');
   assert.equal(uniqueName('.env', 'abc'), '.env~abc');
+  assert.equal(uniqueName('../a\\b\u0000.png', 'abc'), '.._a_b_~abc.png');
   assert.deepEqual(splitName('a.tar.gz'), { base: 'a.tar', ext: '.gz' });
   assert.ok(Buffer.byteLength(uniqueName(`${'é'.repeat(300)}.png`)) <= 255);
 });
