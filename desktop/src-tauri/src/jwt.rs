@@ -2,6 +2,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde_json::Value;
 
 /// Renew when less than this is left, so a session never expires mid-use.
@@ -16,7 +17,9 @@ fn now() -> u64 {
 
 /// Seconds until the token expires; `None` when it has no readable `exp` (treated as stale).
 fn seconds_left(token: &str) -> Option<u64> {
-    let payload = base64url_decode(token.split('.').nth(1)?)?;
+    let payload = URL_SAFE_NO_PAD
+        .decode(token.split('.').nth(1)?.trim_end_matches('='))
+        .ok()?;
     let claims: Value = serde_json::from_slice(&payload).ok()?;
     let exp = claims.get("exp")?;
     let exp = exp
@@ -36,59 +39,15 @@ pub fn is_live(token: &str) -> bool {
     seconds_left(token).is_some_and(|left| left > 60)
 }
 
-/// base64url without padding, as JWT payloads are.
-fn base64url_decode(input: &str) -> Option<Vec<u8>> {
-    let value = |byte: u8| -> Option<u32> {
-        Some(match byte {
-            b'A'..=b'Z' => byte - b'A',
-            b'a'..=b'z' => byte - b'a' + 26,
-            b'0'..=b'9' => byte - b'0' + 52,
-            b'-' => 62,
-            b'_' => 63,
-            _ => return None,
-        } as u32)
-    };
-
-    let mut out = Vec::with_capacity(input.len() * 3 / 4);
-    let mut buffer = 0u32;
-    let mut bits = 0u32;
-
-    for byte in input.bytes().take_while(|byte| *byte != b'=') {
-        buffer = (buffer << 6) | value(byte)?;
-        bits += 6;
-
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buffer >> bits) as u8);
-        }
-    }
-
-    Some(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// `header.<base64url({"exp":exp})>.signature`
     fn token_expiring_at(exp: u64) -> String {
-        let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-        let mut encoded = String::new();
+        let claims = URL_SAFE_NO_PAD.encode(format!(r#"{{"exp":{exp}}}"#));
 
-        for chunk in format!(r#"{{"exp":{exp}}}"#).as_bytes().chunks(3) {
-            let buffer = chunk
-                .iter()
-                .enumerate()
-                .fold(0u32, |buffer, (index, byte)| {
-                    buffer | (*byte as u32) << (16 - 8 * index)
-                });
-
-            for index in 0..=chunk.len() {
-                encoded.push(alphabet[((buffer >> (18 - 6 * index)) & 0x3f) as usize] as char);
-            }
-        }
-
-        format!("header.{encoded}.signature")
+        format!("header.{claims}.signature")
     }
 
     #[test]
