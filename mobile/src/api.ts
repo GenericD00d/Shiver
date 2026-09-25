@@ -4,13 +4,12 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   DmEntry,
   Folder,
-  PluginStatus,
   PushStatus,
   ServerCheck,
-  WatchProblem,
   Registry,
   ServerEntry,
   ServerInfo,
+  SessionStates,
   Settings
 } from './types';
 
@@ -35,11 +34,8 @@ export const api = {
   signInServer: (id: string, identity: string, password: string, rememberPassword: boolean) =>
     invoke<void>('sign_in_server', { id, identity, password, rememberPassword }),
 
-  /** servers whose session expired and that Shiver cannot renew on its own */
-  signedOutServers: () => invoke<string[]>('signed_out_servers'),
-
-  /** servers Shiver can sign in again by itself, because the user asked it to keep the password */
-  rememberedServers: () => invoke<string[]>('remembered_servers'),
+  /** per server: waiting for a sign-in, password kept, a problem watching it, plugin version */
+  sessionStates: () => invoke<SessionStates>('session_states'),
 
   removeServer: (id: string) => invoke<void>('remove_server', { id }),
 
@@ -91,9 +87,6 @@ export const api = {
   /** Every server's conversations; only Shiver's own pages can see them. */
   listDms: () => invoke<DmEntry[]>('list_dms'),
 
-  /** distributors installed, and how many servers can be woken through the chosen one */
-  watchProblems: () => invoke<WatchProblem[]>('watch_problems'),
-  serverPlugins: () => invoke<PluginStatus[]>('server_plugins'),
   setAcceptAnySize: (id: string, accept: boolean) =>
     invoke<void>('set_accept_any_size', { id, accept }),
   pushStatus: () => invoke<PushStatus>('push_status'),

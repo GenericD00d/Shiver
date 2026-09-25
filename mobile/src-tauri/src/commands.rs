@@ -3,6 +3,8 @@
 //! Commands that write the registry are `async`, so the disk write happens off the UI thread.
 //! Passwords arrive as `Zeroizing<String>` so Shiver's copies are wiped.
 
+use std::collections::HashMap;
+
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shiver_push::PushExt;
 use tauri_plugin_shiver_secrets::SecretsExt;
@@ -339,23 +341,6 @@ pub async fn sign_in_server(
     Ok(())
 }
 
-#[tauri::command]
-pub fn signed_out_servers(inbox: State<'_, Inbox>) -> Vec<String> {
-    inbox.signed_out()
-}
-
-/// Entries with a stored password.
-#[tauri::command]
-pub fn remembered_servers(inbox: State<'_, Inbox>, store: State<'_, Store>) -> Vec<String> {
-    store
-        .registry()
-        .servers
-        .iter()
-        .filter(|server| inbox.has_password(&server.id))
-        .map(|server| server.id.clone())
-        .collect()
-}
-
 /// Raises (or restores) the message size limit, and reconnects with it.
 #[tauri::command]
 pub async fn set_accept_any_size(
@@ -378,38 +363,32 @@ pub async fn set_accept_any_size(
     Ok(())
 }
 
+/// What Shiver's screens show about each server's session: waiting for a sign-in, a password kept,
+/// a problem watching it that will not fix itself, and the companion plugin's version (`None`:
+/// connected, not installed; absent: not connected yet).
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WatchProblem {
-    pub entry_id: String,
-    pub reason: String,
-}
-
-/// Servers Shiver cannot watch, and why (only failures that will not fix themselves).
-#[tauri::command]
-pub fn watch_problems(inbox: State<'_, Inbox>) -> Vec<WatchProblem> {
-    inbox
-        .problems()
-        .into_iter()
-        .map(|(entry_id, reason)| WatchProblem { entry_id, reason })
-        .collect()
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginStatus {
-    pub entry_id: String,
-    /// `None`: connected, and no plugin. Servers not yet connected are absent.
-    pub version: Option<String>,
+pub struct SessionStates {
+    pub signed_out: Vec<String>,
+    pub remembered: Vec<String>,
+    pub problems: HashMap<String, String>,
+    pub plugins: HashMap<String, Option<String>>,
 }
 
 #[tauri::command]
-pub fn server_plugins(inbox: State<'_, Inbox>) -> Vec<PluginStatus> {
-    inbox
-        .plugins()
-        .into_iter()
-        .map(|(entry_id, version)| PluginStatus { entry_id, version })
-        .collect()
+pub fn session_states(inbox: State<'_, Inbox>, store: State<'_, Store>) -> SessionStates {
+    SessionStates {
+        signed_out: inbox.signed_out(),
+        remembered: store
+            .registry()
+            .servers
+            .iter()
+            .filter(|server| inbox.has_password(&server.id))
+            .map(|server| server.id.clone())
+            .collect(),
+        problems: inbox.problems(),
+        plugins: inbox.plugins(),
+    }
 }
 
 /* ── the rail and the inbox ── */

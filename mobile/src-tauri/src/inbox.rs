@@ -173,12 +173,12 @@ impl Inbox {
         })
     }
 
-    pub fn problems(&self) -> Vec<(String, String)> {
-        self.with(|state| state.problems.clone().into_iter().collect())
+    pub fn problems(&self) -> HashMap<String, String> {
+        self.with(|state| state.problems.clone())
     }
 
-    pub fn plugins(&self) -> Vec<(String, Option<String>)> {
-        self.with(|state| state.plugins.clone().into_iter().collect())
+    pub fn plugins(&self) -> HashMap<String, Option<String>> {
+        self.with(|state| state.plugins.clone())
     }
 
     pub fn dms(&self) -> HashMap<String, Vec<sharkord::DirectMessage>> {

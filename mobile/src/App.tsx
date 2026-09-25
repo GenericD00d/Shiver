@@ -285,19 +285,14 @@ export const App = () => {
   const signingInServer = servers.find((server) => server.id === signingIn) ?? null;
 
   const readSessions = useCallback(() => {
-    api.signedOutServers().then(setSignedOut).catch(() => undefined);
     api
-      .watchProblems()
-      .then((found) =>
-        setProblems(Object.fromEntries(found.map((problem) => [problem.entryId, problem.reason])))
-      )
-      .catch(() => undefined);
-    api.rememberedServers().then(setRemembered).catch(() => undefined);
-    api
-      .serverPlugins()
-      .then((found) =>
-        setPlugins(Object.fromEntries(found.map((status) => [status.entryId, status.version])))
-      )
+      .sessionStates()
+      .then((states) => {
+        setSignedOut(states.signedOut);
+        setRemembered(states.remembered);
+        setProblems(states.problems);
+        setPlugins(states.plugins);
+      })
       .catch(() => undefined);
   }, []);
 
