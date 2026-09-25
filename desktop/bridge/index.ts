@@ -6,7 +6,7 @@
  * controls and the channel menu's mute item, which all use the page's own controls.
  */
 
-import { defineHook, ensureStyle, installExternalLinks, isTopFrame, onDomSettled, openMenuOnScreen, addedMenu, whenDocumentReady } from '../../shared/web/bridge/dom';
+import { defineHook, ensureStyle, installExternalLinks, onDomSettled, openMenuOnScreen, addedMenu, whenDocumentReady } from '../../shared/web/bridge/dom';
 import { installAttachmentCards, installRoleColors, installSoundVolume, installStatusButton, installVoiceColors } from '../../shared/web/bridge/features';
 import { pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
 import {
@@ -976,13 +976,13 @@ function installAttachmentFocus() {
   });
 }
 
-// Read and removed from the page before anything else runs. Only the top frame of the entry's own
-// origin installs: the initialization script can also run in embedded cross-origin frames.
+// Read and removed from the page before anything else runs (`bridge_script` in webviews.rs runs
+// this only in the top frame on the entry's origin).
 const config = window.__SHIVER__;
 
 delete window.__SHIVER__;
 
-if (config && isTopFrame() && location.origin === config.origin) {
+if (config) {
   try {
     install(config);
   } catch (error) {

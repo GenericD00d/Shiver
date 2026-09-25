@@ -968,7 +968,9 @@ pub fn push_muted(app: &AppHandle, entry_id: &str, muted: &[i64]) {
     );
 }
 
-/// The bridge, preceded by this entry's own config. Nothing about any other server goes in.
+/// The bridge, preceded by this entry's own config. Nothing about any other server goes in. Only
+/// the top frame on the entry's origin runs it: WebView2 adds the script to every frame, and the
+/// config holds the session.
 fn bridge_script(
     entry: &ServerEntry,
     settings: &Settings,
@@ -994,7 +996,10 @@ fn bridge_script(
         "voiceLocked": voice_locked,
     });
 
-    format!("window.__SHIVER__ = {config};\n{BRIDGE_SOURCE}")
+    format!(
+        "if (window === window.top && location.origin === {}) {{\nwindow.__SHIVER__ = {config};\n{BRIDGE_SOURCE}\n}}",
+        json!(entry.origin)
+    )
 }
 
 #[cfg(test)]
@@ -1018,9 +1023,8 @@ mod tests {
         assert!(state.should_open_popup());
     }
 
-    #[test]
-    fn each_profile_generation_has_its_own_data_store() {
-        let entry = |profile: Option<&str>| ServerEntry {
+    fn entry(profile: Option<&str>) -> ServerEntry {
+        ServerEntry {
             id: "0b6d7e4e-1a4f-4bb0-9d3c-2f3b1a9e8c11".into(),
             origin: "https://chat.example.com".into(),
             server_id: None,
@@ -1032,7 +1036,11 @@ mod tests {
             position: 0,
             accept_any_size: false,
             profile: profile.map(str::to_string),
-        };
+        }
+    }
+
+    #[test]
+    fn each_profile_generation_has_its_own_data_store() {
         let first = data_store(&entry(None));
         let later = data_store(&entry(Some("9f1c0d2e6b7a4c3d8e9f0a1b2c3d4e5f")));
 
@@ -1056,6 +1064,24 @@ mod tests {
 
         screen.hold("b", true);
         assert_eq!(screen.recent, ["b", "c", "a"]);
+    }
+
+    #[test]
+    fn the_bridge_runs_only_in_the_entrys_top_frame() {
+        let script = bridge_script(
+            &entry(None),
+            &Settings::default(),
+            Some("secret"),
+            &[],
+            PageRole::Server {
+                voice_locked: false,
+            },
+        );
+
+        assert!(script.starts_with(
+            "if (window === window.top && location.origin === \"https://chat.example.com\") {"
+        ));
+        assert!(script.trim_end().ends_with('}'));
     }
 
     #[test]
