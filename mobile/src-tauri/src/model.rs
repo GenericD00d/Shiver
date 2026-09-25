@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use shiver_core::model::{default_sound_volume, default_true};
 pub use shiver_core::{
     is_same_origin,
     model::{
@@ -11,10 +12,9 @@ pub use shiver_core::{
     },
     normalize_origin,
     probe::ServerInfo,
-    rail::Rail,
 };
 
-shiver_core::rail_server!(ServerEntry);
+shiver_core::registry!(Registry, ServerEntry);
 
 /// One rail entry; `id` identifies it everywhere, never the origin.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -70,14 +70,6 @@ pub struct Settings {
     pub skipped_update: Option<String>,
 }
 
-fn default_true() -> bool {
-    true
-}
-
-fn default_sound_volume() -> u16 {
-    100
-}
-
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -118,38 +110,6 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn server(&self, id: &str) -> Option<&ServerEntry> {
-        self.servers.iter().find(|server| server.id == id)
-    }
-
-    pub fn server_mut(&mut self, id: &str) -> Option<&mut ServerEntry> {
-        self.servers.iter_mut().find(|server| server.id == id)
-    }
-
-    pub fn muted_for(&self, entry_id: &str) -> Vec<i64> {
-        shiver_core::model::muted_for(&self.muted, entry_id)
-    }
-
-    pub fn set_muted_for(
-        &mut self,
-        entry_id: &str,
-        channels: impl IntoIterator<Item = i64>,
-    ) -> Vec<i64> {
-        shiver_core::model::set_muted_for(&mut self.muted, entry_id, channels)
-    }
-
-    /// The next free top-level position.
-    pub fn next_position(&self) -> i32 {
-        shiver_core::rail::next_position(&self.servers, &self.folders)
-    }
-
-    pub fn rail(&mut self) -> Rail<'_, ServerEntry> {
-        Rail {
-            servers: &mut self.servers,
-            folders: &mut self.folders,
-        }
-    }
-
     /// The entry a push token belongs to.
     pub fn entry_for_push_token(&self, token: &str) -> Option<&ServerEntry> {
         self.servers

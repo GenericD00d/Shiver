@@ -9,6 +9,15 @@ pub const DEFAULT_ACCENT_COLOR: &str = "#e5e5e5";
 /// A sound gain above this could hurt someone wearing headphones.
 pub const MAX_SOUND_VOLUME: u16 = 250;
 
+/// serde defaults both clients' settings use.
+pub fn default_true() -> bool {
+    true
+}
+
+pub fn default_sound_volume() -> u16 {
+    100
+}
+
 /// A folder in the rail.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

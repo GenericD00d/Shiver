@@ -52,6 +52,50 @@ macro_rules! rail_server {
     };
 }
 
+/// [`rail_server!`] for a client's server entry, plus the lookups both clients' registries share
+/// (a registry with `servers`, `folders` and `muted` fields).
+#[macro_export]
+macro_rules! registry {
+    ($registry:ty, $server:ty) => {
+        $crate::rail_server!($server);
+
+        impl $registry {
+            pub fn server(&self, id: &str) -> Option<&$server> {
+                self.servers.iter().find(|server| server.id == id)
+            }
+
+            pub fn server_mut(&mut self, id: &str) -> Option<&mut $server> {
+                self.servers.iter_mut().find(|server| server.id == id)
+            }
+
+            pub fn muted_for(&self, entry_id: &str) -> Vec<i64> {
+                $crate::model::muted_for(&self.muted, entry_id)
+            }
+
+            /// Replaces one entry's mutes; returns the new list.
+            pub fn set_muted_for(
+                &mut self,
+                entry_id: &str,
+                channels: impl IntoIterator<Item = i64>,
+            ) -> Vec<i64> {
+                $crate::model::set_muted_for(&mut self.muted, entry_id, channels)
+            }
+
+            /// The next free top-level position.
+            pub fn next_position(&self) -> i32 {
+                $crate::rail::next_position(&self.servers, &self.folders)
+            }
+
+            pub fn rail(&mut self) -> $crate::rail::Rail<'_, $server> {
+                $crate::rail::Rail {
+                    servers: &mut self.servers,
+                    folders: &mut self.folders,
+                }
+            }
+        }
+    };
+}
+
 /// The next free top-level position (servers in folders keep their own numbering).
 pub fn next_position<S: RailServer>(servers: &[S], folders: &[Folder]) -> i32 {
     servers
