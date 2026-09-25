@@ -82,10 +82,30 @@ fn only_shiver_chrome(
     }
 }
 
+/// A plugin set up for Rust alone. tauri-plugin-dialog's page script replaces `alert` and `confirm`
+/// in every webview, server pages included, with calls no page may make, so there `alert` did
+/// nothing and `confirm` answered yes at once. Shiver only asks from Rust.
+struct RustOnly<P>(P);
+
+impl<R: tauri::Runtime, P: tauri::plugin::Plugin<R>> tauri::plugin::Plugin<R> for RustOnly<P> {
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+
+    fn initialize(
+        &mut self,
+        app: &tauri::AppHandle<R>,
+        config: serde_json::Value,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.0.initialize(app, config)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(RustOnly(tauri_plugin_dialog::init()))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(only_shiver_chrome(tauri::generate_handler![
@@ -113,6 +133,7 @@ pub fn run() {
             commands::app_version,
             commands::get_settings,
             commands::update_settings,
+            commands::forget_trusted_links,
             commands::refresh_server_info,
             commands::sign_in_server,
             commands::log_out_server,

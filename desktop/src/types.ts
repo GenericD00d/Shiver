@@ -79,6 +79,8 @@ export type Settings = {
   /** shrink the file card under a picture down to its icon; see `minimise_attachments` in model.rs */
   minimiseAttachments: boolean;
   lastServerId: string | null;
+  /** sites whose links from server pages open without asking */
+  trustedLinkSites: string[];
   /** a system-wide shortcut that mutes the microphone, in Tauri's accelerator form */
   muteHotkey: string | null;
   /** how many servers keep a live page rather than a socket; see `pages_kept` in model.rs */

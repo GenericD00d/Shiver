@@ -73,6 +73,8 @@ export type Settings = {
   /** shrink the file card under a picture down to its icon; see `minimise_attachments` in model.rs */
   minimiseAttachments: boolean;
   lastServerId: string | null;
+  /** sites whose links from server pages open without asking */
+  trustedLinkSites: string[];
   /** entries allowed to wake the phone while Shiver is closed; kept here because settings are saved whole */
   pushServers: string[];
 };

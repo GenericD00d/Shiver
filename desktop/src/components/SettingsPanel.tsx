@@ -32,10 +32,8 @@ const SECTIONS = [
 
 type SectionId = (typeof SECTIONS)[number]['id'];
 
-/** Resetting camera and microphone answers is a WebView2 feature; elsewhere it could only fail. */
-const SHOWN_SECTIONS = SECTIONS.filter(
-  (entry) => entry.id !== 'permissions' || navigator.userAgent.includes('Windows')
-);
+/** Only on Windows does Shiver ask before a server uses the camera and microphone. */
+const ASKS_FOR_MEDIA = navigator.userAgent.includes('Windows');
 
 export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
   const [draft, setDraft] = useState<Settings>(settings);
@@ -134,16 +132,23 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
 
   // the result is shown inline, since this panel has nowhere to put a toast
   const [permissionsReset, setPermissionsReset] = useState<string | null>(null);
+  const [linksForgotten, setLinksForgotten] = useState<string | null>(null);
+
+  const handleForgetLinks = useCallback(async () => {
+    try {
+      await api.forgetTrustedLinks();
+      setLinksForgotten('Done — every link asks again');
+    } catch (error) {
+      setLinksForgotten(errorMessage(error));
+    }
+  }, []);
 
   const handleResetPermissions = useCallback(async () => {
     try {
       const forgotten = await api.resetMediaPermissions();
 
-      // open servers are reset now; the rest when they are next opened
       setPermissionsReset(
-        forgotten === 0
-          ? 'Done — servers will ask again (closed ones are reset when next opened)'
-          : `Forgot ${forgotten} ${forgotten === 1 ? 'answer' : 'answers'}; closed servers are reset when next opened`
+        `Done — ${forgotten} ${forgotten === 1 ? 'server asks' : 'servers ask'} again`
       );
     } catch (error) {
       setPermissionsReset(errorMessage(error));
@@ -156,7 +161,7 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
 
       <div className="settings-body">
         <nav className="settings-sections" aria-label="Settings sections">
-          {SHOWN_SECTIONS.map((entry) => (
+          {SECTIONS.map((entry) => (
             <button
               key={entry.id}
               type="button"
@@ -315,18 +320,41 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
           ) : null}
 
           {section === 'permissions' ? (
-            <label className="field">
-              <span>Camera and microphone</span>
-              <div className="field-row">
-                <button type="button" className="ghost" onClick={handleResetPermissions}>
-                  {permissionsReset ?? 'Ask me again'}
-                </button>
-              </div>
-              <small className="hint">
-                A server asks once and the webview remembers for ever, so one turned down by
-                accident fails silently after that. This forgets those answers, for every server.
-              </small>
-            </label>
+            <>
+              {ASKS_FOR_MEDIA ? (
+                <label className="field">
+                  <span>Camera and microphone</span>
+                  <div className="field-row">
+                    <button type="button" className="ghost" onClick={handleResetPermissions}>
+                      {permissionsReset ?? 'Ask me again'}
+                    </button>
+                  </div>
+                  <small className="hint">
+                    Shiver asks before a server on screen uses them, and remembers a yes until you
+                    log out of that server. This forgets every yes, so each server asks again.
+                  </small>
+                </label>
+              ) : null}
+
+              <label className="field">
+                <span>Links from servers</span>
+                <div className="field-row">
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={settings.trustedLinkSites.length === 0}
+                    onClick={handleForgetLinks}
+                  >
+                    {linksForgotten ?? 'Always ask again'}
+                  </button>
+                </div>
+                <small className="hint">
+                  Shiver asks before opening a link a server's page wants opened, since a page can
+                  claim a click that never happened. Sites set to open without asking:{' '}
+                  {settings.trustedLinkSites.length}.
+                </small>
+              </label>
+            </>
           ) : null}
 
           {section === 'about' ? (

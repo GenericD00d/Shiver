@@ -39,8 +39,10 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
 ## What is out of scope
 
 - **A malicious Sharkord server showing you misleading content.** Shiver renders a server's own
-  client; a server can always lie to its own users. What is in scope is that lie reaching *past*
-  that server — to another server, to Shiver's chrome, or to the machine.
+  client; a server can always lie to its own users, even drawing what looks like Shiver's own
+  panels inside its page (Shiver's questions about a page — camera, links — are native dialogs).
+  What is in scope is that lie reaching *past* that server — to another server, to Shiver's chrome,
+  or to the machine.
 - **The installers being unsigned.** Known, stated in the README, and a money problem rather than a
   code one.
 - **Anything requiring an attacker who can already read or write the app's data directory or the
@@ -60,9 +62,23 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   refuses any command not sent by Shiver's own webviews. Android reports a new page's origin late,
   so it refuses every command while a server is on screen or being opened, or while a page Shiver
   did not open (a step back through history) is loading on its way home.
-- **Only the user opens the browser.** A page's own navigations off its origin and its new windows
-  are refused; the browser gets only links the user clicked and one window per click, rationed per
-  server.
+- **Camera and microphone go only where you said yes.** On Android and Windows they go only to the
+  server page on screen (never a frame from elsewhere inside it), after Shiver has asked you once for
+  that server in a dialog the page cannot draw over; a log out or removal forgets the answer. The
+  one exception is the microphone for the page holding your call, which may have it again while
+  hidden (a call can ask anew), and only once you said yes. A stream a page started on screen keeps
+  running when you switch away, as a call must. WebKitGTK on Linux refuses.
+- **macOS is not covered yet.** wry grants every page the camera and microphone there, so a macOS
+  build must not ship until Shiver answers those requests itself. It needs macOS 14, the first to
+  give each server its own data store.
+- **A hidden page cannot download.** On Windows only the page on screen may start a download, so a
+  server in the background cannot drop files in your Downloads folder.
+- **A page cannot open the browser by itself.** Its own navigations off its origin and its new
+  windows are refused. A link it hands over (the bridge queues what the user clicks, but a hostile
+  page can queue anything, since the bridge shares its script world) is rationed per server, taken
+  only from the page on screen, and opened only after the user says yes in a native dialog the page
+  cannot draw over, unless they chose to trust that site. The dialog names the site first, and a
+  link carrying credentials (`https://bank.example@evil.example/`) is refused.
 - **Sessions never reach a webview's storage.** A small script that runs before the page's own
   patches `Storage.prototype` so Sharkord's auto-login token and live session are served from
   memory (`shared/web/session.ts`). On desktop it is part of the initialization script; on Android

@@ -1,14 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Shiver's own webviews (shell, bell, popup). Server webviews are not listed, so no plugin permission reaches a Sharkord page.",
+  "description": "Shiver's own webviews (shell, bell, popup) may listen for the core's events, and nothing more: app commands are gated in lib.rs, and server webviews are not listed, so no plugin permission reaches a Sharkord page.",
   "webviews": [
     "shell",
     "overlay",
     "popup"
   ],
   "permissions": [
-    "core:default",
-    "core:window:allow-start-dragging"
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
   ]
 }

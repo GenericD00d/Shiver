@@ -39,6 +39,9 @@ const MUTE_POLL: Duration = Duration::from_secs(1);
 const BASELINE_PREFIX: &str = "baseline:";
 const PASSWORD_PREFIX: &str = "password:";
 
+/// The longest session token kept; the page decides what it stores.
+const MAX_TOKEN: usize = 8 * 1024;
+
 /// Reads a page's session: Sharkord's persistent auto-login token (`kept:`, which the user asked to
 /// keep, so Shiver stores it) or the live session only (`live:`, used for this run only). A bare
 /// expression, because `eval_with_callback` drops the value of a function with a `try` in it.
@@ -340,8 +343,13 @@ fn sign_in_missing(app: &AppHandle) {
     });
 }
 
-/// Keeps a session (in memory, and in the store when `persist`) and connects with it.
+/// Keeps a session (in memory, and in the store when `persist`) and connects with it. A token past
+/// `MAX_TOKEN` is not kept.
 fn record_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) {
+    if token.len() > MAX_TOKEN {
+        return;
+    }
+
     if app
         .state::<Inbox>()
         .with(|state| state.signed_out.remove(entry_id))

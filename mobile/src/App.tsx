@@ -9,7 +9,7 @@ import { UpdateNotice } from './components/UpdateNotice';
 import type { SettingsSection } from './components/SettingsScreen';
 import { Rail, type RailRef } from './components/Rail';
 import { ServerList } from './components/ServerList';
-import { Sessions } from './components/Sessions';
+import { Sessions, TrustedLinks } from './components/Sessions';
 import { SignInServer } from './components/SignInServer';
 import { SettingsScreen } from './components/SettingsScreen';
 import { applyTheme } from '../../shared/web/theme';
@@ -44,6 +44,7 @@ const EMPTY: Registry = {
     soundVolume: 100,
     minimiseAttachments: true,
     lastServerId: null,
+    trustedLinkSites: [],
     pushServers: []
   }
 };
@@ -495,6 +496,10 @@ export const App = () => {
               <h2 className="section">Background sessions</h2>
 
               <Sessions onCleared={readSessions} />
+
+              <h2 className="section">Links</h2>
+
+              <TrustedLinks count={registry.settings.trustedLinkSites.length} />
             </>
           ) : null}
         </main>

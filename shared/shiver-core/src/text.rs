@@ -3,8 +3,14 @@
 /// The longest server message Shiver will quote back to the user.
 const MAX_SERVER_MESSAGE: usize = 200;
 
-/// Shortens by characters (never splitting a codepoint), marking the cut with an ellipsis.
+/// Drops invisible characters (bidi overrides, zero-width marks) a server could disguise text
+/// with, then shortens by characters, marking the cut with an ellipsis.
 pub fn clamp(text: String, limit: usize) -> String {
+    let text: String = text
+        .chars()
+        .filter(|character| !is_invisible(*character))
+        .collect();
+
     match text.char_indices().nth(limit) {
         Some((cut, _)) => format!("{}…", &text[..cut]),
         None => text,
@@ -69,8 +75,9 @@ mod tests {
     }
 
     #[test]
-    fn clamping_counts_characters_and_marks_the_cut() {
+    fn clamping_drops_invisible_marks_and_counts_characters() {
         assert_eq!(clamp("héllo".into(), 2), "hé…");
         assert_eq!(clamp("hi".into(), 2), "hi");
+        assert_eq!(clamp("ad\u{202e}n\u{200b}imda".into(), 5), "adnim…");
     }
 }

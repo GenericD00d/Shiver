@@ -12,7 +12,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     drain::{self, Readiness},
-    error::{Core, Error, Result},
+    error::{Core, Result},
     feed::{DmEntry, Feed, FeedSummary, Notification},
     hotkey, jwt,
     model::{normalize_origin, Folder, Registry, ServerEntry, Settings},
@@ -213,6 +213,7 @@ pub async fn add_server(
             position: registry.next_position(),
             accept_any_size: false,
             profile: None,
+            media_allowed: false,
         };
 
         registry.servers.push(entry.clone());
@@ -256,9 +257,6 @@ pub async fn remove_server(
         registry.muted.retain(|muted| muted.entry_id != id);
         registry.baselines.remove(&id);
         registry.rail().prune_folders();
-        registry
-            .pending_permission_resets
-            .retain(|pending| pending != &id);
 
         if registry.settings.last_server_id.as_deref() == Some(id.as_str()) {
             registry.settings.last_server_id = None;
@@ -288,6 +286,7 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
 
         server.identity = None;
         server.profile = Some(Uuid::new_v4().simple().to_string());
+        server.media_allowed = false;
 
         Ok(server.clone())
     })?;
@@ -347,14 +346,10 @@ pub async fn forget_password(id: String) -> Result<()> {
     secrets::forget_off_thread(Secret::Password, &id).await
 }
 
-/// Forgets stored camera/microphone answers. Answers how many were forgotten now.
-///
-/// On a blocking thread: WebView2 answers on the main thread, so waiting there would deadlock.
+/// Makes every server ask again before using the camera and microphone. Answers how many had a yes.
 #[tauri::command]
 pub async fn reset_media_permissions(app: AppHandle) -> Result<usize> {
-    tauri::async_runtime::spawn_blocking(move || crate::permissions::clear_media_permissions(&app))
-        .await
-        .map_err(|error| Error::Webview(error.to_string()))?
+    crate::permissions::forget_consents(&app)
 }
 
 #[tauri::command]
@@ -716,6 +711,16 @@ pub async fn voice_control(app: AppHandle, action: String) -> Result<()> {
 
 /* ── settings ── */
 
+/// Makes every site whose links opened without asking ask again.
+#[tauri::command]
+pub async fn forget_trusted_links(store: State<'_, Store>) -> Result<()> {
+    store.update(|registry| {
+        registry.settings.trusted_link_sites.clear();
+
+        Ok(())
+    })
+}
+
 #[tauri::command]
 pub fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -737,6 +742,7 @@ pub async fn update_settings(
         registry.settings = Settings {
             last_server_id: registry.settings.last_server_id.take(),
             skipped_update: registry.settings.skipped_update.take(),
+            trusted_link_sites: std::mem::take(&mut registry.settings.trusted_link_sites),
             ..settings.sanitised()
         };
 

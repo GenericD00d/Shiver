@@ -63,7 +63,7 @@ will serve you perfectly well.
   time across all of them
 - **A system-wide shortcut** for muting your microphone
 
-**Android**
+**Android** (8.0 or newer: older versions no longer get WebView security updates)
 
 - **Two-level swipe** — Sharkord's channel drawer, then on past it to Shiver's rail
 - **Push notifications while Shiver is closed**, over UnifiedPush (ntfy or another distributor), per

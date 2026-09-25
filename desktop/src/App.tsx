@@ -60,6 +60,7 @@ const EMPTY_REGISTRY: Registry = {
     soundVolume: 100,
     minimiseAttachments: true,
     lastServerId: null,
+    trustedLinkSites: [],
     muteHotkey: null,
     pagesKept: DEFAULT_PAGES_KEPT
   }

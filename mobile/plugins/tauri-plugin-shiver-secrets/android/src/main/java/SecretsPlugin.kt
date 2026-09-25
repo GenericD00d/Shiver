@@ -1,6 +1,7 @@
 package com.shiver.secrets
 
 import android.app.Activity
+import android.content.Context
 import android.content.SharedPreferences
 import android.webkit.CookieManager
 import android.webkit.WebStorage
@@ -125,9 +126,10 @@ class SecretsPlugin(private val activity: Activity) : Plugin(activity) {
 
     /**
      * Drops an origin's Web Storage and IndexedDB (removing keys from a page leaves old records in
-     * LevelDB until compaction) and expires the cookies that origin can see. Best effort: the HTTP
-     * cache and cookies scoped to other paths or a parent domain are not covered. Must run on the
-     * UI thread; fire-and-forget, since the page is already being replaced.
+     * LevelDB until compaction), expires the cookies that origin can see, and forgets the camera and
+     * microphone answer `MainActivity` keeps for it. Best effort: the HTTP cache and cookies scoped
+     * to other paths or a parent domain are not covered. Must run on the UI thread; fire-and-forget,
+     * since the page is already being replaced.
      */
     @Command
     fun wipeOrigin(invoke: Invoke) {
@@ -146,6 +148,7 @@ class SecretsPlugin(private val activity: Activity) : Plugin(activity) {
                 }
 
                 cookies.flush()
+                activity.getSharedPreferences("shiver-media", Context.MODE_PRIVATE).edit().remove(origin).apply()
             }
 
             invoke.resolve()

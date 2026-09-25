@@ -7,6 +7,35 @@ type Props = {
   onCleared: () => void;
 };
 
+/** Sites whose links open without asking, and the way to make them all ask again. */
+export const TrustedLinks = ({ count }: { count: number }) => {
+  const [note, setNote] = useState<string | null>(null);
+
+  const forget = useCallback(async () => {
+    try {
+      await api.forgetTrustedLinks();
+      setNote('Done. Every link asks again.');
+    } catch (cause) {
+      setNote(errorMessage(cause));
+    }
+  }, []);
+
+  return (
+    <>
+      <p className="hint">
+        Shiver asks before opening a link a server's page wants opened, since a page can claim a tap
+        that never happened. Sites set to open without asking: {count}.
+      </p>
+
+      {note ? <p className="hint">{note}</p> : null}
+
+      <button type="button" className="ghost wide" disabled={count === 0} onClick={() => void forget()}>
+        Always ask again
+      </button>
+    </>
+  );
+};
+
 /**
  * Explains that Shiver keeps each server's session (encrypted, Keystore key) to watch servers in
  * the background, and offers to forget them all.

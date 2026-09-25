@@ -26,6 +26,7 @@ use crate::{
     error::{Core, Error, Result},
     inbox,
     model::{is_same_origin, ServerEntry, Settings, MAX_SOUND_VOLUME},
+    store::Store,
 };
 
 pub const MAIN_WINDOW: &str = "main";
@@ -301,14 +302,20 @@ pub fn read_mutes(app: &AppHandle, entry_id: &str) {
 }
 
 fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
-    // what the user opened away from the page, queued by the document-start script
+    // what the page says the user opened away from it; opened only if the user agrees
+    let server = app
+        .state::<Store>()
+        .registry()
+        .server(entry_id)
+        .map(|server| server.name.clone());
+
     for url in app
         .state::<Openings>()
         .grant(entry_id, &state.open)
         .iter()
         .filter_map(|address| Url::parse(address).ok())
     {
-        crate::open_externally(app, &url);
+        crate::ask_to_open(app, server.as_deref().unwrap_or("A server"), &url);
     }
 
     if let Some(channels) = state.muted {
@@ -349,9 +356,9 @@ fn same_place(home: &str, target: &Url) -> bool {
     })
 }
 
-/// Called on every page load of Shiver's own pages: the bridge's "back" is a plain navigation that
-/// runs no command, so this is where the webview stops showing a server (and `sync` gives that
-/// server a background socket again).
+/// Called when Shiver's own page starts loading in the main frame: going back from a server is a
+/// plain navigation that runs no command, so this is where the webview stops showing a server (and
+/// `sync` gives that server a background socket again).
 pub fn landed_home(app: &AppHandle) {
     let showing = app.state::<Showing>();
 

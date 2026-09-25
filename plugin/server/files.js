@@ -37,8 +37,12 @@ const clampBytes = (text, limit) => {
   return out;
 };
 
-/** `photo.png` -> `photo~<random>.png`. Always appends; the hook never sees its own output. */
-export const uniqueName = (name, random = randomBytes(SUFFIX_BYTES).toString('hex')) => {
+/**
+ * `photo.png` -> `photo~<random>.png`. Always appends; the hook never sees its own output. Path
+ * separators and control characters become `_`, whatever the host does with the name afterwards.
+ */
+export const uniqueName = (raw, random = randomBytes(SUFFIX_BYTES).toString('hex')) => {
+  const name = raw.replace(/[/\\\x00-\x1f\x7f]/g, '_');
   const { base, ext } = splitName(name);
   const [stem, tail] = Buffer.byteLength(ext) > 32 ? [name, ''] : [base, ext];
 
