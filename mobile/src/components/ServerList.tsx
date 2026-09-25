@@ -1,4 +1,5 @@
 import type { ServerEntry } from '../types';
+import { iconOf } from './Rail';
 import { initials } from '../../../shared/web/rail';
 
 type Props = {
@@ -41,8 +42,8 @@ export const ServerList = ({
       {servers.map((server) => (
         <li key={server.id} className={problems[server.id] ? "has-problem" : undefined}>
           <button type="button" className="server" onClick={() => onOpen(server.id)}>
-            {server.iconUrl ? (
-              <img src={server.iconUrl} alt="" />
+            {iconOf(server) ? (
+              <img src={iconOf(server)} alt="" />
             ) : (
               <span className="server-icon">{initials(server.name)}</span>
             )}

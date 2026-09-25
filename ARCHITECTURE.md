@@ -153,7 +153,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 - **desktop/bridge/index.ts**: one file: session seeding, DM reading/opening, voice read/control/lock,
   channel menu mute, notification capture, drain queue.
 - **mobile/src**: `App.tsx` (screens; `boot` opens last server), `api.ts`, `types.ts`, `components/`:
-  `Boot` (confirms rail actions), `Rail` (`RailRef`), `ServerList`, `AddServer`, `SignInServer`,
+  `Boot` (confirms rail actions), `Rail` (`RailRef`, `iconOf`), `ServerList`, `AddServer`, `SignInServer`,
   `SettingsScreen`, `BackgroundNotifications`, `Sessions`, `DirectMessages`, `UpdateNotice`, `icons`.
 - **mobile/bridge**: `index.ts` (install, `seedSession`), `rail.ts` (`mountRail`,
   `openDrawer`, `installGestures`, `goHome`), `touch.ts` (touch adaptations, channel menu, `openConversation`),
