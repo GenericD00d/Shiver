@@ -130,30 +130,29 @@ pub fn run() {
                 move |_window, payload| {
                     let url = payload.url();
 
-                    if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
-                        // a step through history (back, `history.go`) passes no navigation guard,
-                        // so a page that is neither Shiver's nor the server it opened goes home
-                        let expected = webview::is_home(&handle, url)
-                            || current_origin(&handle)
-                                .is_some_and(|origin| model::is_same_origin(&origin, url));
-
-                        if !expected && matches!(url.scheme(), "http" | "https") {
-                            eprintln!(
-                                "[shiver] {} loaded without Shiver opening it; going home",
-                                url.origin().ascii_serialization()
-                            );
-                            handle.state::<Showing>().set_stray();
-                            webview::go_home(&handle, None);
-                        }
-
-                        return;
+                    if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                        return install_bridge_if_server(&handle, url);
                     }
+
+                    // Loads the core starts (`navigate`) and steps through history (back,
+                    // `history.go`) pass no navigation guard, so this is where home is noticed for
+                    // them, and where a page that is neither Shiver's nor the server it opened is
+                    // sent home. The very first load is Shiver's own page.
+                    handle.state::<Showing>().set_home_if_unset(url.to_string());
 
                     if webview::is_home(&handle, url) {
                         webview::landed_home(&handle);
+                    } else if matches!(url.scheme(), "http" | "https")
+                        && !current_origin(&handle)
+                            .is_some_and(|origin| model::is_same_origin(&origin, url))
+                    {
+                        eprintln!(
+                            "[shiver] {} loaded without Shiver opening it; going home",
+                            url.origin().ascii_serialization()
+                        );
+                        handle.state::<Showing>().set_stray();
+                        webview::go_home(&handle, None);
                     }
-
-                    install_bridge_if_server(&handle, url);
                 }
             })
             .build()?;
