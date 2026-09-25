@@ -1,7 +1,7 @@
-import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, errorMessage } from './api';
+import { EVENTS, useCoreEvent } from './events';
 import { AddServerPanel } from './components/AddServerPanel';
 import { UpdateNotice } from './components/UpdateNotice';
 import { ConnectingPanel } from './components/ConnectingPanel';
@@ -30,6 +30,9 @@ import { byPosition } from '../../shared/web/rail';
  * Which Shiver surface owns the content area. Anything other than `server` means the active server's
  * webview is hidden and the shell is drawing the whole area.
  */
+/** A message clicked in the bell's feed. */
+type OpenMessage = { entryId: string; channelId: number | null; isDm: boolean; author: string };
+
 type Panel = 'server' | 'add' | 'settings' | 'dms' | 'folder' | 'connecting' | 'signin' | 'remove';
 
 /** The server Shiver is waiting on, and whether it has given up on it. */
@@ -38,15 +41,6 @@ type Connecting = {
   serverName: string;
   failed: boolean;
 };
-
-const FEED_EVENT = 'shiver://feed';
-const MENU_EVENT = 'shiver://server-menu';
-const OPEN_MESSAGE_EVENT = 'shiver://open-message';
-const DM_FAILED_EVENT = 'shiver://dm-failed';
-const SERVER_READY_EVENT = 'shiver://server-ready';
-const VOICE_EVENT = 'shiver://voice';
-const STATUS_EVENT = 'shiver://status';
-const SIGNED_OUT_EVENT = 'shiver://signed-out';
 
 /** How long a server may take before the spinner shows (avoids a flash for fast servers). */
 const SPINNER_DELAY_MS = 400;
@@ -102,8 +96,6 @@ export const App = () => {
   // of the boot effect, which must not re-run every time the registry is refreshed
   const serversRef = useRef<ServerEntry[]>([]);
 
-  /** the shown server, for listeners registered once that must not read a stale value */
-  const activeIdRef = useRef<string | null>(null);
   /** pending `SPINNER_DELAY_MS` timer, so a server that comes up in time shows no spinner */
   const spinnerTimer = useRef<number | null>(null);
   /** pending `CONNECT_TIMEOUT_MS` timer, after which Shiver says the server did not answer */
@@ -134,10 +126,6 @@ export const App = () => {
   useEffect(() => {
     serversRef.current = registry.servers;
   }, [registry.servers]);
-
-  useEffect(() => {
-    activeIdRef.current = activeId;
-  }, [activeId]);
 
   const cancelWaiting = useCallback(() => {
     for (const timer of [spinnerTimer, timeoutTimer]) {
@@ -304,54 +292,23 @@ export const App = () => {
   }, []);
 
   // the core drains each live page on a timer and says so here, rather than the shell polling
-  useEffect(() => {
-    const pending = listen(FEED_EVENT, () => {
-      refreshFeed();
-    });
-
-    return () => {
-      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-    };
-  }, [refreshFeed]);
+  useCoreEvent(EVENTS.feed, () => void refreshFeed());
 
   // the core drives this rather than the shell polling: two of the three states are not events, a
   // server goes from connecting to offline by nothing happening for long enough
-  useEffect(() => {
-    const pending = listen<Record<string, ServerStatus>>(STATUS_EVENT, (event) => {
-      setStatuses(event.payload);
-    });
-
-    return () => {
-      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-    };
-  }, []);
+  useCoreEvent<Record<string, ServerStatus>>(EVENTS.status, setStatuses);
 
   // a call can start, move or end on any server, including one nobody is looking at
   useEffect(() => {
-    refreshVoice();
-
-    const pending = listen(VOICE_EVENT, () => {
-      refreshVoice();
-    });
-
-    return () => {
-      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-    };
+    void refreshVoice();
   }, [refreshVoice]);
 
+  useCoreEvent(EVENTS.voice, () => void refreshVoice());
+
   // the swap out of Shiver's cached view and into the live client
-  useEffect(() => {
-    const pending = listen<{ entryId: string }>(SERVER_READY_EVENT, (event) => {
-      if (pendingRef.current !== event.payload.entryId) return;
-
-      showServerNow(event.payload.entryId).catch(() => undefined);
-    });
-
-    return () => {
-      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-    };
-  }, [showServerNow]);
-
+  useCoreEvent<{ entryId: string }>(EVENTS.serverReady, ({ entryId }) => {
+    if (pendingRef.current === entryId) showServerNow(entryId).catch(() => undefined);
+  });
 
   /// opens the conversation beside Shiver's DM list, drawn by that server's own client
   const handleOpenDm = useCallback(
@@ -458,78 +415,51 @@ export const App = () => {
 
   // a conversation the page could not open. the split still shows whatever was there before, so
   // Shiver must stop marking the new one as open rather than quietly disagreeing with the screen.
-  useEffect(() => {
-    const pending = listen<{ name: string }>(DM_FAILED_EVENT, (event) => {
-      setOpenedDm(null);
-      // reported in the DM sidebar, not the content area: the server's webview covers that
-      setDmError(`Could not open the conversation with ${event.payload.name}.`);
-    });
-
-    return () => {
-      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-    };
-  }, []);
+  useCoreEvent<{ name: string }>(EVENTS.dmFailed, ({ name }) => {
+    setOpenedDm(null);
+    // reported in the DM sidebar, not the content area: the server's webview covers that
+    setDmError(`Could not open the conversation with ${name}.`);
+  });
 
   /** A server's page is asking for credentials: collect them here, so Shiver can renew the session. */
-  useEffect(() => {
-    const pending = listen<{ entryId: string }>(SIGNED_OUT_EVENT, (event) => {
-      const { entryId } = event.payload;
+  useCoreEvent<{ entryId: string }>(EVENTS.signedOut, ({ entryId }) => {
+    // only for the server being looked at or waited on: Shiver must not drag the user off
+    // whatever they are doing because a background server lost its session
+    if (activeId !== entryId && pendingRef.current !== entryId) return;
 
-      // only for the server being looked at or waited on: Shiver must not drag the user off
-      // whatever they are doing because a background server lost its session
-      if (activeIdRef.current !== entryId && pendingRef.current !== entryId) return;
-
-      setSigningIn(entryId);
-      openPanel('signin').catch(() => undefined);
-    });
-
-    return () => {
-      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-    };
-  }, [openPanel]);
+    setSigningIn(entryId);
+    openPanel('signin').catch(() => undefined);
+  });
 
   // Clicking a message in the bell's feed. The feed is drawn in the popup's own webview, which
   // cannot switch servers, so it asks and this does it — through the same `openServer` everything
   // else goes through, so a server that is still coming up gets the same cover it always does.
-  useEffect(() => {
-    const pending = listen<{
-      entryId: string;
-      channelId: number | null;
-      isDm: boolean;
-      author: string;
-    }>(OPEN_MESSAGE_EVENT, async (event) => {
-      const { entryId, channelId, isDm, author } = event.payload;
+  useCoreEvent<OpenMessage>(EVENTS.openMessage, async ({ entryId, channelId, isDm, author }) => {
+    try {
+      if (isDm) {
+        // a conversation opens in the inbox beside Shiver's list, which is where DMs live
+        await openPanel('dms');
+        await api.openDm(entryId, author);
+        setActiveId(entryId);
+        setLastDm({ entryId, name: author });
 
-      try {
-        if (isDm) {
-          // a conversation opens in the inbox beside Shiver's list, which is where DMs live
-          await openPanel('dms');
-          await api.openDm(entryId, author);
-          setActiveId(entryId);
-          setLastDm({ entryId, name: author });
-
-          return;
-        }
-
-        await openServer(entryId);
-
-        // after the server, not with it: the page has to exist before it can be told where to go,
-        // and it retries on its own side for the case where it is still connecting
-        if (channelId !== null) {
-          await api.selectChannel(entryId, channelId);
-        }
-      } catch (cause) {
-        setError(errorMessage(cause));
+        return;
       }
-    });
 
-    return () => {
-      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-    };
-  }, [openPanel, openServer]);
+      await openServer(entryId);
+
+      // after the server, not with it: the page has to exist before it can be told where to go,
+      // and it retries on its own side for the case where it is still connecting
+      if (channelId !== null) {
+        await api.selectChannel(entryId, channelId);
+      }
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  });
 
   // the rail's context menu is a native os menu, so its result comes back as an event
-  useEffect(() => {
+  useCoreEvent<{ action: string; entryId: string }>(EVENTS.menu, ({ action, entryId }) => {
     // ids are `action:id`, the id being a folder's for folder actions
     const actions: Record<string, (id: string) => Promise<unknown>> = {
       open: openServer,
@@ -556,14 +486,8 @@ export const App = () => {
       'delete-folder': (id) => api.deleteFolder(id).then(refresh)
     };
 
-    const pending = listen<{ action: string; entryId: string }>(MENU_EVENT, ({ payload }) => {
-      if (Object.hasOwn(actions, payload.action)) void actions[payload.action](payload.entryId).catch(() => undefined);
-    });
-
-    return () => {
-      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-    };
-  }, [openPanel, openServer, refresh, refreshFeed]);
+    if (Object.hasOwn(actions, action)) void actions[action](entryId).catch(() => undefined);
+  });
 
   useEffect(() => {
     applyTheme(registry.settings);

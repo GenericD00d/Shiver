@@ -146,7 +146,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 ## Frontends
 
 - **desktop/src**: `main.tsx` (label → `App` | `Bell` | `NotificationsPopup`), `api.ts` (`api.*` invoke
-  wrappers, `errorMessage`), `types.ts`, `sounds.ts` (`playNotificationSound`), `components/`:
+  wrappers, `errorMessage`), `events.ts` (`EVENTS`, `useCoreEvent`), `types.ts`, `sounds.ts` (`playNotificationSound`), `components/`:
   `ServerRail`, `AddServerPanel`, `SignInPanel`, `SettingsPanel`, `HotkeyField`, `DirectMessagesPanel`,
   `NotificationList` (`relativeTime`), `RenameFolderPanel`, `RemoveServerPanel`, `ConnectingPanel`, `WelcomePanel`,
   `VoiceTile`, `UpdateNotice`, `icons`.

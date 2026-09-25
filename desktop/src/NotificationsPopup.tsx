@@ -1,13 +1,10 @@
-import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useState } from 'react';
 
 import { api } from './api';
+import { EVENTS, useCoreEvent } from './events';
 import { NotificationList } from './components/NotificationList';
 import { applyTheme } from '../../shared/web/theme';
 import type { Notification } from './types';
-
-const FEED_EVENT = 'shiver://feed';
-const SETTINGS_EVENT = 'shiver://settings';
 
 /** The unified notification feed, in its own webview under the bell. */
 export const NotificationsPopup = () => {
@@ -21,19 +18,11 @@ export const NotificationsPopup = () => {
   }, []);
 
   useEffect(() => {
-    refresh();
-
-    const pending = [
-      listen(FEED_EVENT, () => refresh()),
-      listen(SETTINGS_EVENT, () => refresh())
-    ];
-
-    return () => {
-      for (const handle of pending) {
-        handle.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-      }
-    };
+    void refresh();
   }, [refresh]);
+
+  useCoreEvent(EVENTS.feed, () => void refresh());
+  useCoreEvent(EVENTS.settings, () => void refresh());
 
   const handleClear = useCallback(async () => {
     await api.clearNotifications();

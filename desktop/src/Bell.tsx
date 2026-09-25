@@ -1,14 +1,10 @@
-import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api } from './api';
+import { EVENTS, useCoreEvent } from './events';
 import { BellIcon } from './components/icons';
 import { playNotificationSound } from './sounds';
 import { applyTheme } from '../../shared/web/theme';
-
-const FEED_EVENT = 'shiver://feed';
-const SETTINGS_EVENT = 'shiver://settings';
-const POPUP_EVENT = 'shiver://popup';
 
 /** The notification bell, in a fixed 48x48 webview; the feed opens in a separate webview below it. */
 export const Bell = () => {
@@ -41,32 +37,15 @@ export const Bell = () => {
   }, []);
 
   useEffect(() => {
-    refresh();
-
-    const pending = [
-      listen(FEED_EVENT, () => refresh()),
-      // the settings screen lives in another webview, so a colour change arrives as an event
-      listen(SETTINGS_EVENT, () => refresh())
-    ];
-
-    return () => {
-      for (const handle of pending) {
-        handle.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-      }
-    };
+    void refresh();
   }, [refresh]);
 
+  useCoreEvent(EVENTS.feed, () => void refresh());
+  // the settings screen lives in another webview, so a colour change arrives as an event
+  useCoreEvent(EVENTS.settings, () => void refresh());
   // the feed can close without the bell being touched — the user clicks away, or a new server
   // webview takes it down — and the bell would otherwise stay drawn as active over nothing
-  useEffect(() => {
-    const pending = listen<{ open: boolean }>(POPUP_EVENT, (event) => {
-      setOpen(event.payload.open);
-    });
-
-    return () => {
-      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-    };
-  }, []);
+  useCoreEvent<{ open: boolean }>(EVENTS.popup, ({ open }) => setOpen(open));
 
   const toggle = useCallback(async () => {
     try {
