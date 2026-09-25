@@ -554,6 +554,36 @@ fn profile_name(entry: &ServerEntry) -> String {
     }
 }
 
+/// The same profile on macOS (14+), which keeps page storage in a data store named by a uuid
+/// rather than a directory: the generation's, else the entry's.
+fn data_store(entry: &ServerEntry) -> [u8; 16] {
+    uuid::Uuid::parse_str(entry.profile.as_deref().unwrap_or(&entry.id))
+        .map_or([0; 16], uuid::Uuid::into_bytes)
+}
+
+/// Drops every data store no current entry's profile uses. Their pages must be closed first.
+#[cfg(target_vendor = "apple")]
+fn prune_data_stores(app: &AppHandle) {
+    let app = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let current: std::collections::HashSet<[u8; 16]> = app
+            .state::<Store>()
+            .registry()
+            .servers
+            .iter()
+            .map(data_store)
+            .collect();
+        let stores = app.fetch_data_store_identifiers().await.unwrap_or_default();
+
+        for store in stores.into_iter().filter(|store| !current.contains(store)) {
+            if let Err(error) = app.remove_data_store(store).await {
+                eprintln!("[shiver] could not remove a page's data store: {error}");
+            }
+        }
+    });
+}
+
 /// Deletes profile directories in the background, retrying while WebView2 releases its files.
 /// Anything still left is removed by `prune_profiles` on the next launch.
 fn delete_dirs_later(dirs: Vec<PathBuf>) {
@@ -600,16 +630,22 @@ fn profile_dirs_of(app: &AppHandle, entry_id: &str, keep: Option<&str>) -> Vec<P
 }
 
 /// Discards all of an entry's browser storage (cookies, localStorage, cache). Its pages must be
-/// closed first.
+/// closed first, and on macOS the registry must already have dropped or replaced its profile.
 pub fn discard_profiles(app: &AppHandle, entry_id: &str, keep: Option<&ServerEntry>) {
     let keep = keep.map(profile_name);
 
     delete_dirs_later(profile_dirs_of(app, entry_id, keep.as_deref()));
+
+    #[cfg(target_vendor = "apple")]
+    prune_data_stores(app);
 }
 
 /// At launch, deletes profiles that belong to no current entry (removed servers, old generations,
 /// deletions that did not finish last time).
 pub fn prune_profiles(app: &AppHandle) {
+    #[cfg(target_vendor = "apple")]
+    prune_data_stores(app);
+
     let Some(root) = profiles_root(app) else {
         return;
     };
@@ -666,6 +702,7 @@ fn build_page_webview(
         // Sharkord uploads by listening for dragover/drop, which the native handler would swallow
         .disable_drag_drop_handler()
         .initialization_script(bridge_script(entry, settings, token, muted, role))
+        .data_store_identifier(data_store(entry))
         .on_navigation(move |target| {
             let allowed = is_same_origin(&origin, target);
 
@@ -959,6 +996,32 @@ mod tests {
 
         std::thread::sleep(POPUP_REOPEN_GUARD + Duration::from_millis(50));
         assert!(state.should_open_popup());
+    }
+
+    #[test]
+    fn each_profile_generation_has_its_own_data_store() {
+        let entry = |profile: Option<&str>| ServerEntry {
+            id: "0b6d7e4e-1a4f-4bb0-9d3c-2f3b1a9e8c11".into(),
+            origin: "https://chat.example.com".into(),
+            server_id: None,
+            name: "Chat".into(),
+            icon_url: None,
+            identity: None,
+            account_label: None,
+            folder_id: None,
+            position: 0,
+            accept_any_size: false,
+            profile: profile.map(str::to_string),
+        };
+        let first = data_store(&entry(None));
+        let later = data_store(&entry(Some("9f1c0d2e6b7a4c3d8e9f0a1b2c3d4e5f")));
+
+        assert_ne!(first, [0; 16]);
+        assert_ne!(first, later);
+        assert_eq!(
+            later,
+            data_store(&entry(Some("9f1c0d2e6b7a4c3d8e9f0a1b2c3d4e5f")))
+        );
     }
 
     #[test]
