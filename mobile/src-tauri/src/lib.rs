@@ -226,7 +226,7 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
         return;
     };
 
-    let (entry, settings, muted, servers, folders) = {
+    let (entry, settings, muted) = {
         let store = app.state::<Store>();
         let registry = store.registry();
 
@@ -238,8 +238,6 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
             entry,
             registry.settings.clone(),
             registry.muted_for(&entry_id),
-            registry.servers.clone(),
-            registry.folders.clone(),
         )
     };
 
@@ -251,8 +249,6 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
     app.state::<Showing>().set_loaded();
 
     let inbox = app.state::<Inbox>();
-    let unread = inbox.unread();
-    let signed_out = inbox.signed_out();
     let session = inbox.token(&entry_id);
     let read_floor = inbox.baseline(&entry_id);
     let push_endpoint = app.state::<push::Push>().endpoint(&entry_id);
@@ -283,12 +279,8 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
             entry: &entry,
             settings: &settings,
             muted: &muted,
-            servers: &servers,
-            unread: &unread,
-            signed_out: &signed_out,
             session: session.as_deref(),
             read_floor: read_floor.as_ref(),
-            folders: &folders,
             push_endpoint: push_endpoint.as_deref(),
             retired_push_endpoints: &retired,
         },

@@ -662,20 +662,9 @@ pub fn watch_mutes(app: &AppHandle) {
     });
 }
 
-/// Sends the unread counts to Shiver's pages and to the rail inside the page on screen.
+/// Sends the unread counts to Shiver's own page (a server's page is never told them).
 fn publish(app: &AppHandle) {
-    let unread = app.state::<Inbox>().unread();
-    let _ = app.emit(INBOX_EVENT, &unread);
-
-    if app.state::<webview::Showing>().server().is_none() {
-        return;
-    }
-
-    if let (Ok(window), Ok(payload)) = (webview::main_window(app), serde_json::to_string(&unread)) {
-        let _ = window.eval(format!(
-            "window.__SHIVER_UNREAD__ && window.__SHIVER_UNREAD__({payload})"
-        ));
-    }
+    let _ = app.emit(INBOX_EVENT, app.state::<Inbox>().unread());
 }
 
 /// Signs a server in again from its stored password. A refused password is forgotten.

@@ -17,7 +17,7 @@ use std::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use shiver_core::{rail::RailRef, LockExt};
+use shiver_core::LockExt;
 use tauri::{window::Color, AppHandle, Manager, Url, WebviewWindow};
 
 pub use shiver_core::limit::Openings;
@@ -25,8 +25,7 @@ pub use shiver_core::limit::Openings;
 use crate::{
     error::{Core, Error, Result},
     inbox,
-    model::{is_same_origin, Folder, ServerEntry, Settings, MAX_SOUND_VOLUME},
-    store::{RegistryStore, Store},
+    model::{is_same_origin, ServerEntry, Settings, MAX_SOUND_VOLUME},
 };
 
 pub const MAIN_WINDOW: &str = "main";
@@ -73,11 +72,7 @@ pub fn without_seed(url: &Url) -> Url {
     url
 }
 
-/// Bounds on what one page's rail may ask of the registry per poll.
-const MAX_CREATES_PER_POLL: usize = 5;
-const MAX_FOLDER_ID: usize = 64;
-const MAX_PAGE_STATE_BYTES: usize = 1024 * 1024;
-const DEFAULT_FOLDER_NAME: &str = "Folder";
+const MAX_PAGE_STATE_BYTES: usize = 64 * 1024;
 
 #[derive(Default)]
 struct ShowingState {
@@ -196,22 +191,17 @@ pub fn go_home(app: &AppHandle, fragment: Option<&str>) {
     });
 }
 
-/// Everything one server page is handed when the bridge is installed in it.
+/// Everything one server page is handed when the bridge is installed in it: its own entry's, and
+/// nothing about the user's other servers.
 pub struct PageContext<'a> {
     pub entry: &'a ServerEntry,
     pub settings: &'a Settings,
     /// channel ids muted on this entry
     pub muted: &'a [i64],
-    /// every server, reduced by `rail_payload` before it reaches the page
-    pub servers: &'a [ServerEntry],
-    pub unread: &'a HashMap<String, u32>,
-    /// entries waiting for the user to sign in again
-    pub signed_out: &'a [String],
     /// this entry's own session, never another's (used by the bridge to reconnect)
     pub session: Option<&'a str>,
     /// the unread floor to share with the user's other devices through the companion plugin
     pub read_floor: Option<&'a HashMap<i64, u32>>,
-    pub folders: &'a [Folder],
     /// this entry's own push endpoint, for the plugin's relay
     pub push_endpoint: Option<&'a str>,
     /// endpoints the plugin should forget
@@ -244,8 +234,6 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
         }),
         // the page has no IPC, so going back is a navigation to here
         "home": home,
-        "rail": rail_payload(page.servers, page.unread, page.signed_out),
-        "folders": folder_payload(page.folders),
         "pushEndpoint": page.push_endpoint,
         "retiredPushEndpoints": page.retired_push_endpoints,
         "openDmUser": showing.take_pending_dm_user(),
@@ -255,64 +243,15 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
     let _ = window.eval(format!("window.__SHIVER__ = {config};\n{BRIDGE_SOURCE}"));
 }
 
-/// The rail as a server's page may see it: display names, inlined logos, opaque entry ids,
-/// positions, folder membership, unread counts and signed-out flags. Never an origin, icon URL,
-/// account label or identity; tapping a tile navigates to Shiver's page with only the id.
-fn rail_payload(
-    servers: &[ServerEntry],
-    unread: &HashMap<String, u32>,
-    signed_out: &[String],
-) -> Value {
-    let mut ordered: Vec<&ServerEntry> = servers.iter().collect();
-
-    ordered.sort_by_key(|server| server.position);
-
-    ordered
-        .into_iter()
-        .map(|server| {
-            json!({
-                "id": server.id,
-                "name": server.name,
-                "icon": server.icon_data,
-                "position": server.position,
-                "folderId": server.folder_id,
-                "unread": unread.get(&server.id).copied().unwrap_or(0),
-                "signedOut": signed_out.contains(&server.id),
-            })
-        })
-        .collect()
-}
-
-/// The user's folders (names they typed into Shiver), ordered.
-fn folder_payload(folders: &[Folder]) -> Value {
-    let mut ordered: Vec<&Folder> = folders.iter().collect();
-
-    ordered.sort_by_key(|folder| folder.position);
-
-    ordered
-        .into_iter()
-        .map(|folder| {
-            json!({
-                "id": folder.id,
-                "name": folder.name,
-                "position": folder.position,
-                "expanded": folder.expanded,
-            })
-        })
-        .collect()
-}
-
-/// Polled by `inbox::watch_mutes`: reads the page's mutes, rail changes and queued outside links
-/// (a read on departure would be torn down by the navigation before it answered).
+/// Polled by `inbox::watch_mutes`: reads the page's mutes and queued outside links (a read on
+/// departure would be torn down by the navigation before it answered).
 const READ_SCRIPT: &str = "JSON.stringify({ \
     muted: window.__SHIVER_MUTED__ ? window.__SHIVER_MUTED__() : null, \
-    rail: window.__SHIVER_RAIL_STATE__ ? window.__SHIVER_RAIL_STATE__() : null, \
     open: window.__SHIVER_OPEN__ ? window.__SHIVER_OPEN__() : null })";
 
 #[derive(Default, Deserialize)]
 struct PageState {
     muted: Option<Vec<i64>>,
-    rail: Option<RailState>,
     #[serde(default, deserialize_with = "null_as_default")]
     open: Vec<String>,
 }
@@ -366,172 +305,6 @@ fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
     if let Some(channels) = state.muted {
         inbox::replace_mutes(app, entry_id, &channels);
     }
-
-    let Some(rail) = state.rail else {
-        return;
-    };
-
-    // Membership before order (a move changes which list a server is ordered in, and forces the
-    // order to be rewritten to break position ties); pruning last, so a dissolving folder's slot
-    // passes to the server it frees.
-    let store = app.state::<Store>();
-    let changed = apply_creates(&store, &rail.creates) | apply_moves(&store, &rail.moves);
-
-    apply_order(&store, &rail.order, changed);
-
-    if changed {
-        let _ = store.update(|registry| Ok(registry.rail().prune_folders()));
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct RailState {
-    /// the top level (folders and loose servers) in tile order
-    order: Vec<RailRef>,
-    #[serde(default)]
-    moves: Vec<RailMove>,
-    #[serde(default)]
-    creates: Vec<RailCreate>,
-}
-
-/// A server moved into (`folder_id`) or out of (`None`) a folder.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RailMove {
-    server_id: String,
-    folder_id: Option<String>,
-}
-
-/// A folder made by dropping one server onto another. The id is the page's (so it can draw the
-/// folder at once); an id already in use is refused.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RailCreate {
-    id: String,
-    name: String,
-    member_ids: Vec<String>,
-}
-
-fn log_failure(what: &str, result: Result<()>) -> bool {
-    match result {
-        Ok(()) => true,
-        Err(error) => {
-            eprintln!("[shiver] could not {what}: {error}");
-
-            false
-        }
-    }
-}
-
-/// Makes the folders the rail asked for (a bounded number per poll), at the lowest position of
-/// their members. Names are clamped; renaming stays on Shiver's own screen.
-fn apply_creates(store: &Store, creates: &[RailCreate]) -> bool {
-    if creates.is_empty() {
-        return false;
-    }
-
-    let result = store.update(|registry| {
-        for create in creates.iter().take(MAX_CREATES_PER_POLL) {
-            let id = create.id.trim();
-
-            if id.is_empty()
-                || id.len() > MAX_FOLDER_ID
-                || registry.folders.iter().any(|folder| folder.id == id)
-            {
-                continue;
-            }
-
-            let members: Vec<String> = create
-                .member_ids
-                .iter()
-                .filter(|member| registry.server(member).is_some())
-                .cloned()
-                .collect();
-
-            // a folder of nothing would only be pruned again
-            if members.is_empty() {
-                continue;
-            }
-
-            let name = match create.name.trim() {
-                "" => DEFAULT_FOLDER_NAME,
-                name => name,
-            };
-
-            registry
-                .rail()
-                .create_folder(id.to_string(), name, &members)?;
-        }
-
-        Ok(())
-    });
-
-    log_failure("make a folder from the rail", result)
-}
-
-/// Moves servers between existing folders; nothing else about folders can be changed from a page.
-fn apply_moves(store: &Store, moves: &[RailMove]) -> bool {
-    if moves.is_empty() {
-        return false;
-    }
-
-    let result = store.update(|registry| {
-        let mut rail = registry.rail();
-
-        for change in moves {
-            // a stale page may name what is gone; the rest still applies
-            let _ = rail.set_server_folder(&change.server_id, change.folder_id.clone());
-        }
-
-        Ok(())
-    });
-
-    log_failure("move a server between folders", result)
-}
-
-/// Stores the rail's top-level order when it differs from the stored one (or `force`). Folder
-/// contents keep their own order. Compared first because the rail reports every second.
-fn apply_order(store: &Store, ordered: &[RailRef], force: bool) {
-    if !force && top_level_matches(&store.registry(), ordered) {
-        return;
-    }
-
-    let result = store.update(|registry| {
-        let mut rail = registry.rail();
-
-        for (index, item) in ordered.iter().enumerate() {
-            let _ = rail.place(item, index as i32);
-        }
-
-        registry.servers.sort_by_key(|server| server.position);
-
-        Ok(())
-    });
-
-    log_failure("store the rail's new order", result);
-}
-
-fn top_level_matches(registry: &crate::model::Registry, ordered: &[RailRef]) -> bool {
-    let mut current: Vec<(&str, &str, i32)> = registry
-        .folders
-        .iter()
-        .map(|folder| ("folder", folder.id.as_str(), folder.position))
-        .chain(
-            registry
-                .servers
-                .iter()
-                .filter(|server| server.folder_id.is_none())
-                .map(|server| ("server", server.id.as_str(), server.position)),
-        )
-        .collect();
-
-    current.sort_by_key(|(_, _, position)| *position);
-
-    current.len() == ordered.len()
-        && current
-            .iter()
-            .zip(ordered)
-            .all(|((kind, id, _), item)| *kind == item.kind && *id == item.id)
 }
 
 /// Whether the webview may navigate to `target`; records home on the very first navigation (which
@@ -756,41 +529,6 @@ mod tests {
         ));
     }
 
-    fn entry(id: &str, name: &str, origin: &str, position: i32) -> ServerEntry {
-        ServerEntry {
-            id: id.into(),
-            origin: origin.into(),
-            name: name.into(),
-            icon_url: Some(format!("{origin}/public/logo.png")),
-            identity: Some("someone".into()),
-            account_label: Some("someone".into()),
-            push_token: Some("secret-push-token".into()),
-            position,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn the_rail_payload_carries_no_addresses_and_is_ordered() {
-        let servers = vec![
-            entry("a", "Alpha", "https://alpha.example.com", 7),
-            entry("b", "Beta", "https://beta.example.com", 2),
-        ];
-
-        let payload = rail_payload(&servers, &HashMap::new(), &["a".into()]);
-        let text = payload.to_string();
-
-        assert!(text.contains("Alpha") && text.contains("Beta"));
-
-        for hidden in ["example.com", "someone", "secret-push-token"] {
-            assert!(!text.contains(hidden), "the rail must not carry {hidden}");
-        }
-
-        assert_eq!(payload[0]["id"], "b");
-        assert_eq!(payload[1]["id"], "a");
-        assert_eq!(payload[1]["signedOut"], true);
-    }
-
     #[test]
     fn pending_requests_are_consumed_once_and_home_is_written_once() {
         let showing = Showing::default();
@@ -806,14 +544,12 @@ mod tests {
 
     #[test]
     fn a_page_state_tolerates_missing_and_null_fields() {
-        let state: PageState =
-            serde_json::from_str(r#"{"muted":null,"rail":null,"open":null}"#).unwrap();
+        let state: PageState = serde_json::from_str(r#"{"muted":null,"open":null}"#).unwrap();
 
-        assert!(state.muted.is_none() && state.rail.is_none() && state.open.is_empty());
+        assert!(state.muted.is_none() && state.open.is_empty());
 
-        let state: PageState =
-            serde_json::from_str(r#"{"rail":{"order":[{"kind":"server","id":"a"}]}}"#).unwrap();
+        let state: PageState = serde_json::from_str(r#"{"muted":[3]}"#).unwrap();
 
-        assert_eq!(state.rail.unwrap().order.len(), 1);
+        assert_eq!(state.muted, Some(vec![3]));
     }
 }

@@ -22,7 +22,7 @@ import {
 } from './types';
 import { byPosition } from '../../shared/web/rail';
 
-/** Shiver's own screens. `boot` opens the last server used; there is no home screen. */
+/** Shiver's own screens. `boot` opens the last server used, or waits on the rail after `#home`. */
 type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms';
 
 /** The settings sections, in the order they are listed. */
@@ -56,15 +56,11 @@ const TITLES: Record<Exclude<Screen, 'boot'>, string> = {
 };
 
 /**
- * What a fragment on Shiver's own URL may ask for. The rail inside a server's page has no IPC, so
- * its taps navigate here; any page can do that, so ids are looked up in the registry and
- * destructive actions are confirmed by the user on this page.
+ * What a fragment on Shiver's own URL may ask for: the rail (a server's page going home), a server
+ * to reopen (its page reconnecting) or one that failed (the core). Any page can navigate here, so
+ * ids are looked up in the registry and nothing else is taken from the URL.
  */
-type Intent =
-  | { kind: 'open' | 'failed'; id: string }
-  | { kind: 'screen'; screen: Screen }
-  | { kind: 'do'; action: 'refresh' | ConfirmAction; id: string }
-  | null;
+type Intent = { kind: 'open' | 'failed'; id: string } | { kind: 'home' } | null;
 
 const decode = (text: string) => {
   try {
@@ -79,19 +75,8 @@ const readIntent = (hash: string): Intent => {
 
   if (value.startsWith('open=')) return { kind: 'open', id: decode(value.slice('open='.length)) };
   if (value.startsWith('failed=')) return { kind: 'failed', id: decode(value.slice('failed='.length)) };
-  if (value === 'add') return { kind: 'screen', screen: 'add' };
-  if (value === 'settings') return { kind: 'screen', screen: 'settings' };
-  if (value === 'dms') return { kind: 'screen', screen: 'dms' };
 
-  if (value.startsWith('do=')) {
-    const [action, id] = value.slice('do='.length).split(':');
-
-    if ((action === 'refresh' || action === 'remove' || action === 'forgetpw' || action === 'logout') && id) {
-      return { kind: 'do', action, id: decode(id) };
-    }
-  }
-
-  return null;
+  return value === 'home' ? { kind: 'home' } : null;
 };
 
 /** The server Shiver reopens: the last one used, or the first. */
@@ -198,8 +183,7 @@ export const App = () => {
     [boot, resume]
   );
 
-  // Runs once. The fragment is cleared as it is read, so a reload does not repeat it and arriving
-  // from the rail's settings tile does not reopen the server just left.
+  // Runs once. The fragment is cleared as it is read, so a reload does not repeat it.
   const started = useRef(false);
 
   useEffect(() => {
@@ -223,26 +207,11 @@ export const App = () => {
         return;
       }
 
-      if (intent?.kind === 'screen') {
-        setScreen(intent.screen);
+      if (intent?.kind === 'home') {
+        const left = lastUsed(next);
 
-        return;
-      }
-
-      if (intent?.kind === 'do') {
-        const server = next.servers.find((candidate) => candidate.id === intent.id);
-
-        if (server && intent.action !== 'refresh') {
-          setBoot({ kind: 'confirm', action: intent.action, server });
-
-          return;
-        }
-
-        if (server) {
-          await api.refreshServerInfo(server.id).catch((cause) => setError(errorMessage(cause)));
-        }
-
-        await resume();
+        if (left) setBoot({ kind: 'home', server: left });
+        else await resume(next);
 
         return;
       }
@@ -265,7 +234,8 @@ export const App = () => {
   }, [registry.settings]);
 
   // Android's back button, from one of Shiver's own screens: back to the last server, opened by
-  // Shiver (a step back through history would bring it without its session or rail)
+  // Shiver (a step back through history would bring it without its session); from the boot
+  // screen, the system's own
   useEffect(() => {
     window.__SHIVER_BACK__ = () => {
       if (screen === 'boot') return false;
@@ -345,6 +315,20 @@ export const App = () => {
   }, [connect, refresh]);
 
   const handleRemove = useCallback((id: string) => void change(() => api.removeServer(id)), [change]);
+
+  /** Asks on the boot screen before a rail menu action runs. */
+  const handleAsk = useCallback(
+    (action: ConfirmAction, id: string) => {
+      const server = servers.find((candidate) => candidate.id === id);
+
+      if (!server) return;
+
+      setScreen('boot');
+      setBoot({ kind: 'confirm', action, server });
+    },
+    [servers]
+  );
+
   const handleSettings = useCallback((settings: Settings) => void change(() => api.updateSettings(settings)), [change]);
 
   return (
@@ -359,7 +343,7 @@ export const App = () => {
         onAdd={() => setScreen('add')}
         onSettings={() => setScreen('settings')}
         onRefresh={(id) => void change(() => api.refreshServerInfo(id))}
-        onRemove={handleRemove}
+        onAsk={handleAsk}
         onReorder={(ordered: RailRef[]) => void change(() => api.reorderRail(ordered))}
         folders={registry.folders}
         onSetFolder={(id, folderId) => void change(() => api.setServerFolder(id, folderId))}

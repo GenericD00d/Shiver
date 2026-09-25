@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import type { ConfirmAction } from './Boot';
 import { MessagesIcon, PlusIcon, SettingsIcon } from './icons';
 import type { Folder, ServerEntry } from '../types';
 import { byPosition, initials, membersOf } from '../../../shared/web/rail';
@@ -17,7 +18,8 @@ type Props = {
   onAdd: () => void;
   onSettings: () => void;
   onRefresh: (id: string) => void;
-  onRemove: (id: string) => void;
+  /** an action to confirm before it runs */
+  onAsk: (action: ConfirmAction, id: string) => void;
   /** the rail's folders, ordered among the loose servers by `position` */
   folders: Folder[];
   /** the rail's top level after a drag, folders and loose servers together */
@@ -33,7 +35,6 @@ type Props = {
 
 /** One row of the rail's top level. */
 export type RailRef = { kind: 'server' | 'folder'; id: string };
-
 
 /** Matches the desktop rail, which is the other place Shiver counts unread. */
 const badgeLabel = (count: number) => (count > 99 ? '99+' : String(count));
@@ -153,7 +154,7 @@ const useLongPress = (
 /** A server's logo: the copy Shiver inlined (no request to the server), else its address. */
 export const iconOf = (server: ServerEntry) => server.iconData ?? server.iconUrl ?? undefined;
 
-/** The server rail on Shiver's own pages, matching the one the bridge draws in a server's page. */
+/** The server rail, on Shiver's own page (a server's page is shown nothing of it). */
 export const Rail = ({
   servers,
   activeId,
@@ -164,7 +165,7 @@ export const Rail = ({
   onAdd,
   onSettings,
   onRefresh,
-  onRemove,
+  onAsk,
   folders,
   onReorder,
   onSetFolder,
@@ -271,7 +272,7 @@ export const Rail = ({
         // Dragged clear of the group it was in, which is how a server leaves a folder. An open
         // folder's own tile is a slim bar, so "just above the folder" is a few pixels of travel and
         // no gesture at all; leaving the box the members are drawn in is what a finger pulling one
-        // out is already doing. The bridge's rail reads it the same way.
+        // out is already doing.
         const from = [...groups.current.entries()].find(([, node]) =>
           [...node.children].some((child) => child === tiles.current.get(id))
         );
@@ -537,9 +538,7 @@ export const Rail = ({
         <SettingsIcon />
       </button>
 
-      {/* The same menu the bridge draws inside a server's page, without the two actions that need
-          that server's own client running — marking every channel read and signing out. No server
-          is on screen here, so neither has anything to act on. */}
+      {/* Marking every channel read needs that server's own client; its channel menu offers it. */}
       {held && menu ? (
         <>
           <div className="menu-scrim" onClick={() => dismissMenu()} />
@@ -606,16 +605,25 @@ export const Rail = ({
 
             <div className="menu-divider" />
 
-            <button
-              type="button"
-              className="menu-item"
-              onClick={() => {
-                setMenu(null);
-                onRemove(held.id);
-              }}
-            >
-              Remove from Shiver
-            </button>
+            {(
+              [
+                ['logout', 'Log out'],
+                ['forgetpw', 'Forget my password'],
+                ['remove', 'Remove from Shiver']
+              ] as const
+            ).map(([action, label]) => (
+              <button
+                key={action}
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  setMenu(null);
+                  onAsk(action, held.id);
+                }}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </>
       ) : null}

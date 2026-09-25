@@ -8,7 +8,7 @@
 
 import { SIDEBAR } from '../../shared/web/bridge/sharkord';
 import { installSessionShim } from '../../shared/web/session';
-import { goHome } from './rail';
+import { goHome } from './home';
 
 const POLL_MS = 2000;
 const DELAYS_MS = [0, 3000, 8000, 15000];
@@ -132,7 +132,7 @@ export function installAutoReconnect(session: string | null, serverName: string,
 
 const HOST_ID = 'shiver-reconnect';
 
-/** Covers the server's "connection lost" screen (below the rail, which stays usable). */
+/** Covers the server's "connection lost" screen (back and the swipe home still work). */
 function showReconnecting(serverName: string) {
   if (document.getElementById(HOST_ID)) return;
 

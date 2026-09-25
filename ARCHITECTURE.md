@@ -21,10 +21,9 @@ desktop/src/               desktop UI (React): shell, bell, popup — one bundle
 desktop/bridge/            desktop bridge (IIFE, include_str!'d as an init script)
 mobile/src-tauri/          Android core (crate `shiver-mobile`); capabilities/: event listen only, own page
 mobile/src/                Android UI (React)
-mobile/bridge/             mobile bridge + rail drawn inside server pages; document-start.ts runs first
+mobile/bridge/             mobile bridge (inside server pages; knows only that server); document-start.ts runs first
 mobile/plugins/            tauri-plugin-shiver-push (UnifiedPush), tauri-plugin-shiver-secrets (Keystore)
 plugin/                    Sharkord companion plugin (server/ + client/, plain JS, node tests)
-scripts/check-rails.py     checks mobile's two rails draw badges identically
 scripts/check-version.py   checks the workspace and tauri.conf.json versions agree
 .github/workflows/checks.yml  CI
 ```
@@ -33,8 +32,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 
 `cargo fmt --all --check` · `cargo clippy --workspace --all-targets -- -D warnings` ·
 `cargo test --workspace` · `bunx tsc --noEmit` in `desktop` and `mobile` · `bun test shared/web` ·
-`node --test test/*.test.js` in `plugin` · `python3 scripts/check-rails.py` ·
-`python3 scripts/check-version.py` ·
+`node --test test/*.test.js` in `plugin` · `python3 scripts/check-version.py` ·
 `bun run build:bridge` in each app (bridges must build before the Rust crates compile).
 
 ## Conventions
@@ -116,12 +114,11 @@ Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and
 | `model` | `ServerEntry` (+`icon_data`, `push_token`, `retired_push_endpoints`), `Settings`, `Registry` (`registry!` helpers, `entry_for_push_token`, `ensure_push_tokens`) |
 | `store` | as desktop |
 | `inbox` | core sockets for servers not on screen + secret storage: `Inbox` (tokens, problems, plugins, dms, unread, signed_out, baselines), `sync`, `restart`, `restore`, `remember_session`, `remember_password`, `forget_password`, `forget_everywhere`, `harvest_token`, `replace_mutes`, `watch_mutes`, `collect_dms`, `DmEntry`, `INBOX_EVENT` |
-| `webview` | the single webview: `Showing` (home, current server and whether it loaded, a stray page from history, pending DM user; `at_home`), `show_server`, `show_failed` (back to Shiver's page with `#failed=<id>`), `go_home`, `without_seed`, `install_bridge`/`PageContext`, `read_mutes`, rail polling (`__SHIVER_RAIL_STATE__` → `apply_creates/moves/order`), navigation guard (`is_allowed`, `navigation_allowed`, `is_home`, `landed_home`), `background_color`, `document_start` (bundle wrapped with the per-launch seed secret; `seed_key_for` derives each origin's key), `Openings` |
+| `webview` | the single webview: `Showing` (home, current server and whether it loaded, a stray page from history, pending DM user; `at_home`), `show_server`, `show_failed` (back to Shiver's page with `#failed=<id>`), `go_home`, `without_seed`, `install_bridge`/`PageContext` (that entry's own config only), `read_mutes` (the page's mutes and outside links), navigation guard (`is_allowed`, `navigation_allowed`, `is_home`, `landed_home`), `background_color`, `document_start` (bundle wrapped with the per-launch seed secret; `seed_key_for` derives each origin's key), `Openings` |
 | `push` | UnifiedPush per chosen server: `Push`, `start`, `register_wanted`, `set_wanted` (turning off retires the endpoint; the page clears it with the plugin), `unregister`, `migrate_tokens`, `PUSH_EVENT` |
 | `update` | notify-only: `start` (announces `shiver://update`), `check_for_update`, `update_available`, `skip_update`, `open_releases`, `open_repository` |
 
-Page hooks (mobile): `__SHIVER__` (config), `__SHIVER_UNREAD__`,
-`__SHIVER_MUTED__`, `__SHIVER_OPEN__`, `__SHIVER_RAIL_STATE__`, `__SHIVER_BACK__`,
+Page hooks (mobile): `__SHIVER__` (config), `__SHIVER_MUTED__`, `__SHIVER_OPEN__`, `__SHIVER_BACK__`,
 `__SHIVER_MOBILE_INSTALLED__`, `__SHIVER_SESSION_SHIM__`.
 
 Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unregister`, `on_event`,
@@ -138,7 +135,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 | `theme.ts` | `applyTheme` (`--shiver-*` vars on Shiver's own pages) |
 | `session.ts` | `installSessionShim`, `takeSeedFromLocation`, `AUTO_LOGIN*` (session kept off disk) |
 | `bridge/dom.ts` | `ensureStyle`, `defineHook`, `onDomSettled`, `isTopFrame`, `whenDocumentReady`, `openMenuOnScreen`, `addedMenu`, `installExternalLinks` |
-| `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `addMuteItem` |
+| `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `addMuteItem`, `addMenuItem` |
 | `bridge/plugin.ts` | `callPlugin`, `waitForPlugin`, `syncMutesWithPlugin`, `pushMutesToPlugin`, `storeReadFloor` |
 | `bridge/features.ts` | `installSoundVolume`, `installAttachmentCards`, `installVoiceColors`, `installRoleColors`, `installStatusButton` |
 | `bridge/theme.ts` | `ShiverTheme`, `applyPageTheme` |
@@ -152,13 +149,13 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
   `VoiceTile`, `UpdateNotice`, `icons`.
 - **desktop/bridge/index.ts**: one file: session seeding, DM reading/opening, voice read/control/lock,
   channel menu mute, notification capture, drain queue.
-- **mobile/src**: `App.tsx` (screens; `boot` opens last server; `__SHIVER_BACK__` reopens it), `api.ts`, `types.ts`, `components/`:
-  `Boot` (confirms rail actions), `Rail` (`RailRef`, `iconOf`), `ServerList`, `AddServer`, `SignInServer`,
+- **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits on the rail after `#home`; `__SHIVER_BACK__` reopens it), `api.ts`, `types.ts`, `components/`:
+  `Boot` (confirms rail menu actions, the way back after `#home`), `Rail` (`RailRef`, `iconOf`), `ServerList`, `AddServer`, `SignInServer`,
   `SettingsScreen`, `BackgroundNotifications`, `Sessions`, `DirectMessages`, `UpdateNotice`, `icons`.
-- **mobile/bridge**: `index.ts` (install, `seedSession`), `rail.ts` (`mountRail`,
-  `openDrawer`, `installGestures`, `goHome`), `touch.ts` (touch adaptations, channel menu, `openConversation`),
-  `reconnect.ts` (`installAutoReconnect`), `document-start.ts` (seed, `__SHIVER_OPEN__`, theme), `types.ts` (`ShiverConfig`, `RailEntry`,
-  `RailFolder`, `RailMove`, `RailCreate`).
+- **mobile/bridge**: `index.ts` (install, `seedSession`), `home.ts` (`setHome`, `goHome`, `installHomeSwipe`: back and a
+  swipe past the drawer leave for Shiver's page), `touch.ts` (touch adaptations, channel menu with mark all read,
+  `drawerIsOpen`, `openConversation`), `reconnect.ts` (`installAutoReconnect`), `document-start.ts` (seed,
+  `__SHIVER_OPEN__`, theme), `types.ts` (`ShiverConfig`).
 
 ## plugin (Sharkord companion)
 

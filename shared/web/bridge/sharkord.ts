@@ -181,24 +181,29 @@ export function paintMuted(muted: ReadonlySet<number>) {
 
 /**
  * Adds "Mute/Unmute in Shiver" to one of Sharkord's own (Radix) menus, styled like its siblings.
- * Replaces an item left from an earlier open, since Radix reuses its menu.
+ * Replaces Shiver's items left from an earlier open, since Radix reuses its menu.
  */
 export function addMuteItem(menu: HTMLElement, isMuted: boolean, toggle: () => void) {
-  menu.querySelector(`.${SHIVER_MENU_ITEM}`)?.remove();
+  for (const stale of menu.querySelectorAll(`.${SHIVER_MENU_ITEM}`)) stale.remove();
 
-  const sibling = menu.querySelector<HTMLElement>('[role="menuitem"]');
+  addMenuItem(menu, isMuted ? 'Unmute in Shiver' : 'Mute in Shiver', toggle);
+}
+
+/** Appends one of Shiver's items to a Sharkord menu, styled as Sharkord's own. */
+export function addMenuItem(menu: HTMLElement, label: string, run: () => void) {
+  const sibling = menu.querySelector<HTMLElement>(`[role="menuitem"]:not(.${SHIVER_MENU_ITEM})`);
   const item = document.createElement('div');
 
   item.setAttribute('role', 'menuitem');
   item.tabIndex = -1;
   item.className = `${sibling?.className ?? ''} ${SHIVER_MENU_ITEM}`.trim();
-  item.textContent = isMuted ? 'Unmute in Shiver' : 'Mute in Shiver';
+  item.textContent = label;
 
   item.addEventListener('mouseenter', () => item.focus());
   item.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    toggle();
+    run();
     // lets Sharkord close its menu as it would for any item
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   });

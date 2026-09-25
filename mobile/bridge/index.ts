@@ -1,9 +1,8 @@
 /**
  * The Shiver bridge (mobile): evaluated in a Sharkord page once it has loaded. It is handed this
- * entry's config plus the least that draws a rail (names, inlined logos, opaque ids, counts; see
- * `rail_payload` in `webview.rs`) and never another server's address. The page has no IPC: the
- * rail navigates to Shiver's own page with a fragment, and the core polls the hooks in `types.ts`.
- * The session was served from memory since document start (`document-start.ts`).
+ * entry's own config and nothing about the user's other servers. The page has no IPC: back and a
+ * swipe past the drawer navigate to Shiver's own page, where the rail is, and the core polls the
+ * hooks in `types.ts`. The session was served from memory since document start (`document-start.ts`).
  */
 
 import { defineHook, isTopFrame, onDomSettled } from '../../shared/web/bridge/dom';
@@ -12,7 +11,7 @@ import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, wai
 import { installMuteStyles, paintMuted } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme } from '../../shared/web/bridge/theme';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
-import { installGestures, mountRail } from './rail';
+import { goHome, installHomeSwipe, setHome } from './home';
 import { installAutoReconnect } from './reconnect';
 import {
   closeChannelMenu,
@@ -31,6 +30,7 @@ function install(shiver: ShiverConfig) {
   defineHook('__SHIVER_MOBILE_INSTALLED__', true);
 
   seedSession(shiver.session);
+  setHome(shiver.home);
 
   applyPageTheme(shiver.theme);
   installMuteStyles();
@@ -85,10 +85,8 @@ function install(shiver: ShiverConfig) {
   // arriving at a server is what moves its shared unread floor
   if (shiver.readFloor) void storeReadFloor(shiver.readFloor);
 
-  const rail = mountRail(shiver);
-
-  defineHook('__SHIVER_BACK__', () => closeChannelMenu() || rail.back());
-  installGestures(rail);
+  defineHook('__SHIVER_BACK__', () => closeChannelMenu() || goHome());
+  installHomeSwipe();
 
   if (shiver.openDmUser) openConversation(shiver.openDmUser);
 }

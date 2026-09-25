@@ -1,11 +1,30 @@
 /** Adapting Sharkord's desktop-shaped client to a finger. */
 
 import { addedMenu, ensureStyle, openMenuOnScreen } from '../../shared/web/bridge/dom';
-import { addMuteItem, CHANNEL_ITEM, channelOfRow, DM_ITEM, DM_TOGGLE, MESSAGE_ITEM, type SharkordChannel } from '../../shared/web/bridge/sharkord';
-import { CLICK_GRACE_MS, HOLD_MS, HOLD_SLOP, openDrawer } from './rail';
+import {
+  addMenuItem,
+  addMuteItem,
+  CHANNEL_ITEM,
+  channelOfRow,
+  DM_ITEM,
+  DM_TOGGLE,
+  markAllChannelsRead,
+  MESSAGE_ITEM,
+  SERVER_VIEW,
+  SIDEBAR,
+  type SharkordChannel
+} from '../../shared/web/bridge/sharkord';
 
 type Mutes = { has: (channelId: number) => boolean; toggle: (channelId: number) => void };
 
+/** a press held this long is a hold */
+const HOLD_MS = 500;
+/** how far a finger may drift and still be holding still */
+const HOLD_SLOP = 10;
+/** how long after a hold its own click may still arrive and must be ignored */
+const CLICK_GRACE_MS = 700;
+/** Tailwind's `md`, where Sharkord stops hiding its sidebar */
+const WIDE_LAYOUT = 768;
 const MESSAGE_ACTIONS_CLASS = 'shiver-message-actions';
 /** how long after a press Sharkord's own menu (it has one for channel managers) may still arrive */
 const SHARKORD_MENU_GRACE_MS = 450;
@@ -63,8 +82,8 @@ function clearMessageActions() {
 
 /**
  * Long presses on channels and messages. On a message it reveals Sharkord's toolbar. On a channel
- * it adds "Mute in Shiver" to Sharkord's own menu when one appears (for channel managers), or
- * after a grace opens Shiver's own mute menu. The press's own click is swallowed.
+ * it adds Shiver's items (mute, mark all read) to Sharkord's own menu when one appears (for channel
+ * managers), or after a grace opens Shiver's own menu. The press's own click is swallowed.
  */
 export function installChannelMenu(mutes: Mutes) {
   let timer = 0;
@@ -93,7 +112,10 @@ export function installChannelMenu(mutes: Mutes) {
     pressedAt = 0;
   };
 
-  const join = (menu: HTMLElement, channel: SharkordChannel) => addMuteItem(menu, mutes.has(channel.id), () => mutes.toggle(channel.id));
+  const join = (menu: HTMLElement, channel: SharkordChannel) => {
+    addMuteItem(menu, mutes.has(channel.id), () => mutes.toggle(channel.id));
+    addMenuItem(menu, 'Mark all as read', markAllChannelsRead);
+  };
 
   new MutationObserver((records) => {
     if (!pressedRow || Date.now() - pressedAt > SHARKORD_MENU_WINDOW_MS) return;
@@ -203,7 +225,7 @@ export function installChannelMenu(mutes: Mutes) {
   );
 }
 
-/** Shiver's one-item mute menu, in a closed shadow root over a sheet that closes it. */
+/** Shiver's channel menu, in a closed shadow root over a sheet that closes it. */
 function openChannelMenu(channel: SharkordChannel, x: number, y: number, mutes: Mutes) {
   closeChannelMenu();
 
@@ -211,7 +233,6 @@ function openChannelMenu(channel: SharkordChannel, x: number, y: number, mutes: 
   const root = host.attachShadow({ mode: 'closed' });
   const sheet = document.createElement('div');
   const menu = document.createElement('div');
-  const item = document.createElement('button');
   const openedAt = Date.now();
 
   host.id = 'shiver-channel-menu';
@@ -226,18 +247,27 @@ function openChannelMenu(channel: SharkordChannel, x: number, y: number, mutes: 
 .menu-item:active { background: var(--shiver-surface-hover, #333333); }
 </style>`;
 
-  item.className = 'menu-item';
-  item.type = 'button';
-  item.textContent = `${mutes.has(channel.id) ? 'Unmute' : 'Mute'} #${channel.name}`;
-  item.addEventListener('click', () => {
-    mutes.toggle(channel.id);
-    closeChannelMenu();
-  });
+  const items = [
+    [`${mutes.has(channel.id) ? 'Unmute' : 'Mute'} #${channel.name}`, () => mutes.toggle(channel.id)],
+    ['Mark all as read', markAllChannelsRead]
+  ] as const;
+
+  for (const [label, run] of items) {
+    const item = document.createElement('button');
+
+    item.className = 'menu-item';
+    item.type = 'button';
+    item.textContent = label;
+    item.addEventListener('click', () => {
+      run();
+      closeChannelMenu();
+    });
+    menu.append(item);
+  }
 
   menu.className = 'menu';
   menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - 220))}px`;
-  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - 80))}px`;
-  menu.append(item);
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - 124))}px`;
 
   // the finger that opened it lifts over the sheet, so that first tap is ignored
   sheet.className = 'sheet';
@@ -380,6 +410,34 @@ function whenPresent(selector: string, use: (element: HTMLElement) => void) {
 
   observer.observe(document.body, { childList: true, subtree: true });
   window.setTimeout(() => observer.disconnect(), APPEAR_TIMEOUT_MS);
+}
+
+/** Whether Sharkord's drawer is on screen (always, above `md`). */
+export function drawerIsOpen() {
+  const sidebar = document.querySelector(SIDEBAR);
+
+  return sidebar instanceof HTMLElement ? sidebar.getBoundingClientRect().right > 1 : window.innerWidth >= WIDE_LAYOUT;
+}
+
+/** Opens Sharkord's drawer by performing the swipe it listens for (it has no API). */
+function openDrawer() {
+  if (drawerIsOpen()) return;
+
+  const view = document.querySelector(SERVER_VIEW) ?? document.body;
+
+  try {
+    const at = (clientX: number): TouchEventInit => {
+      const touch = new Touch({ identifier: 1, target: view, clientX, clientY: 300 });
+
+      return { touches: [touch], changedTouches: [touch], bubbles: true };
+    };
+
+    view.dispatchEvent(new TouchEvent('touchstart', at(8)));
+    view.dispatchEvent(new TouchEvent('touchmove', at(200)));
+    view.dispatchEvent(new TouchEvent('touchend', { ...at(200), touches: [] }));
+  } catch {
+    // no Touch constructor
+  }
 }
 
 /** Opens the drawer and Sharkord's DM list, once the client has rendered its toggle. */
