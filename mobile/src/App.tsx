@@ -97,6 +97,8 @@ export const App = () => {
   const [boot, setBoot] = useState<BootState>({ kind: 'waiting' });
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
+  /** the page just left, frozen, shown behind the rail until a server is opened */
+  const [still, setStill] = useState<string | null>(null);
 
   const [icons, setIcons] = useState<Record<string, string>>({});
   const loadIcons = useCallback(() => void api.serverIcons().then(setIcons, () => undefined), []);
@@ -136,6 +138,7 @@ export const App = () => {
   const connect = useCallback(async (server: ServerEntry, dmUser?: string) => {
     setScreen('boot');
     setBoot({ kind: 'connecting', server });
+    setStill(null);
 
     try {
       await api.probeServer(server.origin);
@@ -216,8 +219,12 @@ export const App = () => {
       if (intent?.kind === 'home') {
         const left = lastUsed(next);
 
-        if (left) setBoot({ kind: 'home', server: left });
-        else await resume(next);
+        if (left) {
+          setBoot({ kind: 'home', server: left });
+          void api.serverStill(left.id).then((image) => image && setStill(image), () => undefined);
+        } else {
+          await resume(next);
+        }
 
         return;
       }
@@ -337,8 +344,12 @@ export const App = () => {
 
   const handleSettings = useCallback((settings: Settings) => void change(() => api.updateSettings(settings)), [change]);
 
+  const showStill = still && screen === 'boot' && boot.kind === 'home';
+
   return (
     <div className="app">
+      {showStill ? <img className="still" src={still} alt="" aria-hidden="true" /> : null}
+
       <Rail
         servers={servers}
         activeId={null}

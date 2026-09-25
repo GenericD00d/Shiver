@@ -13,6 +13,7 @@ import {
   addMuteItem,
   CHANNEL_ITEM,
   channelOfRow,
+  closeDialog,
   CONNECT_FORM,
   DM_ITEM,
   DM_TOGGLE,
@@ -112,6 +113,18 @@ declare global {
 }
 
 const OPEN_DM_TIMEOUT_MS = 25_000;
+/** Escapes one request may press, so a dialog that ignores Escape cannot hold it up */
+const MAX_ESCAPES = 3;
+
+/**
+ * A retry loop's first step: closes an open dialog, since one (Sharkord's settings) would stay over
+ * the conversation or channel being opened. True while it closed one.
+ */
+function dialogCloser() {
+  let escapes = 0;
+
+  return () => escapes < MAX_ESCAPES && closeDialog() && ++escapes > 0;
+}
 
 // taken before the page's scripts run, so a page cannot fake fullscreen to hide Shiver's chrome
 const nativeFullscreenElement = Object.getOwnPropertyDescriptor(Document.prototype, 'fullscreenElement')?.get;
@@ -529,8 +542,11 @@ function openDirectMessage(name: string) {
 
   let toggled = false;
   const deadline = Date.now() + OPEN_DM_TIMEOUT_MS;
+  const closing = dialogCloser();
 
   const attempt = () => {
+    if (closing()) return false;
+
     const rows = [...document.querySelectorAll<HTMLElement>(DM_ITEM)];
 
     if (rows.length === 0) {
@@ -648,8 +664,11 @@ function runVoiceAction(action: VoiceAction) {
 /** Selects a channel (for a clicked notification) once the client can, until a deadline. */
 function selectChannelWhenReady(channelId: number) {
   const deadline = Date.now() + OPEN_DM_TIMEOUT_MS;
+  const closing = dialogCloser();
 
   const attempt = () => {
+    if (closing()) return false;
+
     const store = sharkordStore();
     const selectChannel = store?.actions?.selectChannel;
 

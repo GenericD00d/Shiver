@@ -24,6 +24,10 @@ Needs Sharkord **0.0.25 or newer** (plugin SDK 2). A server on 0.0.24 refuses to
 
 That is the whole install. Nothing else about the server changes.
 
+**Updating:** replace the folder and restart the server. Re-enabling the plugin without a restart
+can run the new `server/index.js` against the other files as the server first loaded them, and it
+then fails to load (`take is not a function`, for one).
+
 ## What it stores
 
 One row per user, in Sharkord's own per-plugin storage (the `plugin_user_data` table):

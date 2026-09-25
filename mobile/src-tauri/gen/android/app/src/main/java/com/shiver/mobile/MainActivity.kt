@@ -3,10 +3,17 @@ package com.shiver.mobile
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
+import android.util.Base64
+import android.view.MotionEvent
+import android.view.PixelCopy
 import android.view.View
 import android.webkit.ConsoleMessage
 import android.webkit.GeolocationPermissions
@@ -19,14 +26,21 @@ import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.Keep
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import java.io.ByteArrayOutputStream
+import kotlin.math.abs
 
 class MainActivity : TauriActivity() {
   /** Shiver answers back presses itself (below) rather than walking the webview's history. */
   override val handleBackNavigation = false
 
   private var webView: WebView? = null
+
+  /** A still of the server page last left, and that server's origin, until Shiver's page takes it. */
+  private var still: Pair<String, Bitmap>? = null
+  private var touchStart: Pair<Float, Float>? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     // light status and navigation icons, over Shiver's dark background
@@ -68,6 +82,8 @@ class MainActivity : TauriActivity() {
           val view = this@MainActivity.webView ?: return leave()
           val serverPage = !isShiverPage(view.url)
 
+          if (serverPage) keepStill()
+
           // A server page answers the press (closing a menu, or leaving for Shiver's rail), but a
           // page could answer "true" forever, so a second press soon after a swallowed one always goes back.
           if (serverPage && SystemClock.uptimeMillis() - swallowedAt < ESCAPE_MS) {
@@ -104,6 +120,53 @@ class MainActivity : TauriActivity() {
     )
   }
 
+  /** A swipe right may be the one leaving a server page for the rail (the page decides), so it is photographed as it ends. */
+  override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+    when (event.actionMasked) {
+      MotionEvent.ACTION_DOWN -> touchStart = event.x to event.y
+      MotionEvent.ACTION_UP -> touchStart?.let { (x, y) ->
+        val dx = event.x - x
+
+        if (dx >= SWIPE_DP * resources.displayMetrics.density && dx > abs(event.y - y)) keepStill()
+      }
+    }
+
+    return super.dispatchTouchEvent(event)
+  }
+
+  /**
+   * Copies what a server page shows, before the page can change, at a third of its size. It is
+   * kept in memory only, for Shiver's page to show behind the rail (`takeStill`).
+   */
+  private fun keepStill() {
+    val view = webView ?: return
+    val origin = view.url?.takeUnless(::isShiverPage)?.let { originOf(Uri.parse(it)) } ?: return
+
+    if (view.width < SCALE || view.height < SCALE) return
+
+    val at = IntArray(2).also(view::getLocationInWindow)
+    val area = Rect(at[0], at[1], at[0] + view.width, at[1] + view.height)
+    val bitmap = Bitmap.createBitmap(view.width / SCALE, view.height / SCALE, Bitmap.Config.ARGB_8888)
+
+    PixelCopy.request(window, area, bitmap, { result ->
+      if (result == PixelCopy.SUCCESS) still = origin to bitmap
+    }, Handler(Looper.getMainLooper()))
+  }
+
+  /** The still of `origin`'s page as a `data:` uri, given once; a still of any other page is dropped. Called from Rust. */
+  @Keep
+  fun takeStill(origin: String): String? {
+    val (taken, bitmap) = still ?: return null
+
+    still = null
+
+    if (taken != origin) return null
+
+    val jpeg = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it) }
+
+    return "data:image/jpeg;base64," + Base64.encodeToString(jpeg.toByteArray(), Base64.NO_WRAP)
+  }
+
   /** wry sets its chrome client after this hook, in the same turn of the UI thread; it is wrapped on the next. */
   private fun gateMedia(webView: WebView) {
     webView.post {
@@ -115,6 +178,10 @@ class MainActivity : TauriActivity() {
 
   private companion object {
     const val ESCAPE_MS = 1000L
+    /** the bridge's own threshold for a swipe home, in dp (CSS px) */
+    const val SWIPE_DP = 50
+    const val SCALE = 3
+    const val JPEG_QUALITY = 70
   }
 }
 
