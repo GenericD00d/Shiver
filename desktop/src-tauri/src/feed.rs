@@ -10,7 +10,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use shiver_core::LockExt;
+use shiver_core::{text::clamp, LockExt};
 
 use crate::voice::VoiceSnapshot;
 
@@ -27,14 +27,6 @@ const MAX_DMS: usize = 500;
 /// Two identical notifications from one server this close together are one message arriving by two
 /// routes (socket and page). Short, so someone repeating themselves later still gets two lines.
 const DUPLICATE_WINDOW_MS: u64 = 30 * 1000;
-
-/// Shortens by characters (never splitting a codepoint), marking the cut with an ellipsis.
-fn clamp(text: String, limit: usize) -> String {
-    match text.char_indices().nth(limit) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-        None => text,
-    }
-}
 
 /// Milliseconds from a page, where numbers are doubles (possibly in exponent form).
 pub fn optional_millis<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
@@ -84,6 +76,14 @@ pub struct Notification {
     /// set on Shiver's own "new version" entry, which the popup draws with a button
     #[serde(default)]
     pub update: Option<String>,
+}
+
+/// What the bell needs: the unread count, and the newest entry (it pings for one newer than the last
+/// it saw). Sent with every feed change.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct FeedSummary {
+    pub unread: usize,
+    pub newest: Option<u64>,
 }
 
 /// A DM conversation as reported by one server.
@@ -334,12 +334,20 @@ impl Feed {
     }
 
     pub fn unread_count(&self) -> usize {
-        self.0
-            .locked()
-            .notifications
-            .iter()
-            .filter(|entry| !entry.read)
-            .count()
+        self.summary().unread
+    }
+
+    pub fn summary(&self) -> FeedSummary {
+        let state = self.0.locked();
+
+        FeedSummary {
+            unread: state
+                .notifications
+                .iter()
+                .filter(|entry| !entry.read)
+                .count(),
+            newest: state.notifications.front().map(|entry| entry.id),
+        }
     }
 
     /// Unread per entry; entries with none are absent.

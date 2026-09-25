@@ -99,8 +99,14 @@ test('other keys are untouched and a second install only reseeds', async () => {
 test('the seed is taken out of the fragment, keeping the rest', async () => {
   const { takeSeedFromLocation } = await load();
 
-  (g.window as any).location.hash = '#oidc=1&shiver-seed=abc.def';
-  expect(takeSeedFromLocation()).toBe('abc.def');
+  (g.window as any).location.hash = '#oidc=1&shiver-seed=k.abc.def';
+  expect(takeSeedFromLocation()).toEqual(['k', 'abc.def']);
   expect((g.window as any).location.hash).toBe('#oidc=1');
   expect(takeSeedFromLocation()).toBe(null);
+
+  for (const hash of ['#shiver-seed=abc', '#shiver-seed=.abc', '#shiver-seed=k.']) {
+    (g.window as any).location.hash = hash;
+    expect(takeSeedFromLocation()).toBe(null);
+    expect((g.window as any).location.hash).toBe('');
+  }
 });

@@ -2,7 +2,10 @@
 
 use tauri::{AppHandle, Manager};
 
-use crate::{error::Error, model::Registry};
+use crate::{
+    error::{Core, Error},
+    model::Registry,
+};
 
 pub type Store = shiver_core::Store<Registry>;
 
@@ -22,7 +25,7 @@ pub fn load(app: &AppHandle) -> Result<Store, Error> {
     let dir = app
         .path()
         .app_config_dir()
-        .map_err(|error| Error::Storage(error.to_string()))?;
+        .map_err(|error| Core::Storage(format!("Shiver's settings folder is unknown ({error})")))?;
 
     Ok(Store::load(&dir)?)
 }

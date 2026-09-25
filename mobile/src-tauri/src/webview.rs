@@ -2,26 +2,30 @@
 //!
 //! Android gives a window a single webview, so Shiver is a switcher: the webview shows either
 //! Shiver's own pages or one server's client, and opening a server is a navigation. The server's
-//! session travels in a `#shiver-seed=` fragment that the document-start script takes out of the
-//! URL before the page's scripts run and serves from memory (see `shared/web/session.ts`), so it
-//! is never written to the webview's storage. The bridge runs after load; anything it reads back
-//! out of a page is a request, never trusted state.
+//! session travels in a `#shiver-seed=<key>.<token>` fragment that the document-start script takes
+//! out of the URL before the page's scripts run and serves from memory (see `shared/web/session.ts`),
+//! so it is never written to the webview's storage. The key is SHA-256 of a per-launch secret, which
+//! lives only in that script's closure, and the page's origin, so one server's key is no use on
+//! another. The bridge runs after load; anything it reads back out of a page is a request, never
+//! trusted state.
 
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use shiver_core::{rail::RailRef, LockExt};
-use tauri::{window::Color, AppHandle, Manager, Url, WebviewWindow};
-use tauri_plugin_shiver_secrets::SecretsExt;
+use sha2::{Digest, Sha256};
+use shiver_core::LockExt;
+use tauri::{window::Color, AppHandle, Emitter, Manager, Url, WebviewWindow};
 
 pub use shiver_core::limit::Openings;
 
 use crate::{
-    error::{Error, Result},
-    inbox::{self, Inbox},
-    model::{is_same_origin, Folder, ServerEntry, Settings, MAX_SOUND_VOLUME},
-    store::{RegistryStore, Store},
+    error::{Core, Error, Result},
+    inbox,
+    model::{is_same_origin, ServerEntry, Settings, MAX_SOUND_VOLUME},
 };
 
 pub const MAIN_WINDOW: &str = "main";
@@ -30,15 +34,45 @@ const BRIDGE_SOURCE: &str = include_str!("../generated/bridge.js");
 
 /// Runs at document start in every page: takes the seeded session out of the URL and applies
 /// Sharkord's light/dark class before first paint. Built from `mobile/bridge/document-start.ts`.
-pub const DOCUMENT_START: &str = include_str!("../generated/document-start.js");
+const DOCUMENT_START: &str = include_str!("../generated/document-start.js");
 
 /// The fragment parameter `DOCUMENT_START` reads the session from (`SEED_PARAM` in shared/web).
 const SEED_PARAM: &str = "shiver-seed";
 
-/// Bounds on what one page's rail may ask of the registry per poll.
-const MAX_CREATES_PER_POLL: usize = 5;
-const MAX_FOLDER_ID: usize = 64;
-const DEFAULT_FOLDER_NAME: &str = "Folder";
+fn seed_key() -> &'static str {
+    static KEY: OnceLock<String> = OnceLock::new();
+
+    KEY.get_or_init(|| uuid::Uuid::new_v4().simple().to_string())
+}
+
+fn seed_key_for(secret: &str, url: &Url) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(format!("{secret}{}", url.origin().ascii_serialization()))
+    )
+}
+
+pub fn document_start() -> String {
+    format!(
+        "(function(SHIVER_SEED_KEY){{{DOCUMENT_START}\n}})(\"{}\");",
+        seed_key()
+    )
+}
+
+pub fn without_seed(url: &Url) -> Url {
+    let mut url = url.clone();
+
+    if url
+        .fragment()
+        .is_some_and(|fragment| fragment.contains(SEED_PARAM))
+    {
+        url.set_fragment(None);
+    }
+
+    url
+}
+
+const MAX_PAGE_STATE_BYTES: usize = 64 * 1024;
 
 #[derive(Default)]
 struct ShowingState {
@@ -46,8 +80,9 @@ struct ShowingState {
     home: Option<String>,
     /// the entry on screen, if any
     server: Option<String>,
-    /// open Sharkord's DM list on arrival (consumed once)
-    pending_dms: bool,
+    loaded: bool,
+    /// a page Shiver did not open is loading (a step through history), on its way home
+    stray: bool,
     /// open the conversation with this user on arrival (consumed once)
     pending_dm_user: Option<String>,
 }
@@ -66,19 +101,36 @@ impl Showing {
     }
 
     pub fn set_server(&self, entry_id: Option<String>) {
-        self.0.locked().server = entry_id;
+        let mut state = self.0.locked();
+
+        state.server = entry_id;
+        state.loaded = false;
+        state.stray = false;
+    }
+
+    pub fn set_stray(&self) {
+        self.0.locked().stray = true;
+    }
+
+    /// Whether Shiver's own page is what the webview shows (or is loading).
+    pub fn at_home(&self) -> bool {
+        let state = self.0.locked();
+
+        state.server.is_none() && !state.stray
+    }
+
+    pub fn set_loaded(&self) {
+        self.0.locked().loaded = true;
+    }
+
+    pub fn loading(&self) -> bool {
+        let state = self.0.locked();
+
+        state.server.is_some() && !state.loaded
     }
 
     pub fn server(&self) -> Option<String> {
         self.0.locked().server.clone()
-    }
-
-    pub fn set_pending_dms(&self, pending: bool) {
-        self.0.locked().pending_dms = pending;
-    }
-
-    pub fn take_pending_dms(&self) -> bool {
-        std::mem::take(&mut self.0.locked().pending_dms)
     }
 
     pub fn set_pending_dm_user(&self, user: Option<String>) {
@@ -90,80 +142,18 @@ impl Showing {
     }
 }
 
+/// Tells Shiver's own page something, but only while it is on screen: the one webview keeps the
+/// page's listeners across navigations, so an event sent while a server's page is up would be
+/// evaluated in that page. Shiver's page re-reads everything when it next loads.
+pub fn emit_home(app: &AppHandle, event: &str, payload: impl Serialize + Clone) {
+    if app.state::<Showing>().at_home() {
+        let _ = app.emit(event, payload);
+    }
+}
+
 pub fn main_window(app: &AppHandle) -> Result<WebviewWindow> {
     app.get_webview_window(MAIN_WINDOW)
         .ok_or_else(|| Error::Webview("The Shiver window is not open".into()))
-}
-
-/// Asks the page being left to drop a session Shiver seeded into it (a no-op when the session shim
-/// kept it in memory, or when the user chose to be remembered by the server). Queued before the
-/// navigation, so it runs first.
-fn forget_page_session(window: &WebviewWindow) {
-    let _ = window.eval("window.__SHIVER_FORGET_SESSION__ && window.__SHIVER_FORGET_SESSION__()");
-}
-
-/// Collects the user's Sharkord settings, drafts and Shiver's own keys from the page being left
-/// (excluding the session keys; `null` over 64 KB), stores them encrypted, and only then wipes the
-/// origin's storage. A bare expression, because `eval_with_callback` returns nothing for an IIFE
-/// containing `try`.
-const CARRY_SCRIPT: &str = concat!(
-    "JSON.stringify((function(){var out={},total=0;",
-    "var skip=['sharkord-identity','sharkord-auto-login','sharkord-auto-login-token'];",
-    "for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);",
-    "if(!k||skip.indexOf(k)>=0)continue;",
-    "if(k.indexOf('sharkord-')!==0&&k.indexOf('shiver-')!==0&&k!=='vite-ui-theme')continue;",
-    "var v=localStorage.getItem(k);if(v===null)continue;",
-    "total+=k.length+v.length;if(total>65536)return null;out[k]=v}",
-    "return out})())"
-);
-
-/// Carries and wipes the storage of the server being left. Skipped when the next page shares its
-/// origin (two entries can share a server). A failed read wipes nothing, so drafts are never lost.
-fn leaving(app: &AppHandle, window: &WebviewWindow, next_origin: Option<&str>) {
-    let Some(entry_id) = app.state::<Showing>().server() else {
-        return;
-    };
-
-    let Some(origin) = app
-        .state::<Store>()
-        .registry()
-        .server(&entry_id)
-        .map(|server| server.origin.clone())
-    else {
-        return;
-    };
-
-    if next_origin == Some(origin.as_str()) {
-        return;
-    }
-
-    let handle = app.clone();
-
-    let _ = window.eval_with_callback(CARRY_SCRIPT, move |raw| {
-        let Ok(Value::String(carried)) = serde_json::from_str::<Value>(&raw) else {
-            return;
-        };
-
-        let (app, entry_id, origin) = (handle.clone(), entry_id.clone(), origin.clone());
-
-        // off the callback thread: a blocking JVM call from an eval callback deadlocks the app
-        std::thread::spawn(move || {
-            if let Err(error) = app
-                .shiver_secrets()
-                .set(&inbox::carried_store_key(&entry_id), &carried)
-            {
-                eprintln!("[shiver] could not keep {entry_id}'s drafts across the wipe: {error}");
-
-                return;
-            }
-
-            app.state::<Inbox>().remember_carried(&entry_id, &carried);
-
-            if let Err(error) = app.shiver_secrets().wipe_origin(&origin) {
-                eprintln!("[shiver] could not clear {origin} from the webview: {error}");
-            }
-        });
-    });
 }
 
 /// Navigates to a server's client, seeding `token` through the URL fragment when there is one.
@@ -171,41 +161,60 @@ pub fn show_server(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) ->
     let window = main_window(app)?;
 
     let mut url = Url::parse(&entry.origin)
-        .map_err(|_| Error::InvalidOrigin(format!("'{}' is not a valid address", entry.origin)))?;
+        .map_err(|_| Core::InvalidOrigin(format!("'{}' is not a valid address", entry.origin)))?;
 
     if let Some(token) = token.filter(|token| !token.is_empty()) {
         let encoded: String = url::form_urlencoded::byte_serialize(token.as_bytes()).collect();
 
-        url.set_fragment(Some(&format!("{SEED_PARAM}={encoded}")));
+        let key = seed_key_for(seed_key(), &url);
+
+        url.set_fragment(Some(&format!("{SEED_PARAM}={key}.{encoded}")));
     }
 
-    forget_page_session(&window);
-    leaving(app, &window, Some(&entry.origin));
     app.state::<Showing>().set_server(Some(entry.id.clone()));
 
     Ok(window.navigate(url)?)
 }
 
-/// Everything one server page is handed when the bridge is installed in it.
+/// Returns to Shiver's page saying the server on screen could not be opened.
+pub fn show_failed(app: &AppHandle) {
+    if let Some(id) = app.state::<Showing>().server() {
+        go_home(app, Some(&format!("failed={id}")));
+    }
+}
+
+/// Sends the webview to Shiver's own page, with a fragment for it to act on.
+pub fn go_home(app: &AppHandle, fragment: Option<&str>) {
+    let Some(Ok(mut url)) = app.state::<Showing>().home().map(|home| Url::parse(&home)) else {
+        return;
+    };
+
+    url.set_fragment(fragment);
+
+    let app = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        if let Ok(window) = main_window(&app) {
+            let _ = window.navigate(url);
+        }
+    });
+}
+
+/// Everything one server page is handed when the bridge is installed in it: its own entry's, and
+/// nothing about the user's other servers.
 pub struct PageContext<'a> {
     pub entry: &'a ServerEntry,
     pub settings: &'a Settings,
     /// channel ids muted on this entry
     pub muted: &'a [i64],
-    /// every server, reduced by `rail_payload` before it reaches the page
-    pub servers: &'a [ServerEntry],
-    pub unread: &'a HashMap<String, u32>,
-    /// entries waiting for the user to sign in again
-    pub signed_out: &'a [String],
     /// this entry's own session, never another's (used by the bridge to reconnect)
     pub session: Option<&'a str>,
-    /// what was kept from this entry's storage when it was last wiped
-    pub carried: Option<&'a str>,
     /// the unread floor to share with the user's other devices through the companion plugin
     pub read_floor: Option<&'a HashMap<i64, u32>>,
-    pub folders: &'a [Folder],
     /// this entry's own push endpoint, for the plugin's relay
     pub push_endpoint: Option<&'a str>,
+    /// endpoints the plugin should forget
+    pub retired_push_endpoints: &'a [String],
 }
 
 /// Evaluates the bridge in a server page that has just finished loading.
@@ -234,76 +243,24 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
         }),
         // the page has no IPC, so going back is a navigation to here
         "home": home,
-        "rail": rail_payload(page.servers, page.unread, page.signed_out),
-        "folders": folder_payload(page.folders),
         "pushEndpoint": page.push_endpoint,
-        "openDms": showing.take_pending_dms(),
+        "retiredPushEndpoints": page.retired_push_endpoints,
         "openDmUser": showing.take_pending_dm_user(),
         "session": page.session,
-        "carried": page.carried,
     });
 
     let _ = window.eval(format!("window.__SHIVER__ = {config};\n{BRIDGE_SOURCE}"));
 }
 
-/// The rail as a server's page may see it: display names, inlined logos, opaque entry ids,
-/// positions, folder membership, unread counts and signed-out flags. Never an origin, icon URL,
-/// account label or identity; tapping a tile navigates to Shiver's page with only the id.
-fn rail_payload(
-    servers: &[ServerEntry],
-    unread: &HashMap<String, u32>,
-    signed_out: &[String],
-) -> Value {
-    let mut ordered: Vec<&ServerEntry> = servers.iter().collect();
-
-    ordered.sort_by_key(|server| server.position);
-
-    ordered
-        .into_iter()
-        .map(|server| {
-            json!({
-                "id": server.id,
-                "name": server.name,
-                "icon": server.icon_data,
-                "position": server.position,
-                "folderId": server.folder_id,
-                "unread": unread.get(&server.id).copied().unwrap_or(0),
-                "signedOut": signed_out.contains(&server.id),
-            })
-        })
-        .collect()
-}
-
-/// The user's folders (names they typed into Shiver), ordered.
-fn folder_payload(folders: &[Folder]) -> Value {
-    let mut ordered: Vec<&Folder> = folders.iter().collect();
-
-    ordered.sort_by_key(|folder| folder.position);
-
-    ordered
-        .into_iter()
-        .map(|folder| {
-            json!({
-                "id": folder.id,
-                "name": folder.name,
-                "position": folder.position,
-                "expanded": folder.expanded,
-            })
-        })
-        .collect()
-}
-
-/// Polled by `inbox::watch_mutes`: reads the page's mutes, rail changes and queued outside links
-/// (a read on departure would be torn down by the navigation before it answered).
+/// Polled by `inbox::watch_mutes`: reads the page's mutes and queued outside links (a read on
+/// departure would be torn down by the navigation before it answered).
 const READ_SCRIPT: &str = "JSON.stringify({ \
     muted: window.__SHIVER_MUTED__ ? window.__SHIVER_MUTED__() : null, \
-    rail: window.__SHIVER_RAIL_STATE__ ? window.__SHIVER_RAIL_STATE__() : null, \
     open: window.__SHIVER_OPEN__ ? window.__SHIVER_OPEN__() : null })";
 
 #[derive(Default, Deserialize)]
 struct PageState {
     muted: Option<Vec<i64>>,
-    rail: Option<RailState>,
     #[serde(default, deserialize_with = "null_as_default")]
     open: Vec<String>,
 }
@@ -324,6 +281,10 @@ pub fn read_mutes(app: &AppHandle, entry_id: &str) {
 
     let _ = window.eval_with_callback(READ_SCRIPT, move |raw| {
         // JSON-encoded twice: the result is a string holding the object
+        if raw.len() > MAX_PAGE_STATE_BYTES {
+            return;
+        }
+
         let Ok(Value::String(body)) = serde_json::from_str::<Value>(&raw) else {
             return;
         };
@@ -340,192 +301,19 @@ pub fn read_mutes(app: &AppHandle, entry_id: &str) {
 }
 
 fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
-    // links Sharkord opens in a new window, which Android's webview refuses to make
-    let granted = app.state::<Openings>().take(entry_id, state.open.len());
-
-    if granted < state.open.len() {
-        eprintln!(
-            "[shiver] {entry_id} asked to open {} addresses, opening {granted}",
-            state.open.len()
-        );
-    }
-
-    for address in state.open.iter().take(granted) {
-        match Url::parse(address) {
-            Ok(url) => crate::open_externally(app, &url),
-            Err(error) => eprintln!("[shiver] the page asked to open {address}: {error}"),
-        }
+    // what the user opened away from the page, queued by the document-start script
+    for url in app
+        .state::<Openings>()
+        .grant(entry_id, &state.open)
+        .iter()
+        .filter_map(|address| Url::parse(address).ok())
+    {
+        crate::open_externally(app, &url);
     }
 
     if let Some(channels) = state.muted {
         inbox::replace_mutes(app, entry_id, &channels);
     }
-
-    let Some(rail) = state.rail else {
-        return;
-    };
-
-    // Membership before order (a move changes which list a server is ordered in, and forces the
-    // order to be rewritten to break position ties); pruning last, so a dissolving folder's slot
-    // passes to the server it frees.
-    let store = app.state::<Store>();
-    let changed = apply_creates(&store, &rail.creates) | apply_moves(&store, &rail.moves);
-
-    apply_order(&store, &rail.order, changed);
-
-    if changed {
-        let _ = store.update(|registry| Ok(registry.rail().prune_folders()));
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct RailState {
-    /// the top level (folders and loose servers) in tile order
-    order: Vec<RailRef>,
-    #[serde(default)]
-    moves: Vec<RailMove>,
-    #[serde(default)]
-    creates: Vec<RailCreate>,
-}
-
-/// A server moved into (`folder_id`) or out of (`None`) a folder.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RailMove {
-    server_id: String,
-    folder_id: Option<String>,
-}
-
-/// A folder made by dropping one server onto another. The id is the page's (so it can draw the
-/// folder at once); an id already in use is refused.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RailCreate {
-    id: String,
-    name: String,
-    member_ids: Vec<String>,
-}
-
-fn log_failure(what: &str, result: Result<()>) -> bool {
-    match result {
-        Ok(()) => true,
-        Err(error) => {
-            eprintln!("[shiver] could not {what}: {error}");
-
-            false
-        }
-    }
-}
-
-/// Makes the folders the rail asked for (a bounded number per poll), at the lowest position of
-/// their members. Names are clamped; renaming stays on Shiver's own screen.
-fn apply_creates(store: &Store, creates: &[RailCreate]) -> bool {
-    if creates.is_empty() {
-        return false;
-    }
-
-    let result = store.update(|registry| {
-        for create in creates.iter().take(MAX_CREATES_PER_POLL) {
-            let id = create.id.trim();
-
-            if id.is_empty()
-                || id.len() > MAX_FOLDER_ID
-                || registry.folders.iter().any(|folder| folder.id == id)
-            {
-                continue;
-            }
-
-            let members: Vec<String> = create
-                .member_ids
-                .iter()
-                .filter(|member| registry.server(member).is_some())
-                .cloned()
-                .collect();
-
-            // a folder of nothing would only be pruned again
-            if members.is_empty() {
-                continue;
-            }
-
-            let name = match create.name.trim() {
-                "" => DEFAULT_FOLDER_NAME,
-                name => name,
-            };
-
-            registry
-                .rail()
-                .create_folder(id.to_string(), name, &members)?;
-        }
-
-        Ok(())
-    });
-
-    log_failure("make a folder from the rail", result)
-}
-
-/// Moves servers between existing folders; nothing else about folders can be changed from a page.
-fn apply_moves(store: &Store, moves: &[RailMove]) -> bool {
-    if moves.is_empty() {
-        return false;
-    }
-
-    let result = store.update(|registry| {
-        let mut rail = registry.rail();
-
-        for change in moves {
-            // a stale page may name what is gone; the rest still applies
-            let _ = rail.set_server_folder(&change.server_id, change.folder_id.clone());
-        }
-
-        Ok(())
-    });
-
-    log_failure("move a server between folders", result)
-}
-
-/// Stores the rail's top-level order when it differs from the stored one (or `force`). Folder
-/// contents keep their own order. Compared first because the rail reports every second.
-fn apply_order(store: &Store, ordered: &[RailRef], force: bool) {
-    if !force && top_level_matches(&store.registry(), ordered) {
-        return;
-    }
-
-    let result = store.update(|registry| {
-        let mut rail = registry.rail();
-
-        for (index, item) in ordered.iter().enumerate() {
-            let _ = rail.place(item, index as i32);
-        }
-
-        registry.servers.sort_by_key(|server| server.position);
-
-        Ok(())
-    });
-
-    log_failure("store the rail's new order", result);
-}
-
-fn top_level_matches(registry: &crate::model::Registry, ordered: &[RailRef]) -> bool {
-    let mut current: Vec<(&str, &str, i32)> = registry
-        .folders
-        .iter()
-        .map(|folder| ("folder", folder.id.as_str(), folder.position))
-        .chain(
-            registry
-                .servers
-                .iter()
-                .filter(|server| server.folder_id.is_none())
-                .map(|server| ("server", server.id.as_str(), server.position)),
-        )
-        .collect();
-
-    current.sort_by_key(|(_, _, position)| *position);
-
-    current.len() == ordered.len()
-        && current
-            .iter()
-            .zip(ordered)
-            .all(|((kind, id, _), item)| *kind == item.kind && *id == item.id)
 }
 
 /// Whether the webview may navigate to `target`; records home on the very first navigation (which
@@ -567,7 +355,7 @@ fn same_place(home: &str, target: &Url) -> bool {
 pub fn landed_home(app: &AppHandle) {
     let showing = app.state::<Showing>();
 
-    if showing.server().is_none() {
+    if showing.at_home() {
         return;
     }
 
@@ -612,8 +400,13 @@ mod tests {
             return;
         }
 
+        let script = document_start();
+
+        assert!(script.contains(seed_key()) && !DOCUMENT_START.contains(seed_key()));
+
         for needed in [
             SEED_PARAM,
+            "SHIVER_SEED_KEY",
             "vite-ui-theme",
             "prefers-color-scheme",
             "MutationObserver",
@@ -631,6 +424,64 @@ mod tests {
                 "the script must not contain {forbidden}"
             );
         }
+    }
+
+    #[test]
+    fn seed_keys_are_per_origin() {
+        let key = |value| seed_key_for("secret", &url(value));
+
+        assert_eq!(
+            key("https://chat.example.com/a"),
+            "98aee65411ec7dc40877b6a4f3f4215e6b200ca75c91c8f218a22d4c7f8a43ff"
+        );
+        assert_eq!(
+            key("https://chat.example.com:443"),
+            key("https://chat.example.com")
+        );
+        assert_ne!(
+            key("https://chat.example.com"),
+            key("https://other.example.com")
+        );
+    }
+
+    #[test]
+    fn a_seed_never_leaves_in_a_url() {
+        let seeded = url("https://sso.example.com/login#shiver-seed=secret");
+
+        assert_eq!(
+            without_seed(&seeded).as_str(),
+            "https://sso.example.com/login"
+        );
+        assert_eq!(
+            without_seed(&url("https://example.com/a#part")).as_str(),
+            "https://example.com/a#part"
+        );
+    }
+
+    #[test]
+    fn only_a_server_still_loading_is_loading() {
+        let showing = Showing::default();
+
+        assert!(!showing.loading());
+        showing.set_server(Some("a".into()));
+        assert!(showing.loading());
+        showing.set_loaded();
+        assert!(!showing.loading());
+        showing.set_server(Some("b".into()));
+        assert!(showing.loading());
+    }
+
+    #[test]
+    fn home_is_only_home_while_nothing_else_is_on_its_way() {
+        let showing = Showing::default();
+
+        assert!(showing.at_home());
+        showing.set_stray();
+        assert!(!showing.at_home());
+        showing.set_server(None);
+        assert!(showing.at_home());
+        showing.set_server(Some("a".into()));
+        assert!(!showing.at_home());
     }
 
     #[test]
@@ -687,48 +538,9 @@ mod tests {
         ));
     }
 
-    fn entry(id: &str, name: &str, origin: &str, position: i32) -> ServerEntry {
-        ServerEntry {
-            id: id.into(),
-            origin: origin.into(),
-            name: name.into(),
-            icon_url: Some(format!("{origin}/public/logo.png")),
-            identity: Some("someone".into()),
-            account_label: Some("someone".into()),
-            push_token: Some("secret-push-token".into()),
-            position,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn the_rail_payload_carries_no_addresses_and_is_ordered() {
-        let servers = vec![
-            entry("a", "Alpha", "https://alpha.example.com", 7),
-            entry("b", "Beta", "https://beta.example.com", 2),
-        ];
-
-        let payload = rail_payload(&servers, &HashMap::new(), &["a".into()]);
-        let text = payload.to_string();
-
-        assert!(text.contains("Alpha") && text.contains("Beta"));
-
-        for hidden in ["example.com", "someone", "secret-push-token"] {
-            assert!(!text.contains(hidden), "the rail must not carry {hidden}");
-        }
-
-        assert_eq!(payload[0]["id"], "b");
-        assert_eq!(payload[1]["id"], "a");
-        assert_eq!(payload[1]["signedOut"], true);
-    }
-
     #[test]
     fn pending_requests_are_consumed_once_and_home_is_written_once() {
         let showing = Showing::default();
-
-        showing.set_pending_dms(true);
-        assert!(showing.take_pending_dms());
-        assert!(!showing.take_pending_dms());
 
         showing.set_pending_dm_user(Some("ana".into()));
         assert_eq!(showing.take_pending_dm_user().as_deref(), Some("ana"));
@@ -741,14 +553,12 @@ mod tests {
 
     #[test]
     fn a_page_state_tolerates_missing_and_null_fields() {
-        let state: PageState =
-            serde_json::from_str(r#"{"muted":null,"rail":null,"open":null}"#).unwrap();
+        let state: PageState = serde_json::from_str(r#"{"muted":null,"open":null}"#).unwrap();
 
-        assert!(state.muted.is_none() && state.rail.is_none() && state.open.is_empty());
+        assert!(state.muted.is_none() && state.open.is_empty());
 
-        let state: PageState =
-            serde_json::from_str(r#"{"rail":{"order":[{"kind":"server","id":"a"}]}}"#).unwrap();
+        let state: PageState = serde_json::from_str(r#"{"muted":[3]}"#).unwrap();
 
-        assert_eq!(state.rail.unwrap().order.len(), 1);
+        assert_eq!(state.muted, Some(vec![3]));
     }
 }

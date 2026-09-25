@@ -22,7 +22,7 @@ import {
 } from './types';
 import { byPosition } from '../../shared/web/rail';
 
-/** Shiver's own screens. `boot` opens the last server used; there is no home screen. */
+/** Shiver's own screens. `boot` opens the last server used, or waits on the rail after `#home`. */
 type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms';
 
 /** The settings sections, in the order they are listed. */
@@ -56,44 +56,27 @@ const TITLES: Record<Exclude<Screen, 'boot'>, string> = {
 };
 
 /**
- * What a fragment on Shiver's own URL may ask for. The rail inside a server's page has no IPC, so
- * its taps navigate here; any page can do that, so ids are looked up in the registry and
- * destructive actions are confirmed by the user on this page.
+ * What a fragment on Shiver's own URL may ask for: the rail (a server's page going home), a server
+ * to reopen (its page reconnecting) or one that failed (the core). Any page can navigate here, so
+ * ids are looked up in the registry and nothing else is taken from the URL.
  */
-type Intent =
-  | { kind: 'open'; id: string; dmUser?: string }
-  | { kind: 'screen'; screen: Screen }
-  | { kind: 'do'; action: 'refresh' | ConfirmAction; id: string }
-  | null;
+type Intent = { kind: 'open' | 'failed'; id: string } | { kind: 'home' } | null;
+
+const decode = (text: string) => {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return '';
+  }
+};
 
 const readIntent = (hash: string): Intent => {
   const value = hash.replace(/^#/, '');
 
-  // `open=<id>`, optionally `&dm=<name>` for the conversation to land on
-  if (value.startsWith('open=')) {
-    const [id, ...rest] = value.slice('open='.length).split('&');
-    const dm = rest.find((part) => part.startsWith('dm='));
+  if (value.startsWith('open=')) return { kind: 'open', id: decode(value.slice('open='.length)) };
+  if (value.startsWith('failed=')) return { kind: 'failed', id: decode(value.slice('failed='.length)) };
 
-    return {
-      kind: 'open',
-      id: decodeURIComponent(id),
-      dmUser: dm ? decodeURIComponent(dm.slice('dm='.length)) : undefined
-    };
-  }
-
-  if (value === 'add') return { kind: 'screen', screen: 'add' };
-  if (value === 'settings') return { kind: 'screen', screen: 'settings' };
-  if (value === 'dms') return { kind: 'screen', screen: 'dms' };
-
-  if (value.startsWith('do=')) {
-    const [action, id] = value.slice('do='.length).split(':');
-
-    if ((action === 'refresh' || action === 'remove' || action === 'forgetpw' || action === 'logout') && id) {
-      return { kind: 'do', action, id: decodeURIComponent(id) };
-    }
-  }
-
-  return null;
+  return value === 'home' ? { kind: 'home' } : null;
 };
 
 /** The server Shiver reopens: the last one used, or the first. */
@@ -114,9 +97,14 @@ export const App = () => {
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
 
+  const [icons, setIcons] = useState<Record<string, string>>({});
+  const loadIcons = useCallback(() => void api.serverIcons().then(setIcons, () => undefined), []);
+
+  useEffect(loadIcons, [loadIcons]);
+
   const servers = useMemo(
-    () => byPosition(registry.servers),
-    [registry.servers]
+    () => byPosition(registry.servers).map((server) => ({ ...server, icon: icons[server.id] })),
+    [registry.servers, icons]
   );
 
   const refresh = useCallback(async () => {
@@ -157,7 +145,7 @@ export const App = () => {
     }
 
     try {
-      await api.selectServer(server.id, false, dmUser);
+      await api.selectServer(server.id, dmUser);
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -200,8 +188,7 @@ export const App = () => {
     [boot, resume]
   );
 
-  // Runs once. The fragment is cleared as it is read, so a reload does not repeat it and arriving
-  // from the rail's settings tile does not reopen the server just left.
+  // Runs once. The fragment is cleared as it is read, so a reload does not repeat it.
   const started = useRef(false);
 
   useEffect(() => {
@@ -225,38 +212,22 @@ export const App = () => {
         return;
       }
 
-      if (intent?.kind === 'screen') {
-        setScreen(intent.screen);
+      if (intent?.kind === 'home') {
+        const left = lastUsed(next);
+
+        if (left) setBoot({ kind: 'home', server: left });
+        else await resume(next);
 
         return;
       }
 
-      if (intent?.kind === 'do') {
-        const server = next.servers.find((candidate) => candidate.id === intent.id);
+      const named = next.servers.find((server) => server.id === intent?.id);
 
-        if (server && intent.action !== 'refresh') {
-          setBoot({ kind: 'confirm', action: intent.action, server });
-
-          return;
-        }
-
-        if (server) {
-          await api.refreshServerInfo(server.id).catch((cause) => setError(errorMessage(cause)));
-        }
-
-        await resume();
+      if (named) {
+        if (intent?.kind === 'failed') setBoot({ kind: 'failed', server: named });
+        else await connect(named);
 
         return;
-      }
-
-      if (intent?.kind === 'open') {
-        const named = next.servers.find((server) => server.id === intent.id);
-
-        if (named) {
-          await connect(named, intent.dmUser);
-
-          return;
-        }
       }
 
       await resume(next);
@@ -266,6 +237,23 @@ export const App = () => {
   useEffect(() => {
     applyTheme(registry.settings);
   }, [registry.settings]);
+
+  // Android's back button, from one of Shiver's own screens: back to the last server, opened by
+  // Shiver (a step back through history would bring it without its session); from the boot
+  // screen, the system's own
+  useEffect(() => {
+    window.__SHIVER_BACK__ = () => {
+      if (screen === 'boot') return false;
+
+      void resume();
+
+      return true;
+    };
+
+    return () => {
+      delete window.__SHIVER_BACK__;
+    };
+  }, [screen, resume]);
 
   // unread counts from the core's own connections: read once, then pushed
   useEffect(() => {
@@ -288,19 +276,14 @@ export const App = () => {
   const signingInServer = servers.find((server) => server.id === signingIn) ?? null;
 
   const readSessions = useCallback(() => {
-    api.signedOutServers().then(setSignedOut).catch(() => undefined);
     api
-      .watchProblems()
-      .then((found) =>
-        setProblems(Object.fromEntries(found.map((problem) => [problem.entryId, problem.reason])))
-      )
-      .catch(() => undefined);
-    api.rememberedServers().then(setRemembered).catch(() => undefined);
-    api
-      .serverPlugins()
-      .then((found) =>
-        setPlugins(Object.fromEntries(found.map((status) => [status.entryId, status.version])))
-      )
+      .sessionStates()
+      .then((states) => {
+        setSignedOut(states.signedOut);
+        setRemembered(states.remembered);
+        setProblems(states.problems);
+        setPlugins(states.plugins);
+      })
       .catch(() => undefined);
   }, []);
 
@@ -337,6 +320,20 @@ export const App = () => {
   }, [connect, refresh]);
 
   const handleRemove = useCallback((id: string) => void change(() => api.removeServer(id)), [change]);
+
+  /** Asks on the boot screen before a rail menu action runs. */
+  const handleAsk = useCallback(
+    (action: ConfirmAction, id: string) => {
+      const server = servers.find((candidate) => candidate.id === id);
+
+      if (!server) return;
+
+      setScreen('boot');
+      setBoot({ kind: 'confirm', action, server });
+    },
+    [servers]
+  );
+
   const handleSettings = useCallback((settings: Settings) => void change(() => api.updateSettings(settings)), [change]);
 
   return (
@@ -350,8 +347,8 @@ export const App = () => {
         onOpenDms={() => setScreen('dms')}
         onAdd={() => setScreen('add')}
         onSettings={() => setScreen('settings')}
-        onRefresh={(id) => void change(() => api.refreshServerInfo(id))}
-        onRemove={handleRemove}
+        onRefresh={(id) => void change(() => api.refreshServerInfo(id)).then(loadIcons)}
+        onAsk={handleAsk}
         onReorder={(ordered: RailRef[]) => void change(() => api.reorderRail(ordered))}
         folders={registry.folders}
         onSetFolder={(id, folderId) => void change(() => api.setServerFolder(id, folderId))}

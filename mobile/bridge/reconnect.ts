@@ -2,12 +2,13 @@
  * Recovering the client after Android has had the app asleep. Sharkord's own reconnect timers do
  * not run in a backgrounded webview, so the user returns to a client that gave up. Shiver presses
  * Sharkord's own "try again" button (absent when reconnecting is not allowed, e.g. a ban), after
- * re-seeding the session it holds, or reloads once the server answers again. A bounded number of
- * attempts, counted across reloads in `sessionStorage`; coming back to the app resets them.
+ * re-seeding the session it holds, or has Shiver reopen the server once it answers again. A bounded
+ * number of attempts, counted across reloads in `sessionStorage`; coming back to the app resets them.
  */
 
 import { SIDEBAR } from '../../shared/web/bridge/sharkord';
-import { installSessionShim, SEED_PARAM } from '../../shared/web/session';
+import { installSessionShim } from '../../shared/web/session';
+import { goHome } from './home';
 
 const POLL_MS = 2000;
 const DELAYS_MS = [0, 3000, 8000, 15000];
@@ -44,7 +45,7 @@ const reachable = () =>
     .then((response) => response.ok)
     .catch(() => false);
 
-export function installAutoReconnect(session: string | null, serverName: string) {
+export function installAutoReconnect(session: string | null, serverName: string, entryId: string) {
   let attempts = readAttempts();
   let nextAttemptAt = 0;
   /** a probe is in flight */
@@ -107,16 +108,12 @@ export function installAutoReconnect(session: string | null, serverName: string)
       return;
     }
 
-    // on the connect form nothing re-runs auto-login, so reload, but only into a server that answers;
-    // the session travels in the fragment the document-start script reads
+    // nothing on the connect form re-runs auto-login, so Shiver reopens a server that answers
     working = true;
     void reachable().then((ok) => {
       working = false;
 
-      if (!ok) return;
-
-      history.replaceState(history.state, '', `${location.pathname}${location.search}#${SEED_PARAM}=${encodeURIComponent(session)}`);
-      location.reload();
+      if (ok) goHome(`#open=${encodeURIComponent(entryId)}`);
     });
   };
 
@@ -135,7 +132,7 @@ export function installAutoReconnect(session: string | null, serverName: string)
 
 const HOST_ID = 'shiver-reconnect';
 
-/** Covers the server's "connection lost" screen (below the rail, which stays usable). */
+/** Covers the server's "connection lost" screen (back and the swipe home still work). */
 function showReconnecting(serverName: string) {
   if (document.getElementById(HOST_ID)) return;
 

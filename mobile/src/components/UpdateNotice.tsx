@@ -10,26 +10,16 @@ export const UpdateNotice = () => {
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
-    let live = true;
+    api
+      .updateAvailable()
+      .then(setVersion)
+      .catch(() => undefined);
 
-    // the check runs on a timer of its own after launch, so the answer is usually not ready the
-    // first time this asks
-    const ask = () => {
-      api
-        .updateAvailable()
-        .then((found) => {
-          if (live && found) setVersion(found);
-        })
-        .catch(() => undefined);
-    };
-
-    ask();
-
-    const timer = window.setInterval(ask, 10_000);
+    // found after launch, by the core's own check
+    const stop = api.onUpdate(setVersion);
 
     return () => {
-      live = false;
-      window.clearInterval(timer);
+      void stop.then((unlisten) => unlisten());
     };
   }, []);
 

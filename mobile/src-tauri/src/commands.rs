@@ -3,16 +3,20 @@
 //! Commands that write the registry are `async`, so the disk write happens off the UI thread.
 //! Passwords arrive as `Zeroizing<String>` so Shiver's copies are wiped.
 
+use std::collections::HashMap;
+
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shiver_push::PushExt;
+use tauri_plugin_shiver_secrets::SecretsExt;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use sharkord_client::ServerCheck;
+use sharkord_client::{CheckedSessions, ServerCheck};
 use shiver_core::{login, probe};
 
 use crate::{
-    error::{Error, Result},
+    error::{Core, Error, Result},
+    icons,
     inbox::{self, Inbox},
     model::{normalize_origin, Folder, Registry, ServerEntry, ServerInfo, Settings},
     store::{RegistryStore, Store},
@@ -26,7 +30,15 @@ fn entry_of(store: &Store, id: &str) -> Result<ServerEntry> {
         .registry()
         .server(id)
         .cloned()
-        .ok_or(Error::UnknownServer)
+        .ok_or(Core::UnknownServer.into())
+}
+
+/// Clears what an origin's pages stored. The one webview has one storage per origin, so this also
+/// signs out the pages of any other account on the same address; leaving it would keep this one's.
+fn wipe_page(app: &AppHandle, origin: &str) {
+    if let Err(error) = app.shiver_secrets().wipe_origin(origin) {
+        eprintln!("[shiver] could not clear {origin} from the webview: {error}");
+    }
 }
 
 #[tauri::command]
@@ -42,6 +54,7 @@ pub async fn probe_server(origin: String) -> Result<ServerInfo> {
 /// See [`sharkord_client::check_server`].
 #[tauri::command]
 pub async fn check_server(
+    kept: State<'_, CheckedSessions>,
     origin: String,
     identity: Option<String>,
     password: Option<Password>,
@@ -50,6 +63,7 @@ pub async fn check_server(
         &origin,
         identity.as_deref(),
         password.as_deref().map(String::as_str),
+        &kept,
     )
     .await?)
 }
@@ -73,14 +87,19 @@ pub async fn add_server(
     let password = password.filter(|password| !password.is_empty());
 
     let session = match (&identity, &password) {
-        (Some(identity), Some(password)) => Some(Zeroizing::new(
-            login::sign_in(&origin, identity, password).await?,
-        )),
+        (Some(identity), Some(password)) => Some(
+            match app
+                .state::<CheckedSessions>()
+                .take(&origin, identity, password)
+            {
+                Some(token) => token,
+                None => Zeroizing::new(login::sign_in(&origin, identity, password).await?),
+            },
+        ),
         _ => None,
     };
 
-    // inlined rather than linked: the rail is drawn in other servers' pages
-    let icon_data = match info.icon_url.as_deref() {
+    let icon = match info.icon_url.as_deref() {
         Some(url) => probe::fetch_icon(url).await,
         None => None,
     };
@@ -89,10 +108,8 @@ pub async fn add_server(
         let entry = ServerEntry {
             id: Uuid::new_v4().to_string(),
             origin: origin.clone(),
-            server_id: Some(info.server_id.clone()),
             name: info.name.clone(),
             icon_url: info.icon_url.clone(),
-            icon_data: icon_data.clone(),
             identity: identity.clone().filter(|_| session.is_some()),
             position: registry.next_position(),
             push_token: Some(Uuid::new_v4().simple().to_string()),
@@ -103,6 +120,8 @@ pub async fn add_server(
 
         Ok(entry)
     })?;
+
+    icons::save(&app, &entry.id, icon.as_deref());
 
     if let Some(session) = &session {
         inbox::remember_session(&app, &entry.id, session);
@@ -124,11 +143,13 @@ pub fn forget_password(app: AppHandle, id: String) {
 /// Removes a server and everything Shiver keeps for it.
 #[tauri::command]
 pub async fn remove_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
-    entry_of(&store, &id)?;
+    let origin = entry_of(&store, &id)?.origin;
 
     // before the entry goes: unregistering needs its push token
     crate::push::unregister(&app, &id);
     inbox::forget_everywhere(&app, &id);
+    wipe_page(&app, &origin);
+    icons::save(&app, &id, None);
 
     store.update(|registry| {
         registry.servers.retain(|server| server.id != id);
@@ -147,25 +168,44 @@ pub async fn remove_server(app: AppHandle, store: State<'_, Store>, id: String) 
     })
 }
 
-/// Re-reads a server's name and logo (including the inlined logo bytes).
+/// Re-reads a server's name and logo.
 #[tauri::command]
-pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<ServerEntry> {
+pub async fn refresh_server_info(
+    app: AppHandle,
+    store: State<'_, Store>,
+    id: String,
+) -> Result<ServerEntry> {
     let info = probe::fetch_info(&entry_of(&store, &id)?.origin).await?;
-    let icon_data = match info.icon_url.as_deref() {
+    let icon = match info.icon_url.as_deref() {
         Some(url) => probe::fetch_icon(url).await,
         None => None,
     };
 
-    store.update(|registry| {
-        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
+    let entry = store.update(|registry| {
+        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
 
         server.name = info.name.clone();
         server.icon_url = info.icon_url.clone();
-        server.icon_data = icon_data.clone();
-        server.server_id = Some(info.server_id.clone());
 
         Ok(server.clone())
-    })
+    })?;
+
+    icons::save(&app, &id, icon.as_deref());
+
+    Ok(entry)
+}
+
+/// Every server's logo as a `data:` uri, by entry id.
+#[tauri::command]
+pub fn server_icons(app: AppHandle, store: State<'_, Store>) -> HashMap<String, String> {
+    let ids: Vec<String> = store
+        .registry()
+        .servers
+        .iter()
+        .map(|server| server.id.clone())
+        .collect();
+
+    icons::load(&app, &ids)
 }
 
 /* ── push ── */
@@ -176,8 +216,6 @@ pub struct PushStatus {
     /// package names of installed distributors
     pub distributors: Vec<String>,
     pub chosen: Option<String>,
-    pub registered: usize,
-    pub failed: usize,
     pub servers: Vec<PushServer>,
 }
 
@@ -196,7 +234,6 @@ pub struct PushServer {
 pub fn push_status(app: AppHandle, store: State<'_, Store>) -> PushStatus {
     let (distributors, chosen) = app.shiver_push().distributors().unwrap_or_default();
     let push = app.state::<crate::push::Push>();
-    let (registered, failed) = push.snapshot();
     let registry = store.registry();
 
     let servers = registry
@@ -225,8 +262,6 @@ pub fn push_status(app: AppHandle, store: State<'_, Store>) -> PushStatus {
     PushStatus {
         distributors,
         chosen,
-        registered,
-        failed,
         servers,
     }
 }
@@ -265,20 +300,24 @@ pub fn forget_sessions(app: AppHandle, store: State<'_, Store>) {
     }
 }
 
-/// Logs out of a server: forgets Shiver's session, password and carried state for it and its
-/// identity. The page's own storage was already wiped when it was left.
+/// Logs out of a server: stops its push wake-ups, forgets Shiver's session, password and identity
+/// for it, and wipes what its page stored in the webview.
 #[tauri::command]
 pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
-    store.update(|registry| {
-        registry
-            .server_mut(&id)
-            .ok_or(Error::UnknownServer)?
-            .identity = None;
+    if let Err(error) = crate::push::set_wanted(&app, &id, false) {
+        eprintln!("[shiver] could not stop push for {id}: {error}");
+    }
 
-        Ok(())
+    let origin = store.update(|registry| {
+        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
+
+        server.identity = None;
+
+        Ok(server.origin.clone())
     })?;
 
     inbox::forget_everywhere(&app, &id);
+    wipe_page(&app, &origin);
 
     Ok(())
 }
@@ -300,7 +339,7 @@ pub async fn sign_in_server(
     store.update(|registry| {
         registry
             .server_mut(&id)
-            .ok_or(Error::UnknownServer)?
+            .ok_or(Core::UnknownServer)?
             .identity = Some(identity.clone());
 
         Ok(())
@@ -317,68 +356,54 @@ pub async fn sign_in_server(
     Ok(())
 }
 
+/// Raises (or restores) the message size limit, and reconnects with it.
 #[tauri::command]
-pub fn signed_out_servers(inbox: State<'_, Inbox>) -> Vec<String> {
-    inbox.signed_out()
-}
-
-/// Entries with a stored password.
-#[tauri::command]
-pub fn remembered_servers(inbox: State<'_, Inbox>, store: State<'_, Store>) -> Vec<String> {
-    store
-        .registry()
-        .servers
-        .iter()
-        .filter(|server| inbox.has_password(&server.id))
-        .map(|server| server.id.clone())
-        .collect()
-}
-
-/// Raises (or restores) the message size limit; takes effect on the next connection attempt.
-#[tauri::command]
-pub async fn set_accept_any_size(store: State<'_, Store>, id: String, accept: bool) -> Result<()> {
+pub async fn set_accept_any_size(
+    app: AppHandle,
+    store: State<'_, Store>,
+    id: String,
+    accept: bool,
+) -> Result<()> {
     store.update(|registry| {
         registry
             .server_mut(&id)
-            .ok_or(Error::UnknownServer)?
+            .ok_or(Core::UnknownServer)?
             .accept_any_size = accept;
 
         Ok(())
-    })
+    })?;
+
+    inbox::restart(&app, &id);
+
+    Ok(())
 }
 
+/// What Shiver's screens show about each server's session: waiting for a sign-in, a password kept,
+/// a problem watching it that will not fix itself, and the companion plugin's version (`None`:
+/// connected, not installed; absent: not connected yet).
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WatchProblem {
-    pub entry_id: String,
-    pub reason: String,
-}
-
-/// Servers Shiver cannot watch, and why (only failures that will not fix themselves).
-#[tauri::command]
-pub fn watch_problems(inbox: State<'_, Inbox>) -> Vec<WatchProblem> {
-    inbox
-        .problems()
-        .into_iter()
-        .map(|(entry_id, reason)| WatchProblem { entry_id, reason })
-        .collect()
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginStatus {
-    pub entry_id: String,
-    /// `None`: connected, and no plugin. Servers not yet connected are absent.
-    pub version: Option<String>,
+pub struct SessionStates {
+    pub signed_out: Vec<String>,
+    pub remembered: Vec<String>,
+    pub problems: HashMap<String, String>,
+    pub plugins: HashMap<String, Option<String>>,
 }
 
 #[tauri::command]
-pub fn server_plugins(inbox: State<'_, Inbox>) -> Vec<PluginStatus> {
-    inbox
-        .plugins()
-        .into_iter()
-        .map(|(entry_id, version)| PluginStatus { entry_id, version })
-        .collect()
+pub fn session_states(inbox: State<'_, Inbox>, store: State<'_, Store>) -> SessionStates {
+    SessionStates {
+        signed_out: inbox.signed_out(),
+        remembered: store
+            .registry()
+            .servers
+            .iter()
+            .filter(|server| inbox.has_password(&server.id))
+            .map(|server| server.id.clone())
+            .collect(),
+        problems: inbox.problems(),
+        plugins: inbox.plugins(),
+    }
 }
 
 /* ── the rail and the inbox ── */
@@ -395,20 +420,18 @@ pub fn list_dms(store: State<'_, Store>, inbox: State<'_, Inbox>) -> Vec<inbox::
     inbox::collect_dms(&store.registry().servers, &inbox.dms())
 }
 
-/// Hands the webview to a server's client; `dms` / `dm_user` ask the bridge to open Sharkord's DM
-/// list or one conversation once connected.
+/// Hands the webview to a server's client; `dm_user` asks the bridge to open that conversation once
+/// connected.
 #[tauri::command]
 pub async fn select_server(
     app: AppHandle,
     store: State<'_, Store>,
     id: String,
-    dms: Option<bool>,
     dm_user: Option<String>,
 ) -> Result<()> {
     let entry = entry_of(&store, &id)?;
     let token = app.state::<Inbox>().token(&id);
 
-    app.state::<Showing>().set_pending_dms(dms.unwrap_or(false));
     app.state::<Showing>().set_pending_dm_user(dm_user);
 
     webview::show_server(&app, &entry, token.as_deref())?;
@@ -468,9 +491,12 @@ pub async fn create_folder_with(
     member_ids: Vec<String>,
 ) -> Result<Folder> {
     store.update(|registry| {
-        Ok(registry
-            .rail()
-            .create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?)
+        let mut rail = registry.rail();
+        let folder = rail.create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?;
+
+        rail.prune_folders();
+
+        Ok(folder)
     })
 }
 

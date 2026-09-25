@@ -38,6 +38,20 @@ impl Openings {
         granted
     }
 
+    /// The leading part of `wanted` that `key` may open now.
+    pub fn grant<'a, T>(&self, key: &str, wanted: &'a [T]) -> &'a [T] {
+        let granted = self.take(key, wanted.len());
+
+        if granted < wanted.len() {
+            eprintln!(
+                "[shiver] {key} asked to open {} links, opening {granted}",
+                wanted.len()
+            );
+        }
+
+        &wanted[..granted]
+    }
+
     pub fn forget(&self, key: &str) {
         self.0.locked().remove(key);
     }
@@ -58,5 +72,6 @@ mod tests {
         openings.forget("a");
 
         assert_eq!(openings.take("a", 1), 1);
+        assert_eq!(openings.grant("a", &[1, 2, 3, 4, 5, 6]), &[1, 2, 3, 4]);
     }
 }

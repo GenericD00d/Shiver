@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 import type {
   DmEntry,
+  FeedSummary,
   Folder,
   Notification,
   Registry,
@@ -23,16 +24,15 @@ export const api = {
     invoke<ServerCheck>('check_server', { origin, identity, password }),
 
   /**
-   * `rememberPassword` is the user's choice about the password, and it is off unless they ask.
-   * The session is kept either way — it is what makes a server open straight into the app, and it
-   * expires in a week on its own. The password is what would outlive that.
+   * Signs in first when given credentials. The session is kept either way; `rememberPassword` keeps
+   * the password too, which is what lets Shiver sign in again once the week-long session runs out.
    */
   addServer: (
     origin: string,
-    identity?: string,
-    password?: string,
-    accountLabel?: string,
-    rememberPassword = false
+    identity: string | undefined,
+    password: string | undefined,
+    accountLabel: string | undefined,
+    rememberPassword: boolean
   ) =>
     invoke<ServerEntry>('add_server', {
       origin,
@@ -52,7 +52,8 @@ export const api = {
 
   listDms: () => invoke<DmEntry[]>('list_dms'),
 
-  unreadCount: () => invoke<number>('unread_count'),
+  /** the bell's unread count and newest entry, as every feed event also carries them */
+  feedSummary: () => invoke<FeedSummary>('feed_summary'),
 
   /** unread per rail entry, for the badges on the server icons */
   unreadCounts: () => invoke<Record<string, number>>('unread_counts'),
@@ -98,7 +99,6 @@ export const api = {
 
   setServerFolder: (id: string, folderId: string | null) =>
     invoke<void>('set_server_folder', { id, folderId }),
-
 
   renameFolder: (id: string, name: string) => invoke<void>('rename_folder', { id, name }),
 

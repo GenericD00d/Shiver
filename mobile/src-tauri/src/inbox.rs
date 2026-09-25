@@ -1,8 +1,8 @@
 //! The core's own connections to every server the webview is not showing (Android has one webview).
 //!
 //! Each connection keeps that server's unread count (above its floor), its DM list, and posts one
-//! Android notification per server that summarises what arrived. Sessions, passwords, floors and
-//! carried page settings live in the encrypted store (`tauri-plugin-shiver-secrets`), written by one
+//! Android notification per server that summarises what arrived. Sessions, passwords and floors live
+//! in the encrypted store (`tauri-plugin-shiver-secrets`), written by one
 //! background thread in order.
 
 use std::{
@@ -11,8 +11,8 @@ use std::{
     time::Duration,
 };
 
-use shiver_core::LockExt;
-use tauri::{AppHandle, Emitter, Manager};
+use shiver_core::{text::clamp, LockExt};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_shiver_secrets::SecretsExt;
 
 use crate::{
@@ -36,17 +36,8 @@ const NOTIFY_AFTER: Duration = Duration::from_millis(900);
 
 const MUTE_POLL: Duration = Duration::from_secs(1);
 
-const CARRIED_PREFIX: &str = "carried:";
 const BASELINE_PREFIX: &str = "baseline:";
 const PASSWORD_PREFIX: &str = "password:";
-
-/// Shortens by characters, never splitting a codepoint, marking the cut.
-fn clamp(text: String, limit: usize) -> String {
-    match text.char_indices().nth(limit) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-        None => text,
-    }
-}
 
 /// Reads a page's session: Sharkord's persistent auto-login token (`kept:`, which the user asked to
 /// keep, so Shiver stores it) or the live session only (`live:`, used for this run only). A bare
@@ -118,8 +109,6 @@ struct State {
     signed_out: HashSet<String>,
     /// entries with a stored password
     remembered: HashSet<String>,
-    /// page settings kept across the wipe of a server's storage (mirrored from the store)
-    carried: HashMap<String, String>,
     problems: HashMap<String, String>,
     plugins: HashMap<String, Option<String>>,
 }
@@ -169,7 +158,6 @@ impl Inbox {
             state.remembered.remove(entry_id);
             state.dms.remove(entry_id);
             state.baselines.remove(entry_id);
-            state.carried.remove(entry_id);
             state.problems.remove(entry_id);
             state.plugins.remove(entry_id);
         });
@@ -185,24 +173,12 @@ impl Inbox {
         })
     }
 
-    pub fn problems(&self) -> Vec<(String, String)> {
-        self.with(|state| state.problems.clone().into_iter().collect())
+    pub fn problems(&self) -> HashMap<String, String> {
+        self.with(|state| state.problems.clone())
     }
 
-    pub fn plugins(&self) -> Vec<(String, Option<String>)> {
-        self.with(|state| state.plugins.clone().into_iter().collect())
-    }
-
-    pub fn carried(&self, entry_id: &str) -> Option<String> {
-        self.with(|state| state.carried.get(entry_id).cloned())
-    }
-
-    pub fn remember_carried(&self, entry_id: &str, carried: &str) {
-        self.with(|state| {
-            state
-                .carried
-                .insert(entry_id.to_string(), carried.to_string())
-        });
+    pub fn plugins(&self) -> HashMap<String, Option<String>> {
+        self.with(|state| state.plugins.clone())
     }
 
     pub fn dms(&self) -> HashMap<String, Vec<sharkord::DirectMessage>> {
@@ -232,10 +208,6 @@ impl Inbox {
 
 /* ── the encrypted store ── */
 
-pub fn carried_store_key(entry_id: &str) -> String {
-    format!("{CARRIED_PREFIX}{entry_id}")
-}
-
 fn baseline_store_key(entry_id: &str) -> String {
     format!("{BASELINE_PREFIX}{entry_id}")
 }
@@ -246,7 +218,7 @@ fn password_store_key(entry_id: &str) -> String {
 
 /// The entry a store key belongs to (a bare key is the entry's session).
 fn entry_of(key: &str) -> &str {
-    [CARRIED_PREFIX, PASSWORD_PREFIX, BASELINE_PREFIX]
+    [PASSWORD_PREFIX, BASELINE_PREFIX]
         .iter()
         .find_map(|prefix| key.strip_prefix(prefix))
         .unwrap_or(key)
@@ -287,7 +259,7 @@ fn store_off_thread(app: &AppHandle, key: String, value: Option<String>) {
     let _ = sender.send((key, value));
 }
 
-/// Loads sessions, passwords, floors and carried settings at startup (off the main thread), drops
+/// Loads sessions, passwords and floors at startup (off the main thread), drops
 /// anything for entries no longer in the rail, then connects.
 pub fn restore(app: &AppHandle) {
     let app = app.clone();
@@ -329,8 +301,6 @@ pub fn restore(app: &AppHandle) {
                         None
                     }
                 };
-            } else if key.starts_with(CARRIED_PREFIX) {
-                inbox.remember_carried(&entry_id, &value);
             } else if key.starts_with(PASSWORD_PREFIX) {
                 inbox.with(|state| state.remembered.insert(entry_id));
             } else {
@@ -432,7 +402,6 @@ pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
 
     for key in [
         entry_id.to_string(),
-        carried_store_key(entry_id),
         password_store_key(entry_id),
         baseline_store_key(entry_id),
     ] {
@@ -442,8 +411,9 @@ pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
 
 /* ── connections ── */
 
-/// Starts a connection for every entry with a session and no connection, stops those for entries
-/// that left the rail, and settles the notification of the server on screen.
+/// Starts a connection for every entry with a session, no connection and no problem that retrying
+/// cannot fix, stops those for entries that left the rail or are on screen (their page has its
+/// own), and settles the notification of the server on screen.
 pub fn sync(app: &AppHandle) {
     let registry_ids: HashSet<String> = app
         .state::<Store>()
@@ -453,18 +423,23 @@ pub fn sync(app: &AppHandle) {
         .map(|server| server.id.clone())
         .collect();
     let showing = app.state::<webview::Showing>().server();
+    let watchable = |id: &String| registry_ids.contains(id) && showing.as_ref() != Some(id);
 
     let (wanted, unwanted) = app.state::<Inbox>().with(|state| {
         let unwanted: Vec<String> = state
             .running
             .keys()
-            .filter(|id| !registry_ids.contains(*id))
+            .filter(|id| !watchable(id))
             .cloned()
             .collect();
         let wanted: Vec<String> = state
             .tokens
             .keys()
-            .filter(|id| registry_ids.contains(*id) && !state.running.contains_key(*id))
+            .filter(|id| {
+                watchable(id)
+                    && !state.running.contains_key(*id)
+                    && !state.problems.contains_key(*id)
+            })
             .cloned()
             .collect();
 
@@ -491,6 +466,19 @@ pub fn sync(app: &AppHandle) {
     }
 
     publish(app);
+}
+
+/// Drops a server's connection and any problem with it, so the next attempt uses what changed.
+pub fn restart(app: &AppHandle, entry_id: &str) {
+    app.state::<Inbox>().with(|state| {
+        state.problems.remove(entry_id);
+
+        if let Some(task) = state.running.remove(entry_id) {
+            task.abort();
+        }
+    });
+
+    sync(app);
 }
 
 /// Watches one server with the session Shiver holds. A refused session is renewed from the stored
@@ -574,6 +562,9 @@ impl sharkord::Watcher for Watch {
 
     fn too_large(&mut self, size: usize) {
         report_watch_problem(&self.app, &self.entry_id, size);
+        self.app
+            .state::<Inbox>()
+            .with(|state| state.running.remove(&self.entry_id));
     }
 }
 
@@ -642,10 +633,7 @@ fn update_read_states(
 /// Replaces an entry's mutes with what its page reports (bounded), and recounts.
 pub fn replace_mutes(app: &AppHandle, entry_id: &str, channels: &[i64]) {
     let store = app.state::<Store>();
-    let mut next = channels.to_vec();
-
-    next.sort_unstable();
-    next.dedup();
+    let next = shiver_core::model::normalized_mutes(channels.iter().copied());
 
     if store.registry().muted_for(entry_id) == next {
         return;
@@ -675,20 +663,9 @@ pub fn watch_mutes(app: &AppHandle) {
     });
 }
 
-/// Sends the unread counts to Shiver's pages and to the rail inside the page on screen.
+/// Sends the unread counts to Shiver's own page.
 fn publish(app: &AppHandle) {
-    let unread = app.state::<Inbox>().unread();
-    let _ = app.emit(INBOX_EVENT, &unread);
-
-    if app.state::<webview::Showing>().server().is_none() {
-        return;
-    }
-
-    if let (Ok(window), Ok(payload)) = (webview::main_window(app), serde_json::to_string(&unread)) {
-        let _ = window.eval(format!(
-            "window.__SHIVER_UNREAD__ && window.__SHIVER_UNREAD__({payload})"
-        ));
-    }
+    webview::emit_home(app, INBOX_EVENT, app.state::<Inbox>().unread());
 }
 
 /// Signs a server in again from its stored password. A refused password is forgotten.
@@ -851,30 +828,12 @@ fn notice(
     muted: &[i64],
     message: &sharkord::NewMessage,
 ) -> Option<String> {
-    if (message.user_id.is_some() && message.user_id == joined.own_user_id)
-        || muted.contains(&message.channel_id)
-    {
+    if message.is_own(joined) || muted.contains(&message.channel_id) {
         return None;
     }
 
-    let author = clamp(
-        message
-            .plugin_id
-            .clone()
-            .or_else(|| {
-                message
-                    .user_id
-                    .and_then(|id| joined.user_names.get(&id).cloned())
-            })
-            .unwrap_or_else(|| "Someone".into()),
-        MAX_AUTHOR,
-    );
-
-    let text = if message.text.is_empty() {
-        "Sent an attachment".to_string()
-    } else {
-        clamp(message.text.clone(), MAX_BODY)
-    };
+    let author = clamp(message.author(joined), MAX_AUTHOR);
+    let text = clamp(message.body().to_string(), MAX_BODY);
 
     if joined.dm_channels.contains(&message.channel_id) {
         return Some(format!("{author}: {text}"));
@@ -946,10 +905,7 @@ fn report_watch_problem(app: &AppHandle, entry_id: &str, size: usize) {
         return;
     };
 
-    let size = match size as f64 / (1024.0 * 1024.0) {
-        mb if mb < 1.0 => format!("{} KB", size / 1024),
-        mb => format!("{mb:.1} MB"),
-    };
+    let size = sharkord::readable_size(size);
 
     let first = app.state::<Inbox>().remember_problem(
         entry_id,
@@ -1091,7 +1047,6 @@ mod tests {
     #[test]
     fn store_keys_name_their_entry() {
         assert_eq!(entry_of("abc"), "abc");
-        assert_eq!(entry_of(&carried_store_key("abc")), "abc");
         assert_eq!(entry_of(&password_store_key("abc")), "abc");
         assert_eq!(entry_of(&baseline_store_key("abc")), "abc");
     }

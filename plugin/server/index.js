@@ -2,7 +2,8 @@
  * Shiver companion plugin, server half: registers the actions the client relay calls, migrates the
  * settings file older versions kept, and wires message events to push.
  *
- * Every action acts on `invoker.userId` from the session, never an id in the payload.
+ * Every action acts on `invoker.userId` from the session, never an id in the payload, and every
+ * write is rate limited per user.
  */
 
 import { readFile, unlink } from 'node:fs/promises';
@@ -10,12 +11,14 @@ import path from 'node:path';
 
 import { installFileNaming } from './files.js';
 import { createPush } from './push.js';
-import { createRows } from './rows.js';
+import { createLimiter, createRows } from './rows.js';
 import { createSettings, mutedFrom } from './settings.js';
 import { createStatuses } from './status.js';
 
 const STORE_FILE = 'user-settings.json';
 const PRIME_CONCURRENCY = 16;
+/** Writes a minute per user through the actions without a limit of their own. */
+const WRITE_LIMIT = 30;
 
 /**
  * Carries mutes from the pre-0.0.25 settings file into the host's storage, without overwriting a
@@ -113,6 +116,13 @@ const onLoad = async (ctx) => {
 
   await primeFromUserRows(ctx, [push.adopt, statuses.adopt]);
 
+  const mayWrite = createLimiter(WRITE_LIMIT, 60_000);
+  const limited = (run) => (user, payload) => {
+    if (!mayWrite(user)) throw new Error('Too many changes; try again in a minute');
+
+    return run(user, payload);
+  };
+
   const actions = {
     setStatus: ['Set your own status line', (user, payload) => statuses.set(user, payload?.status)],
     getStatuses: ['Everyone who has a status set', () => statuses.all()],
@@ -120,18 +130,21 @@ const onLoad = async (ctx) => {
     getMutedChannels: ['Your muted channels', (user) => settings.getMutedChannels(user)],
     setMutedChannels: [
       'Replace your muted channels',
-      (user, payload) => settings.setMutedChannels(user, payload?.mutedChannels)
+      limited((user, payload) => settings.setMutedChannels(user, payload?.mutedChannels))
     ],
-    setReadFloor: ['Store your shared unread floor', (user, payload) => settings.setReadFloor(user, payload?.floor)],
+    setReadFloor: [
+      'Store your shared unread floor',
+      limited((user, payload) => settings.setReadFloor(user, payload?.floor))
+    ],
     setPushEndpoint: [
       'Register a UnifiedPush endpoint so Shiver can wake this device',
       async (user, payload) => ({ endpoints: await push.register(user, payload?.endpoint) })
     ],
     clearPushEndpoint: [
       'Stop waking a device, or all of them when no endpoint is named',
-      async (user, payload) => ({
+      limited(async (user, payload) => ({
         endpoints: await push.unregister(user, typeof payload?.endpoint === 'string' ? payload.endpoint : undefined)
-      })
+      }))
     ]
   };
 

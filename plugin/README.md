@@ -88,7 +88,7 @@ overwritten.
 | `clearPushEndpoint` | Drops one endpoint, or all of the caller's when none is named |
 
 Each acts on `invoker.userId`, which Sharkord authenticates, so none of them can be aimed at
-another account.
+another account. The other writes share a limit of 30 a minute per user.
 
 ## Merge behaviour
 
@@ -127,14 +127,14 @@ arrived over its own connection. A leaked endpoint is therefore worth spam, not 
 
 **One thing to be aware of as an admin.** The endpoint is a URL supplied by a user that this server
 then fetches, so it is checked before it is stored *and again immediately before every send*: https
-only, the hostname resolved, and refused unless every address it resolves to is public. IPv6 is
+on port 443 only, the hostname resolved, and refused unless every address it resolves to is public. IPv6 is
 checked as an allow-list of global unicast, so NAT64, 6to4-to-private, Teredo, IPv4-mapped and similar
 tunnelled forms are refused too.
 
 **The request is made to the exact address that passed the check.** Each wake-up is a TLS connection
 to that address, with the certificate verified against the endpoint's hostname — so a name that
 changes its answer between the check and the connection (DNS rebinding) cannot move the request.
-Redirects are never followed.
+Redirects are never followed, and at most 64 wake-ups are in flight at once across the server.
 
 A refused registration is told only that it was refused, never why, so the check cannot be used to
 map which hostnames exist on this server's network.

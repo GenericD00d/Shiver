@@ -32,6 +32,11 @@ const SECTIONS = [
 
 type SectionId = (typeof SECTIONS)[number]['id'];
 
+/** Resetting camera and microphone answers is a WebView2 feature; elsewhere it could only fail. */
+const SHOWN_SECTIONS = SECTIONS.filter(
+  (entry) => entry.id !== 'permissions' || navigator.userAgent.includes('Windows')
+);
+
 export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
   const [draft, setDraft] = useState<Settings>(settings);
   const [section, setSection] = useState<SectionId>('appearance');
@@ -151,7 +156,7 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
 
       <div className="settings-body">
         <nav className="settings-sections" aria-label="Settings sections">
-          {SECTIONS.map((entry) => (
+          {SHOWN_SECTIONS.map((entry) => (
             <button
               key={entry.id}
               type="button"

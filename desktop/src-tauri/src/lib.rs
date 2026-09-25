@@ -19,8 +19,13 @@ mod webviews;
 use tauri::{Emitter, Manager};
 
 use crate::{
-    drain::Readiness, feed::Feed, session::Recovery, store::Store, voice::VoiceState,
-    watch::Watcher, webviews::ActiveServer,
+    drain::Readiness,
+    feed::Feed,
+    session::Recovery,
+    store::{RegistryStore, Store},
+    voice::VoiceState,
+    watch::Watcher,
+    webviews::ActiveServer,
 };
 
 /// Shows why Shiver could not start (a Windows GUI app has no console for stderr), then exits.
@@ -61,13 +66,29 @@ fn report_failed_start(error: tauri::Error) -> ! {
     std::process::exit(1);
 }
 
+fn only_shiver_chrome(
+    handler: impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        if webviews::is_shiver_chrome(invoke.message.webview_ref().label()) {
+            return handler(invoke);
+        }
+
+        invoke
+            .resolver
+            .reject("Only Shiver's own pages can call Shiver");
+
+        true
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(only_shiver_chrome(tauri::generate_handler![
             commands::list_registry,
             commands::reset_media_permissions,
             commands::forget_password,
@@ -97,7 +118,7 @@ pub fn run() {
             commands::log_out_server,
             commands::list_notifications,
             commands::list_dms,
-            commands::unread_count,
+            commands::feed_summary,
             commands::unread_counts,
             commands::set_accept_any_size,
             commands::mark_server_read,
@@ -115,25 +136,30 @@ pub fn run() {
             commands::reorder_rail,
             commands::create_folder_with,
             commands::show_folder_menu,
-        ])
+        ]))
         .setup(|app| {
             let handle = app.handle();
 
             app.manage(store::load(handle)?);
             app.manage(ActiveServer::default());
+            app.manage(sharkord_client::CheckedSessions::default());
             app.manage(Feed::default());
             app.manage(VoiceState::default());
             app.manage(Readiness::default());
             app.manage(Recovery::default());
             app.manage(drain::Broadcast::default());
             app.manage(webviews::Openings::default());
-            app.manage(update::Announced::default());
             app.manage(update::Available::default());
             app.manage(Watcher::default());
             app.manage(watch::Missed::default());
             app.manage(watch::Plugins::default());
             app.manage(watch::Reported::default());
             app.manage(watch::ReadStates::default());
+
+            // folders left thin by an older Shiver, which never dissolved them
+            let _ = app
+                .state::<Store>()
+                .update(|registry| Ok(registry.rail().prune_folders()));
 
             let mute_hotkey = app.state::<Store>().registry().settings.mute_hotkey.clone();
 

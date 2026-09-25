@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::{model::Folder, Error, Result};
 
-pub const MAX_FOLDER_NAME: usize = 100;
+const MAX_FOLDER_NAME: usize = 100;
 
 /// What the rail needs from a client's server entry.
 pub trait RailServer {
@@ -52,6 +52,50 @@ macro_rules! rail_server {
     };
 }
 
+/// [`rail_server!`] for a client's server entry, plus the lookups both clients' registries share
+/// (a registry with `servers`, `folders` and `muted` fields).
+#[macro_export]
+macro_rules! registry {
+    ($registry:ty, $server:ty) => {
+        $crate::rail_server!($server);
+
+        impl $registry {
+            pub fn server(&self, id: &str) -> Option<&$server> {
+                self.servers.iter().find(|server| server.id == id)
+            }
+
+            pub fn server_mut(&mut self, id: &str) -> Option<&mut $server> {
+                self.servers.iter_mut().find(|server| server.id == id)
+            }
+
+            pub fn muted_for(&self, entry_id: &str) -> Vec<i64> {
+                $crate::model::muted_for(&self.muted, entry_id)
+            }
+
+            /// Replaces one entry's mutes; returns the new list.
+            pub fn set_muted_for(
+                &mut self,
+                entry_id: &str,
+                channels: impl IntoIterator<Item = i64>,
+            ) -> Vec<i64> {
+                $crate::model::set_muted_for(&mut self.muted, entry_id, channels)
+            }
+
+            /// The next free top-level position.
+            pub fn next_position(&self) -> i32 {
+                $crate::rail::next_position(&self.servers, &self.folders)
+            }
+
+            pub fn rail(&mut self) -> $crate::rail::Rail<'_, $server> {
+                $crate::rail::Rail {
+                    servers: &mut self.servers,
+                    folders: &mut self.folders,
+                }
+            }
+        }
+    };
+}
+
 /// The next free top-level position (servers in folders keep their own numbering).
 pub fn next_position<S: RailServer>(servers: &[S], folders: &[Folder]) -> i32 {
     servers
@@ -70,7 +114,7 @@ pub struct Rail<'a, S> {
 }
 
 /// A trimmed, non-empty folder name of at most `MAX_FOLDER_NAME` characters.
-pub fn folder_name(name: &str) -> Result<String> {
+fn folder_name(name: &str) -> Result<String> {
     let trimmed = name.trim();
 
     if trimmed.is_empty() {
@@ -99,18 +143,26 @@ impl<S: RailServer> Rail<'_, S> {
         next_position(self.servers, self.folders)
     }
 
-    /// A folder `id` holding `member_ids` (in that order), where its first member was.
+    /// A folder `id` holding `member_ids` (in that order), where its first member was (a member
+    /// taken from another folder was where that folder is). Callers prune after: a folder a member
+    /// left may now be too thin.
     pub fn create_folder(
         &mut self,
         id: String,
         name: &str,
         member_ids: &[String],
     ) -> Result<Folder> {
+        let slot = |server: &S| {
+            server
+                .folder_id()
+                .and_then(|folder| self.folders.iter().find(|candidate| candidate.id == folder))
+                .map_or(server.position(), |folder| folder.position)
+        };
         let position = self
             .servers
             .iter()
             .filter(|server| member_ids.iter().any(|member| member == server.id()))
-            .map(RailServer::position)
+            .map(slot)
             .min()
             .unwrap_or_else(|| self.next_position());
 
@@ -399,6 +451,29 @@ mod tests {
             folder_name(&"x".repeat(500)).unwrap().len(),
             MAX_FOLDER_NAME
         );
+    }
+
+    #[test]
+    fn a_folder_made_from_another_folders_member_takes_that_folders_place() {
+        let mut servers = vec![
+            at("a", None, 0),
+            at("b", Some("old"), 0),
+            at("c", Some("old"), 1),
+            at("d", None, 2),
+        ];
+        let mut folders = vec![folder("old", 1)];
+        let mut rail = Rail {
+            servers: &mut servers,
+            folders: &mut folders,
+        };
+
+        let made = rail
+            .create_folder("new".into(), "New", &["d".into(), "c".into()])
+            .unwrap();
+
+        assert_eq!(made.position, 1);
+        assert!(rail.prune_folders());
+        assert!(!folders.iter().any(|folder| folder.id == "old"));
     }
 
     #[test]

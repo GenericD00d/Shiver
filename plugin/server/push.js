@@ -5,9 +5,9 @@
  * see it gets an empty POST to their registered endpoints (at most once per DEBOUNCE_MS). The body is
  * empty because the relay is a third party; the phone reconnects to find out what arrived.
  *
- * Endpoints are user-supplied URLs this server fetches, so they are vetted (https, every resolved
- * address public) and the request is made over TLS to the exact address that was vetted, which
- * closes DNS rebinding. Redirects are never followed.
+ * Endpoints are user-supplied URLs this server fetches, so they are vetted (https on 443, every
+ * resolved address public) and the request is made over TLS to the exact address that was vetted,
+ * which closes DNS rebinding. Redirects are never followed, and deliveries in flight are capped.
  */
 
 import { lookup as dnsLookup } from 'node:dns/promises';
@@ -16,11 +16,12 @@ import { connect as tlsConnect } from 'node:tls';
 
 import { createLimiter } from './rows.js';
 
-export const MAX_ENDPOINTS = 5;
-export const MAX_ENDPOINT_LENGTH = 512;
+const MAX_ENDPOINTS = 5;
+const MAX_ENDPOINT_LENGTH = 512;
 const DEBOUNCE_MS = 10_000;
 const PUSH_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 16 * 1024;
+const MAX_IN_FLIGHT = 64;
 /** Registrations per user per minute; each costs a DNS lookup. */
 const REGISTER_LIMIT = 10;
 
@@ -30,7 +31,7 @@ export const REFUSED = 'That push endpoint was refused';
 /* ── addresses ── */
 
 /** The eight 16-bit groups of an IPv6 address, or null. */
-export const ipv6Groups = (address) => {
+const ipv6Groups = (address) => {
   if ((address.match(/::/g) ?? []).length > 1) return null;
 
   let text = address;
@@ -135,7 +136,7 @@ export const normaliseEndpoint = (value) => {
     return null;
   }
 
-  if (url.protocol !== 'https:' || url.username || url.password || !url.hostname) return null;
+  if (url.protocol !== 'https:' || url.port || url.username || url.password || !url.hostname) return null;
 
   url.hash = '';
 
@@ -186,7 +187,7 @@ export const deliver = ({ url, address }, { connect = tlsConnect, timeoutMs = PU
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     const socket = connect({
       host: address,
-      port: Number(url.port || 443),
+      port: 443,
       servername: isIP(hostname) ? undefined : hostname,
       ALPNProtocols: ['http/1.1']
     });
@@ -234,11 +235,16 @@ export const deliver = ({ url, address }, { connect = tlsConnect, timeoutMs = PU
  * The push feature. `subscribers` caches each subscribed user's endpoints and mutes, so a message
  * costs no row reads; it stays current because every write to those fields goes through this plugin.
  */
-export const createPush = (ctx, rows, { lookup = dnsLookup, send = deliver, now = () => Date.now() } = {}) => {
+export const createPush = (
+  ctx,
+  rows,
+  { lookup = dnsLookup, send = deliver, now = () => Date.now(), maxInFlight = MAX_IN_FLIGHT } = {}
+) => {
   /** userId -> { endpoints, muted: Set } */
   const subscribers = new Map();
   const lastPushAt = new Map();
   const mayRegister = createLimiter(REGISTER_LIMIT, 60_000, now);
+  let inFlight = 0;
 
   const remember = (userId, row) => {
     const endpoints = endpointsFrom(row?.pushEndpoints);
@@ -265,28 +271,24 @@ export const createPush = (ctx, rows, { lookup = dnsLookup, send = deliver, now 
 
   /** Re-vets and posts one wake-up; drops the endpoint if the relay says it is gone (404/410). */
   const wake = async (userId, endpoint) => {
-    const vetted = await vetEndpoint(endpoint, lookup);
+    if (inFlight >= maxInFlight) return;
 
-    if (!vetted.ok) {
-      ctx.logger.debug(`Refusing to post to a push endpoint for user ${userId}: ${vetted.why}`);
-
-      return;
-    }
-
-    let status;
+    inFlight += 1;
 
     try {
-      status = await send(vetted);
+      const vetted = await vetEndpoint(endpoint, lookup);
+
+      if (!vetted.ok) return ctx.logger.debug(`Refusing to post to a push endpoint for user ${userId}: ${vetted.why}`);
+
+      const status = await send(vetted);
+
+      if (status === 404 || status === 410) {
+        await changeEndpoints(userId, (endpoints) => endpoints.filter((entry) => entry !== endpoint));
+      }
     } catch (error) {
-      ctx.logger.debug(`Could not reach a push endpoint for user ${userId}: ${error?.message}`);
-
-      return;
-    }
-
-    if (status === 404 || status === 410) {
-      await changeEndpoints(userId, (endpoints) => endpoints.filter((entry) => entry !== endpoint)).catch(
-        (error) => ctx.logger.debug(`Could not drop a dead push endpoint for user ${userId}: ${error?.message}`)
-      );
+      ctx.logger.debug(`Could not wake user ${userId}: ${error?.message}`);
+    } finally {
+      inFlight -= 1;
     }
   };
 

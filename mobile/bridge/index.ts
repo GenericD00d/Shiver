@@ -1,18 +1,17 @@
 /**
  * The Shiver bridge (mobile): evaluated in a Sharkord page once it has loaded. It is handed this
- * entry's config plus the least that draws a rail (names, inlined logos, opaque ids, counts; see
- * `rail_payload` in `webview.rs`) and never another server's address. The page has no IPC: the
- * rail navigates to Shiver's own page with a fragment, and the core polls the hooks in `types.ts`.
- * The session was served from memory since document start (`document-start.ts`).
+ * entry's own config and nothing about the user's other servers. The page has no IPC: back and a
+ * swipe past the drawer navigate to Shiver's own page, where the rail is, and the core polls the
+ * hooks in `types.ts`. The session was served from memory since document start (`document-start.ts`).
  */
 
-import { defineHook, installExternalLinks, isTopFrame, onDomSettled } from '../../shared/web/bridge/dom';
+import { defineHook, isTopFrame, onDomSettled, touched } from '../../shared/web/bridge/dom';
 import { installAttachmentCards, installRoleColors, installSoundVolume, installStatusButton, installVoiceColors } from '../../shared/web/bridge/features';
 import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, waitForPlugin } from '../../shared/web/bridge/plugin';
-import { installMuteStyles, paintMuted } from '../../shared/web/bridge/sharkord';
+import { CHANNEL_ITEM, installMuteStyles, paintMuted } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme } from '../../shared/web/bridge/theme';
-import { AUTO_LOGIN, installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
-import { installGestures, mountRail } from './rail';
+import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
+import { goHome, installHomeSwipe, setHome } from './home';
 import { installAutoReconnect } from './reconnect';
 import {
   closeChannelMenu,
@@ -20,8 +19,7 @@ import {
   installReactionNames,
   installReturnMakesALine,
   installTouchStyles,
-  openConversation,
-  openDirectMessages
+  openConversation
 } from './touch';
 import type { ShiverConfig } from './types';
 
@@ -32,8 +30,7 @@ function install(shiver: ShiverConfig) {
   defineHook('__SHIVER_MOBILE_INSTALLED__', true);
 
   seedSession(shiver.session);
-
-  if (shiver.carried) restoreCarried(shiver.carried);
+  setHome(shiver.home);
 
   applyPageTheme(shiver.theme);
   installMuteStyles();
@@ -45,12 +42,7 @@ function install(shiver: ShiverConfig) {
   installReactionNames();
   installReturnMakesALine();
   installStatusButton(true);
-  installAutoReconnect(shiver.session, shiver.serverName);
-
-  const openQueue: string[] = [];
-
-  defineHook('__SHIVER_OPEN__', () => openQueue.splice(0));
-  installExternalLinks((href) => openQueue.push(href));
+  installAutoReconnect(shiver.session, shiver.serverName, shiver.entryId);
 
   const muted = new Set(shiver.muted);
   const paint = () => paintMuted(muted);
@@ -66,7 +58,7 @@ function install(shiver: ShiverConfig) {
     }
   });
   paint();
-  onDomSettled(paint);
+  onDomSettled((changed) => paintMuted(muted, touched(changed, CHANNEL_ITEM)));
 
   void syncMutesWithPlugin([...muted]).then((merged) => {
     if (!merged) return;
@@ -78,25 +70,25 @@ function install(shiver: ShiverConfig) {
     paint();
   });
 
-  if (shiver.pushEndpoint) {
-    const endpoint = shiver.pushEndpoint;
+  const { pushEndpoint, retiredPushEndpoints } = shiver;
 
-    // the plugin checks the endpoint before storing it against this user
+  if (pushEndpoint || retiredPushEndpoints.length) {
     void waitForPlugin().then((present) => {
-      if (present) void callPlugin('setPushEndpoint', { endpoint });
+      if (!present) return;
+
+      // the plugin checks the endpoint before storing it against this user
+      if (pushEndpoint) void callPlugin('setPushEndpoint', { endpoint: pushEndpoint });
+      for (const endpoint of retiredPushEndpoints) void callPlugin('clearPushEndpoint', { endpoint });
     });
   }
 
   // arriving at a server is what moves its shared unread floor
   if (shiver.readFloor) void storeReadFloor(shiver.readFloor);
 
-  const rail = mountRail(shiver);
-
-  defineHook('__SHIVER_BACK__', () => closeChannelMenu() || rail.back());
-  installGestures(rail);
+  defineHook('__SHIVER_BACK__', () => closeChannelMenu() || goHome());
+  installHomeSwipe();
 
   if (shiver.openDmUser) openConversation(shiver.openDmUser);
-  else if (shiver.openDms) openDirectMessages();
 }
 
 /**
@@ -110,27 +102,6 @@ function seedSession(session: string | null) {
   takeSeedFromLocation();
 
   if (session && !window.__SHIVER_SESSION_SHIM__) installSessionShim(session);
-
-  defineHook('__SHIVER_FORGET_SESSION__', () => window.__SHIVER_SESSION_SHIM__?.seed(null));
-}
-
-/**
- * Puts back the settings and drafts kept when this origin's storage was last wiped, filling only
- * gaps (anything the page wrote since is newer) and never the session keys.
- */
-function restoreCarried(carried: string) {
-  try {
-    const state = JSON.parse(carried) as Record<string, unknown> | null;
-
-    if (!state || typeof state !== 'object') return;
-
-    for (const [key, value] of Object.entries(state)) {
-      if (typeof value !== 'string' || key === 'sharkord-identity' || key.startsWith(AUTO_LOGIN)) continue;
-      if (localStorage.getItem(key) === null) localStorage.setItem(key, value);
-    }
-  } catch {
-    // unreadable carried state
-  }
 }
 
 // read and removed from the page at once; only the top frame installs

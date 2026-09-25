@@ -12,8 +12,8 @@ use zeroize::Zeroizing;
 
 use crate::{
     drain::{self, Readiness},
-    error::{Error, Result},
-    feed::{DmEntry, Feed, Notification},
+    error::{Core, Error, Result},
+    feed::{DmEntry, Feed, FeedSummary, Notification},
     hotkey, jwt,
     model::{normalize_origin, Folder, Registry, ServerEntry, Settings},
     secrets::{self, Secret},
@@ -23,7 +23,7 @@ use crate::{
     webviews,
 };
 
-use sharkord_client::ServerCheck;
+use sharkord_client::{CheckedSessions, ServerCheck};
 use shiver_core::{login, probe};
 
 /// Tells Shiver's own webviews the settings changed.
@@ -38,13 +38,13 @@ fn entry_of(store: &Store, id: &str) -> Result<ServerEntry> {
         .registry()
         .server(id)
         .cloned()
-        .ok_or(Error::UnknownServer)
+        .ok_or(Core::UnknownServer.into())
 }
 
 /// The entry, the settings and its mutes: what building a page needs.
 fn page_inputs(store: &Store, id: &str) -> Result<(ServerEntry, Settings, Vec<i64>)> {
     let registry = store.registry();
-    let entry = registry.server(id).cloned().ok_or(Error::UnknownServer)?;
+    let entry = registry.server(id).cloned().ok_or(Core::UnknownServer)?;
 
     Ok((entry, registry.settings.clone(), registry.muted_for(id)))
 }
@@ -134,6 +134,7 @@ pub fn list_registry(store: State<'_, Store>) -> Registry {
 /// See [`sharkord_client::check_server`].
 #[tauri::command]
 pub async fn check_server(
+    kept: State<'_, CheckedSessions>,
     origin: String,
     identity: Option<String>,
     password: Option<Password>,
@@ -142,6 +143,7 @@ pub async fn check_server(
         &origin,
         identity.as_deref(),
         password.as_deref().map(String::as_str),
+        &kept,
     )
     .await?)
 }
@@ -171,7 +173,13 @@ pub async fn add_server(
         password.as_ref().filter(|password| !password.is_empty()),
     ) {
         (Some(identity), Some(password)) => {
-            let token = Zeroizing::new(login::sign_in(&origin, identity, password).await?);
+            let token = match app
+                .state::<CheckedSessions>()
+                .take(&origin, identity, password)
+            {
+                Some(token) => token,
+                None => Zeroizing::new(login::sign_in(&origin, identity, password).await?),
+            };
 
             store_credentials(&id, &token, password, remember_password != Some(false)).await?;
 
@@ -197,7 +205,6 @@ pub async fn add_server(
         let entry = ServerEntry {
             id: id.clone(),
             origin: origin.clone(),
-            server_id: Some(info.server_id.clone()),
             name: info.name.clone(),
             icon_url: info.icon_url.clone(),
             identity,
@@ -234,7 +241,6 @@ pub async fn remove_server(
     entry_of(&store, &id)?;
 
     webviews::close_server(&app, &id)?;
-    webviews::close_dm_view(&app, &id);
 
     // credentials go first, so a failure cannot leave one behind for a server no longer listed
     secrets::forget_all_off_thread(&id).await?;
@@ -249,6 +255,7 @@ pub async fn remove_server(
         registry.servers.retain(|server| server.id != id);
         registry.muted.retain(|muted| muted.entry_id != id);
         registry.baselines.remove(&id);
+        registry.rail().prune_folders();
         registry
             .pending_permission_resets
             .retain(|pending| pending != &id);
@@ -262,6 +269,7 @@ pub async fn remove_server(
 
     webviews::discard_profiles(&app, &id, None);
     crate::watch::sync(&app);
+    crate::watch::forget(&app, &id);
     drain::notify_feed_changed(&app);
 
     Ok(())
@@ -274,10 +282,9 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
     secrets::forget_all_off_thread(&id).await?;
 
     webviews::close_server(&app, &id)?;
-    webviews::close_dm_view(&app, &id);
 
     let entry = store.update(|registry| {
-        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
+        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
 
         server.identity = None;
         server.profile = Some(Uuid::new_v4().simple().to_string());
@@ -293,8 +300,9 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
     let locked = voice_locked_for(&app, &id);
 
     webviews::show_server(&app, &entry, &settings, None, &[], locked)?;
-    webviews::preload_dm_view(&app, &entry, &settings, None)?;
     crate::watch::sync(&app);
+    crate::watch::forget(&app, &id);
+    drain::notify_feed_changed(&app);
 
     Ok(())
 }
@@ -317,7 +325,7 @@ pub async fn sign_in_server(
     store_credentials(&id, &token, &password, remember_password != Some(false)).await?;
 
     store.update(|registry| {
-        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
+        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
 
         server.account_label.get_or_insert_with(|| identity.clone());
         server.identity = Some(identity.clone());
@@ -326,7 +334,6 @@ pub async fn sign_in_server(
     })?;
 
     webviews::close_server(&app, &id)?;
-    webviews::close_dm_view(&app, &id);
     app.state::<Readiness>().forget_entry(&id);
     app.state::<Recovery>().forget_entry(&id);
     crate::watch::restart(&app, &id);
@@ -355,11 +362,10 @@ pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<
     let info = probe::fetch_info(&entry_of(&store, &id)?.origin).await?;
 
     store.update(|registry| {
-        let server = registry.server_mut(&id).ok_or(Error::UnknownServer)?;
+        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
 
         server.name = info.name.clone();
         server.icon_url = info.icon_url.clone();
-        server.server_id = Some(info.server_id.clone());
 
         Ok(server.clone())
     })
@@ -375,7 +381,7 @@ pub async fn set_accept_any_size(
     store.update(|registry| {
         registry
             .server_mut(&id)
-            .ok_or(Error::UnknownServer)?
+            .ok_or(Core::UnknownServer)?
             .accept_any_size = accept;
 
         Ok(())
@@ -411,9 +417,12 @@ pub async fn create_folder_with(
     member_ids: Vec<String>,
 ) -> Result<Folder> {
     store.update(|registry| {
-        Ok(registry
-            .rail()
-            .create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?)
+        let mut rail = registry.rail();
+        let folder = rail.create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?;
+
+        rail.prune_folders();
+
+        Ok(folder)
     })
 }
 
@@ -428,6 +437,7 @@ pub async fn delete_folder(store: State<'_, Store>, id: String) -> Result<()> {
     store.update(|registry| Ok(registry.rail().delete_folder(&id)?))
 }
 
+/// Moves a server into a folder (or out, with `None`); a folder left with one server dissolves.
 #[tauri::command]
 pub async fn set_server_folder(
     store: State<'_, Store>,
@@ -438,6 +448,7 @@ pub async fn set_server_folder(
         let mut rail = registry.rail();
 
         rail.set_server_folder(&id, folder_id)?;
+        rail.prune_folders();
 
         Ok(())
     })
@@ -609,11 +620,11 @@ pub async fn show_shell(app: AppHandle) -> Result<()> {
 }
 
 #[tauri::command]
-pub async fn exit_dm_split(app: AppHandle) -> Result<()> {
-    webviews::hide_dm_views(&app)
+pub async fn exit_dm_split(app: AppHandle) {
+    webviews::end_conversation(&app);
 }
 
-/// Opens one conversation in the entry's conversation view, beside Shiver's DM list.
+/// Opens one conversation in the entry's own page, beside Shiver's DM list.
 #[tauri::command]
 pub async fn open_dm(
     app: AppHandle,
@@ -621,21 +632,24 @@ pub async fn open_dm(
     entry_id: String,
     name: String,
 ) -> Result<()> {
-    let (entry, settings, _) = page_inputs(&store, &entry_id)?;
-    let token = ensure_session(&entry).await;
+    let (entry, settings, muted) = page_inputs(&store, &entry_id)?;
+    let token = match app.get_webview(&webviews::webview_label(&entry_id)) {
+        Some(_) => None,
+        None => ensure_session(&entry).await,
+    };
 
-    if webviews::show_dm_view(&app, &entry, &settings, token.as_deref(), &name)? {
-        return Ok(());
-    }
+    webviews::show_conversation(
+        &app,
+        &entry,
+        &settings,
+        token.as_deref(),
+        &muted,
+        voice_locked_for(&app, &entry_id),
+        &name,
+    )?;
 
-    if let Some(webview) = app.get_webview(&webviews::dm_webview_label(&entry_id)) {
-        let payload =
-            serde_json::to_string(&name).map_err(|error| Error::Webview(error.to_string()))?;
-
-        webview.eval(format!(
-            "window.__SHIVER_OPEN_DM__ && window.__SHIVER_OPEN_DM__({payload})"
-        ))?;
-    }
+    // also stands the entry's socket down, should its page have just been opened
+    webviews::trim_pages(&app);
 
     Ok(())
 }
@@ -681,13 +695,20 @@ pub fn voice_status(voice: State<'_, VoiceState>) -> Option<VoiceStatus> {
 #[tauri::command]
 pub async fn voice_control(app: AppHandle, action: String) -> Result<()> {
     if !matches!(action.as_str(), "mic" | "sound" | "leave") {
-        return Err(Error::InvalidInput(format!(
-            "Unknown voice action '{action}'"
-        )));
+        return Err(Core::InvalidInput(format!("Unknown voice action '{action}'")).into());
     }
 
-    if let Some(holder) = app.state::<VoiceState>().holder() {
+    let voice = app.state::<VoiceState>();
+
+    if let Some(holder) = voice.holder() {
         webviews::run_voice_action(&app, &holder, &action);
+
+        // a page that does not really leave loses the call anyway; only the page on screen can
+        // start one again
+        if action == "leave" {
+            voice.forget_entry(&holder);
+            let _ = app.emit_to(webviews::SHELL_WEBVIEW, drain::VOICE_EVENT, ());
+        }
     }
 
     Ok(())
@@ -749,10 +770,10 @@ pub fn list_dms(feed: State<'_, Feed>) -> Vec<DmEntry> {
     feed.dms()
 }
 
-/// The bell's count: the feed only, since every entry there has a message to show.
+/// The bell's count (the feed only, since every entry there has a message to show) and newest entry.
 #[tauri::command]
-pub fn unread_count(feed: State<'_, Feed>) -> usize {
-    feed.unread_count()
+pub fn feed_summary(feed: State<'_, Feed>) -> FeedSummary {
+    feed.summary()
 }
 
 /// Per-entry rail badges: the feed's unread plus what arrived while Shiver was closed.

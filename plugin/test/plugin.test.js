@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { splitName, uniqueName } from '../server/files.js';
-import { adoptOldStore, primeFromUserRows } from '../server/index.js';
+import { adoptOldStore, onLoad, onUnload, primeFromUserRows } from '../server/index.js';
 import {
   createPush,
   deliver,
@@ -102,6 +102,8 @@ test('endpoints are canonicalised once, so the stored string is the checked one'
   assert.equal(normaliseEndpoint('HTTPS://Ntfy.Example.com/up1#x'), 'https://ntfy.example.com/up1');
   assert.equal(normaliseEndpoint('http://ntfy.example.com/up1'), null);
   assert.equal(normaliseEndpoint('https://user:pw@ntfy.example.com/'), null);
+  assert.equal(normaliseEndpoint('https://ntfy.example.com:8443/up'), null, 'port 443 only');
+  assert.equal(normaliseEndpoint('https://ntfy.example.com:443/up'), 'https://ntfy.example.com/up');
   assert.equal(normaliseEndpoint({ toString: () => 'https://x.example/' }), null);
   assert.equal(normaliseEndpoint(`https://x.example/${'a'.repeat(600)}`), null);
   assert.deepEqual(endpointsFrom(['HTTPS://a.example/1', 'https://a.example/1', 7]), ['https://a.example/1']);
@@ -143,7 +145,7 @@ class FakeSocket extends EventEmitter {
 
 test('delivery connects to the vetted address, names the host for TLS, and reads the status', async () => {
   let socket;
-  const vetted = await vetEndpoint('https://relay.example:8443/up?x=1', publicLookup);
+  const vetted = await vetEndpoint('https://relay.example/up?x=1', publicLookup);
   const status = await deliver(vetted, {
     connect: (options) => (socket = new FakeSocket(options, 'HTTP/1.1 410 Gone\r\n\r\n'))
   });
@@ -151,8 +153,8 @@ test('delivery connects to the vetted address, names the host for TLS, and reads
   assert.equal(status, 410);
   assert.equal(socket.options.host, '93.184.216.34', 'pinned to the checked address');
   assert.equal(socket.options.servername, 'relay.example', 'certificate checked against the name');
-  assert.equal(socket.options.port, 8443);
-  assert.match(socket.written, /^POST \/up\?x=1 HTTP\/1\.1\r\nHost: relay\.example:8443\r\n/);
+  assert.equal(socket.options.port, 443);
+  assert.match(socket.written, /^POST \/up\?x=1 HTTP\/1\.1\r\nHost: relay\.example\r\n/);
   assert.match(socket.written, /Content-Length: 0/);
   assert.equal(socket.destroyed, true);
 });
@@ -267,6 +269,24 @@ test('a dead endpoint is dropped without touching the rest of the row', async ()
   assert.deepEqual(ctx.data.get(1), { pushEndpoints: [], status: 'hello', mutedChannels: [2] });
 });
 
+test('deliveries in flight are capped server-wide', async () => {
+  let sends = 0;
+  const { push } = await pushFor(subscribed(), { send: () => ((sends += 1), new Promise(() => {})), maxInFlight: 1 });
+
+  await push.onMessage({ userId: 7, channelId: 4 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(sends, 1);
+});
+
+test('clearing an endpoint forgets only that one, however it is written', async () => {
+  const ctx = fakeCtx({ 1: { pushEndpoints: ['https://relay.example/one', 'https://relay.example/two'], status: 'hi' } });
+  const { push } = await pushFor(ctx);
+
+  assert.deepEqual(await push.unregister(1, 'HTTPS://Relay.Example/one#x'), ['https://relay.example/two']);
+  assert.equal(ctx.data.get(1).status, 'hi');
+});
+
 test('a refused registration says only that it was refused, and is rate limited', async () => {
   const ctx = fakeCtx({});
   const rows = createRows(ctx);
@@ -285,8 +305,8 @@ test('a refused registration says only that it was refused, and is rate limited'
 
 test('a status loses invisible and control characters and is capped', () => {
   assert.equal(statusFrom('  hello\n\tthere  '), 'hello there');
-  assert.equal(statusFrom('ad‮min'), 'admin');
-  assert.equal(statusFrom('a​b﻿c'), 'abc');
+  assert.equal(statusFrom('ad\u202emin'), 'admin');
+  assert.equal(statusFrom('a\u200bb\ufeffc'), 'abc');
   assert.equal([...statusFrom('😀'.repeat(200))].length, 100);
   assert.equal(statusFrom(42), '');
 });
@@ -307,6 +327,30 @@ test('mute lists and floors are validated on the way in', () => {
   assert.deepEqual(mutedFrom([3, 3, -1, 1.5, '4', 7]), [3, 7]);
   assert.deepEqual(floorFrom({ 12: 3, 40: 2.6, x: 1, 5: -1, '07': 1 }), { 12: 3, 40: 3 });
   assert.equal(floorFrom([1, 2]), null);
+});
+
+test('writes through the actions are rate limited per user', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'shiver-plugin-'));
+  const actions = new Map();
+  const ctx = {
+    ...fakeCtx({}),
+    dataPath: dir,
+    path: dir,
+    ui: { enable: () => {} },
+    actions: { register: ({ name, executes }) => actions.set(name, executes) },
+    hooks: { onBeforeFileSave: () => () => {} },
+    events: { on: () => () => {} }
+  };
+
+  await onLoad(ctx);
+
+  const floor = (userId) => actions.get('setReadFloor')({ userId }, { floor: { 1: 0 } });
+
+  for (let index = 0; index < 29; index += 1) await floor(1);
+  await actions.get('setMutedChannels')({ userId: 1 }, { mutedChannels: [4] });
+  await assert.rejects(actions.get('clearPushEndpoint')({ userId: 1 }, {}), /Too many/);
+  assert.deepEqual(await floor(2), { ok: true });
+  await onUnload(ctx, { quiet: true });
 });
 
 /* ── migration ── */

@@ -1,5 +1,6 @@
 mod commands;
 mod error;
+mod icons;
 mod inbox;
 mod model;
 mod push;
@@ -16,6 +17,24 @@ use crate::{
     webview::{Showing, MAIN_WINDOW},
 };
 
+/// Android attributes a call to the page last reported loaded, which lags a new page, so commands
+/// are refused whenever anything but Shiver's own page is on screen or being opened.
+fn only_home(
+    handler: impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        if invoke.message.webview_ref().state::<Showing>().at_home() {
+            return handler(invoke);
+        }
+
+        invoke
+            .resolver
+            .reject("Only Shiver's own page can call Shiver");
+
+        true
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -23,7 +42,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shiver_secrets::init())
         .plugin(tauri_plugin_shiver_push::init())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(only_home(tauri::generate_handler![
             update::update_available,
             update::open_releases,
             commands::forget_password,
@@ -37,10 +56,7 @@ pub fn run() {
             commands::remove_server,
             commands::select_server,
             commands::sign_in_server,
-            commands::signed_out_servers,
-            commands::watch_problems,
             commands::set_accept_any_size,
-            commands::remembered_servers,
             commands::app_version,
             commands::update_settings,
             commands::reorder_rail,
@@ -50,21 +66,23 @@ pub fn run() {
             commands::delete_folder,
             commands::set_folder_expanded,
             commands::unread_counts,
+            commands::session_states,
             commands::list_dms,
-            commands::server_plugins,
             commands::refresh_server_info,
+            commands::server_icons,
             commands::log_out_server,
             commands::forget_sessions,
             commands::push_status,
             commands::set_push_server,
             commands::set_push_distributor,
-        ])
+        ]))
         .setup(|app| {
             let handle = app.handle().clone();
 
             app.manage(store::load(&handle)?);
             app.manage(webview::Openings::default());
             app.manage(Showing::default());
+            app.manage(sharkord::CheckedSessions::default());
             app.manage(Inbox::default());
             app.manage(push::Push::default());
             app.manage(update::Available::default());
@@ -81,7 +99,7 @@ pub fn run() {
             .title("Shiver")
             .inner_size(420.0, 860.0)
             .background_color(webview::background_color(&settings))
-            .initialization_script(webview::DOCUMENT_START)
+            .initialization_script(webview::document_start())
             .on_navigation({
                 let handle = handle.clone();
 
@@ -89,37 +107,54 @@ pub fn run() {
                     let server_origin = current_origin(&handle);
 
                     if webview::is_allowed(&handle, target, server_origin.as_deref()) {
+                        if webview::is_home(&handle, target) {
+                            webview::landed_home(&handle);
+                        }
+
                         return true;
                     }
 
-                    open_externally(&handle, target);
+                    let away = target.origin().ascii_serialization();
+
+                    eprintln!("[shiver] the page tried to leave for {away}; refused");
+
+                    if handle.state::<Showing>().loading() {
+                        webview::show_failed(&handle);
+                    }
 
                     false
                 }
             })
-            .on_new_window({
-                let handle = handle.clone();
-
-                // `target="_blank"` links; Android does not ask, so its bridge queues them instead
-                move |url, _features| {
-                    open_externally(&handle, &url);
-
-                    tauri::webview::NewWindowResponse::Deny
-                }
-            })
+            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
             .on_page_load({
                 let handle = handle.clone();
 
                 move |_window, payload| {
-                    if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                        return;
+                    let url = payload.url();
+
+                    if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                        return install_bridge_if_server(&handle, url);
                     }
 
-                    if webview::is_home(&handle, payload.url()) {
+                    // Loads the core starts (`navigate`) and steps through history (back,
+                    // `history.go`) pass no navigation guard, so this is where home is noticed for
+                    // them, and where a page that is neither Shiver's nor the server it opened is
+                    // sent home. The very first load is Shiver's own page.
+                    handle.state::<Showing>().set_home_if_unset(url.to_string());
+
+                    if webview::is_home(&handle, url) {
                         webview::landed_home(&handle);
+                    } else if matches!(url.scheme(), "http" | "https")
+                        && !current_origin(&handle)
+                            .is_some_and(|origin| model::is_same_origin(&origin, url))
+                    {
+                        eprintln!(
+                            "[shiver] {} loaded without Shiver opening it; going home",
+                            url.origin().ascii_serialization()
+                        );
+                        handle.state::<Showing>().set_stray();
+                        webview::go_home(&handle, None);
                     }
-
-                    install_bridge_if_server(&handle, payload.url());
                 }
             })
             .build()?;
@@ -144,7 +179,7 @@ pub fn run() {
 
             inbox::watch_mutes(&handle);
             update::start(&handle);
-            backfill_icons(handle);
+            icons::restore(&handle);
 
             Ok(())
         })
@@ -193,7 +228,7 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
         return;
     };
 
-    let (entry, settings, muted, servers, folders) = {
+    let (entry, settings, muted) = {
         let store = app.state::<Store>();
         let registry = store.registry();
 
@@ -205,8 +240,6 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
             entry,
             registry.settings.clone(),
             registry.muted_for(&entry_id),
-            registry.servers.clone(),
-            registry.folders.clone(),
         )
     };
 
@@ -215,13 +248,32 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
         return;
     }
 
+    app.state::<Showing>().set_loaded();
+
     let inbox = app.state::<Inbox>();
-    let unread = inbox.unread();
-    let signed_out = inbox.signed_out();
     let session = inbox.token(&entry_id);
     let read_floor = inbox.baseline(&entry_id);
-    let carried = inbox.carried(&entry_id);
     let push_endpoint = app.state::<push::Push>().endpoint(&entry_id);
+    let retired: Vec<String> = entry
+        .retired_push_endpoints
+        .iter()
+        .filter(|endpoint| push_endpoint.as_ref() != Some(*endpoint))
+        .cloned()
+        .collect();
+
+    if !entry.retired_push_endpoints.is_empty() {
+        let (handle, id) = (app.clone(), entry_id.clone());
+
+        tauri::async_runtime::spawn_blocking(move || {
+            handle.state::<Store>().update(|registry| {
+                if let Some(server) = registry.server_mut(&id) {
+                    server.retired_push_endpoints.clear();
+                }
+
+                Ok(())
+            })
+        });
+    }
 
     webview::install_bridge(
         app,
@@ -229,14 +281,10 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
             entry: &entry,
             settings: &settings,
             muted: &muted,
-            servers: &servers,
-            unread: &unread,
-            signed_out: &signed_out,
             session: session.as_deref(),
-            carried: carried.as_deref(),
             read_floor: read_floor.as_ref(),
-            folders: &folders,
             push_endpoint: push_endpoint.as_deref(),
+            retired_push_endpoints: &retired,
         },
     );
 
@@ -244,39 +292,13 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
     inbox::harvest_token(app, entry_id);
 }
 
-/// Inlines the logos of servers added before Shiver stored them, once at startup.
-fn backfill_icons(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let missing: Vec<(String, String)> = app
-            .state::<Store>()
-            .registry()
-            .servers
-            .iter()
-            .filter(|server| server.icon_data.is_none())
-            .filter_map(|server| Some((server.id.clone(), server.icon_url.clone()?)))
-            .collect();
-
-        for (id, url) in missing {
-            let Some(data) = shiver_core::probe::fetch_icon(&url).await else {
-                continue;
-            };
-
-            let _ = app.state::<Store>().update(|registry| {
-                if let Some(server) = registry.server_mut(&id) {
-                    server.icon_data = Some(data);
-                }
-
-                Ok(())
-            });
-        }
-    });
-}
-
 /// Hands an http(s) link to the system browser.
 pub fn open_externally(app: &AppHandle, url: &Url) {
     if !matches!(url.scheme(), "http" | "https") {
         return;
     }
+
+    let url = webview::without_seed(url);
 
     use tauri_plugin_opener::OpenerExt;
 

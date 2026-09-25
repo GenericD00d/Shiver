@@ -1,7 +1,7 @@
 /** The muted-channel list and shared unread floor, validated and written through `rows`. */
 
-export const MAX_MUTED_CHANNELS = 500;
-export const MAX_FLOOR_CHANNELS = 5000;
+const MAX_MUTED_CHANNELS = 500;
+const MAX_FLOOR_CHANNELS = 5000;
 
 /** Positive integer channel ids, de-duplicated and capped. */
 export const mutedFrom = (value) =>

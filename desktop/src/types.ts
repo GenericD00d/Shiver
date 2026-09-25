@@ -7,7 +7,6 @@ export type { Folder, MutedChannel, ServerCheck, ServerInfo };
 export type ServerEntry = {
   id: string;
   origin: string;
-  serverId: string | null;
   name: string;
   iconUrl: string | null;
   identity: string | null;
@@ -15,6 +14,9 @@ export type ServerEntry = {
   folderId: string | null;
   position: number;
 };
+
+/** `FeedSummary` in feed.rs: sent with every feed change. */
+export type FeedSummary = { unread: number; newest: number | null };
 
 export type Notification = {
   id: number;

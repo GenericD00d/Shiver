@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use shiver_core::model::{default_sound_volume, default_true};
 pub use shiver_core::{
     is_same_origin,
     model::{
@@ -11,10 +12,9 @@ pub use shiver_core::{
         DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME,
     },
     normalize_origin,
-    rail::Rail,
 };
 
-shiver_core::rail_server!(ServerEntry);
+shiver_core::registry!(Registry, ServerEntry);
 
 /// One rail entry. The same origin may appear more than once (several accounts on one server);
 /// `id` is what identifies the entry everywhere, never the origin.
@@ -23,9 +23,6 @@ shiver_core::rail_server!(ServerEntry);
 pub struct ServerEntry {
     pub id: String,
     pub origin: String,
-    /// `serverId` from `/info`
-    #[serde(default)]
-    pub server_id: Option<String>,
     pub name: String,
     #[serde(default)]
     pub icon_url: Option<String>,
@@ -44,6 +41,16 @@ pub struct ServerEntry {
     /// the generation of this entry's browser profile; replaced on log out so nothing carries over
     #[serde(default)]
     pub profile: Option<String>,
+}
+
+impl ServerEntry {
+    /// What tells this account apart in lists: its label, else the username it signs in with.
+    pub fn label(&self) -> String {
+        self.account_label
+            .clone()
+            .or_else(|| self.identity.clone())
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,14 +86,6 @@ pub struct Settings {
 pub const DEFAULT_PAGES_KEPT: u8 = 3;
 pub const MIN_PAGES_KEPT: u8 = 1;
 pub const MAX_PAGES_KEPT: u8 = 20;
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_sound_volume() -> u16 {
-    100
-}
 
 fn default_pages_kept() -> u8 {
     DEFAULT_PAGES_KEPT
@@ -143,39 +142,4 @@ pub struct Registry {
     /// entries whose camera/microphone answers should be reset the next time their page opens
     #[serde(default)]
     pub pending_permission_resets: Vec<String>,
-}
-
-impl Registry {
-    pub fn server(&self, id: &str) -> Option<&ServerEntry> {
-        self.servers.iter().find(|server| server.id == id)
-    }
-
-    pub fn server_mut(&mut self, id: &str) -> Option<&mut ServerEntry> {
-        self.servers.iter_mut().find(|server| server.id == id)
-    }
-
-    pub fn muted_for(&self, entry_id: &str) -> Vec<i64> {
-        shiver_core::model::muted_for(&self.muted, entry_id)
-    }
-
-    /// Replaces one entry's mutes; returns the new list.
-    pub fn set_muted_for(
-        &mut self,
-        entry_id: &str,
-        channels: impl IntoIterator<Item = i64>,
-    ) -> Vec<i64> {
-        shiver_core::model::set_muted_for(&mut self.muted, entry_id, channels)
-    }
-
-    /// The next free top-level position.
-    pub fn next_position(&self) -> i32 {
-        shiver_core::rail::next_position(&self.servers, &self.folders)
-    }
-
-    pub fn rail(&mut self) -> Rail<'_, ServerEntry> {
-        Rail {
-            servers: &mut self.servers,
-            folders: &mut self.folders,
-        }
-    }
 }

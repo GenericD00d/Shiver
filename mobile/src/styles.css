@@ -335,7 +335,7 @@ button {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* ── the rail: matches the one the bridge draws in a server's page (`bridge/rail.ts`) ── */
+/* ── the rail ── */
 .rail {
   /* the long-press menu is positioned against this */
   position: relative;
@@ -348,7 +348,7 @@ button {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  /* 10px top and bottom, as in the bridge's rail (the activity already insets the system bars) */
+  /* the activity already insets the system bars */
   padding: calc(10px + env(safe-area-inset-top)) 0 calc(10px + env(safe-area-inset-bottom));
   overflow-y: auto;
   overflow-x: hidden;
@@ -359,10 +359,8 @@ button {
   display: none;
 }
 
-/* A tile under the finger, matching the bridge's rail: raised rather than dimmed, so the rail
-   underneath stays legible while it is moved through. */
-/* A folder wears its contents, the same shorthand the bridge's rail uses. Its servers are inset a
-   little when it is open, so the group reads as a group rather than as more of the rail. */
+/* A folder wears its contents. Its servers are inset a little when it is open, so the group reads
+   as a group rather than as more of the rail. */
 .rail-folder {
   background: var(--shiver-surface-dim);
   padding: 4px;
@@ -617,7 +615,7 @@ button {
 }
 
 .rail-item {
-  /* as in the bridge's rail: a long press here is a gesture, never a text selection */
+  /* a long press here is a gesture, never a text selection */
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
@@ -661,8 +659,6 @@ button {
   border-radius: inherit;
 }
 
-/* Must match `.badge` in `mobile/bridge/rail.ts` (the bridge's rail, in a closed shadow root);
-   `scripts/check-rails.py` checks it. */
 .rail-badge {
   position: absolute;
   top: -2px;
@@ -750,9 +746,7 @@ button {
   color: var(--shiver-text-dim);
 }
 
-/* ── the rail's long-press menu ──
-   The same shape and items the bridge draws inside a server's page, so the gesture and what it
-   produces are identical on both sides of the one webview. */
+/* ── the rail's long-press menu ── */
 .rail-menu {
   position: absolute;
   left: calc(var(--shiver-rail-width) + 8px);

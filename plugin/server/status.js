@@ -5,12 +5,12 @@
 
 import { createLimiter } from './rows.js';
 
-export const MAX_STATUS = 100;
+const MAX_STATUS = 100;
 const STATUS_LIMIT = 10;
 
 /** Bidi overrides, zero-width and other invisible format characters: only useful for spoofing. */
 const INVISIBLE =
-  /[­͏؜ᅟᅠ឴឵᠋-᠏​-‏‪-‮⁠-⁯ㅤ︀-️﻿ﾠ\u{e0000}-\u{e0fff}]/gu;
+  /[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\u{e0000}-\u{e0fff}]/gu;
 
 /** A value as a status: visible characters only, one line, at most MAX_STATUS characters. */
 export const statusFrom = (value) =>

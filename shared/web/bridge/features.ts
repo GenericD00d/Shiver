@@ -1,6 +1,7 @@
 /** Page features both bridges install in a Sharkord client. */
 
-import { defineHook, ensureStyle, onDomSettled } from './dom';
+import { MAX_SOUND_VOLUME } from '../settings';
+import { defineHook, ensureStyle, onDomSettled, touched } from './dom';
 import { callPlugin, waitForPlugin } from './plugin';
 import {
   FILE_CARD,
@@ -23,7 +24,7 @@ declare global {
   }
 }
 
-const toLevel = (percent: number) => (Number.isFinite(percent) ? Math.max(0, percent) / 100 : 1);
+const toLevel = (percent: number) => (Number.isFinite(percent) ? Math.min(Math.max(0, percent), MAX_SOUND_VOLUME) / 100 : 1);
 
 /** `AudioNode.prototype.connect`, narrowed to the node-to-node overload. */
 type Connect = (this: AudioNode, destination: AudioNode, output?: number, input?: number) => AudioNode;
@@ -80,10 +81,10 @@ export function installSoundVolume(percent: number) {
   });
 }
 
-const ATTACHMENT_MINIMISED = 'shiver-attachment-min';
+const ATTACHMENT_MINIMISED = 'data-shiver-minimised';
 
 /**
- * Shrinks a file card to its icon (and delete button) when the page is already showing the file
+ * Shrinks a file card to its icon (and delete button) when its message already shows the file
  * inline, e.g. the card under a picture. Name and size move to the tooltip. Cards for anything not
  * shown inline stay whole. A second install only changes the setting.
  */
@@ -95,36 +96,27 @@ export function installAttachmentCards(minimised: boolean) {
   }
 
   ensureStyle('shiver-attachment-cards').textContent = `
-a.${ATTACHMENT_MINIMISED} { max-width: none; width: fit-content; gap: 4px; padding: 2px;
+a[${ATTACHMENT_MINIMISED}] { max-width: none; width: fit-content; gap: 4px; padding: 2px;
   border-color: transparent; background: none; box-shadow: none; opacity: 0.55; }
-a.${ATTACHMENT_MINIMISED}:hover { opacity: 1; }
-a.${ATTACHMENT_MINIMISED} > [class~="bg-muted"] { padding: 2px; background: none; }
-a.${ATTACHMENT_MINIMISED} > [class~="flex-1"] { display: none; }
+a[${ATTACHMENT_MINIMISED}]:hover { opacity: 1; }
+a[${ATTACHMENT_MINIMISED}] > [class~="bg-muted"] { padding: 2px; background: none; }
+a[${ATTACHMENT_MINIMISED}] > [class~="flex-1"] { display: none; }
 `;
 
   let on = minimised;
 
-  const paint = () => {
-    const cards = document.querySelectorAll<HTMLAnchorElement>(FILE_CARD);
+  const shownIn = (card: HTMLAnchorElement) =>
+    [...(card.closest(MESSAGE_WRAPPER) ?? document).querySelectorAll<HTMLImageElement | HTMLMediaElement>(
+      'img[src], video[src], audio[src], source[src]'
+    )].some((media) => media.src === card.href);
 
-    if (cards.length === 0) return;
-
-    const shown = new Set<string>();
-
-    if (on) {
-      for (const media of document.querySelectorAll<HTMLImageElement | HTMLMediaElement>(
-        'img[src], video[src], audio[src], source[src]'
-      )) {
-        shown.add(media.src);
-      }
-    }
-
+  const paint = (cards: Iterable<HTMLAnchorElement> = document.querySelectorAll<HTMLAnchorElement>(FILE_CARD)) => {
     for (const card of cards) {
-      const duplicate = shown.has(card.href);
+      const duplicate = on && shownIn(card);
 
-      if (duplicate === card.classList.contains(ATTACHMENT_MINIMISED)) continue;
+      if (duplicate === card.hasAttribute(ATTACHMENT_MINIMISED)) continue;
 
-      card.classList.toggle(ATTACHMENT_MINIMISED, duplicate);
+      card.toggleAttribute(ATTACHMENT_MINIMISED, duplicate);
 
       if (duplicate) {
         card.title = [...card.querySelectorAll('span')].map((span) => span.textContent?.trim()).join(' · ');
@@ -135,7 +127,16 @@ a.${ATTACHMENT_MINIMISED} > [class~="flex-1"] { display: none; }
   };
 
   paint();
-  onDomSettled(paint);
+  // cards that changed, and those in messages that did (a picture can arrive after its card)
+  onDomSettled((changed) => {
+    const cards = touched<HTMLAnchorElement>(changed, FILE_CARD);
+
+    for (const message of touched(changed, MESSAGE_WRAPPER)) {
+      for (const card of message.querySelectorAll<HTMLAnchorElement>(FILE_CARD)) cards.add(card);
+    }
+
+    paint(cards);
+  });
 
   defineHook('__SHIVER_SET_ATTACHMENT_CARDS__', (next: boolean) => {
     on = next;
@@ -220,22 +221,25 @@ export function installRoleColors() {
     else delete node.dataset.shiverRole;
   };
 
-  const paint = () => {
+  /** Colours the names in `changed` and around it, or everywhere. */
+  const paint = (changed?: readonly Element[]) => {
     if (colors.size === 0 && !painted) return;
 
     painted = colors.size > 0;
 
-    for (const wrapper of document.querySelectorAll<HTMLElement>(MESSAGE_WRAPPER)) {
+    const find = (selector: string) => (changed ? touched(changed, selector) : document.querySelectorAll<HTMLElement>(selector));
+
+    for (const wrapper of find(MESSAGE_WRAPPER)) {
       paintNode(wrapper.parentElement?.previousElementSibling?.querySelector<HTMLElement>(':scope > span'));
     }
 
-    for (const row of document.querySelectorAll<HTMLElement>(MEMBER_ITEM)) {
+    for (const row of find(MEMBER_ITEM)) {
       paintNode(row.querySelector<HTMLElement>(':scope > span'));
     }
 
-    for (const name of document.querySelectorAll<HTMLElement>(REPLY_AUTHOR)) paintNode(name);
+    for (const name of find(REPLY_AUTHOR)) paintNode(name);
 
-    for (const chip of document.querySelectorAll<HTMLElement>(MENTION_CHIP)) {
+    for (const chip of find(MENTION_CHIP)) {
       const name = chip.textContent?.trim().replace(/^@/, '') ?? '';
 
       // your own mention keeps Sharkord's "you were pinged" colour

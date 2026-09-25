@@ -23,7 +23,8 @@ import app.tauri.plugin.Plugin
  * One registration per rail entry, keyed by that entry's random push token (never the entry id),
  * so the endpoint that receives a push says which server it is about and the payload stays empty.
  * Both receivers are exported (a distributor is another app), so every broadcast is checked
- * against the tokens Shiver issued and, from API 34, against the chosen distributor's package.
+ * against the tokens Shiver issued and, when the sender shares its identity (API 34+), against the
+ * chosen distributor's package. The random token is the check that always applies.
  */
 
 private const val ACTION_REGISTER = "org.unifiedpush.android.distributor.REGISTER"
@@ -57,10 +58,7 @@ private fun nameKey(token: String) = "name:$token"
 /** The server name stored when `token` was registered; null for a token Shiver did not issue. */
 private fun serverFor(prefs: SharedPreferences, token: String): String? = prefs.getString(nameKey(token), null)
 
-/**
- * Whether a broadcast came from the chosen distributor. `sentFromPackage` exists from API 34 (and
- * only during delivery); below that the token is the only check.
- */
+/** False only when the sender is known (API 34+, and only if it shares its identity) and is not the chosen distributor. */
 private fun fromChosenDistributor(receiver: BroadcastReceiver, prefs: SharedPreferences): Boolean {
     val chosen = prefs.getString(KEY_DISTRIBUTOR, null) ?: return false
 

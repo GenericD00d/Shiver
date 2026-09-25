@@ -1,5 +1,7 @@
 //! The unread mark on Shiver's taskbar icon: a dot on Windows (overlay icon), a count elsewhere.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use tauri::{AppHandle, Manager};
 
 use crate::webviews;
@@ -11,13 +13,25 @@ const SIZE: u32 = 32;
 const DOT: [u8; 3] = [0xff, 0x64, 0x67];
 
 /// Shows the same total the rail does: feed notifications plus what arrived while Shiver was closed.
+/// Redrawn only when what it shows changes (Windows shows a dot, so only whether there is any).
 pub fn refresh<R: tauri::Runtime>(app: &AppHandle<R>) {
+    static SHOWN: AtomicUsize = AtomicUsize::new(usize::MAX);
+
     let unread = app.state::<crate::feed::Feed>().unread_count()
         + app.state::<crate::watch::Missed>().total();
+    let shown = if cfg!(target_os = "windows") {
+        usize::from(unread > 0)
+    } else {
+        unread
+    };
 
     let Ok(window) = webviews::main_window(app) else {
         return;
     };
+
+    if SHOWN.swap(shown, Ordering::Relaxed) == shown {
+        return;
+    }
 
     #[cfg(target_os = "windows")]
     let _ = window.set_overlay_icon((unread > 0).then(dot));

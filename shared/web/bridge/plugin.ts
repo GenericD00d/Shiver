@@ -53,11 +53,16 @@ export function callPlugin(action: string, payload?: unknown): Promise<PluginRes
   });
 }
 
-/** Resolves true once the relay is present, false after `WAIT_MS` without it. */
+let waiting: Promise<boolean> | null = null;
+
+/**
+ * Resolves true once the relay is present, false after `WAIT_MS` without it. Callers waiting at the
+ * same time share one wait.
+ */
 export function waitForPlugin(): Promise<boolean> {
   if (window.__SHIVER_PLUGIN__) return Promise.resolve(true);
 
-  return new Promise((resolve) => {
+  waiting ??= new Promise<boolean>((resolve) => {
     const started = Date.now();
     const timer = window.setInterval(() => {
       const present = !!window.__SHIVER_PLUGIN__;
@@ -67,7 +72,11 @@ export function waitForPlugin(): Promise<boolean> {
         resolve(present);
       }
     }, 500);
+  }).finally(() => {
+    waiting = null;
   });
+
+  return waiting;
 }
 
 const adoptedMutes = () => {

@@ -4,13 +4,12 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   DmEntry,
   Folder,
-  PluginStatus,
   PushStatus,
   ServerCheck,
-  WatchProblem,
   Registry,
   ServerEntry,
   ServerInfo,
+  SessionStates,
   Settings
 } from './types';
 
@@ -28,18 +27,15 @@ export const api = {
     origin: string,
     identity: string | null,
     password: string | null,
-    rememberPassword = false
+    rememberPassword: boolean
   ) => invoke<ServerEntry>('add_server', { origin, identity, password, rememberPassword }),
 
   /** Signs an existing server in again (sessions last a week and cannot be refreshed). */
   signInServer: (id: string, identity: string, password: string, rememberPassword: boolean) =>
     invoke<void>('sign_in_server', { id, identity, password, rememberPassword }),
 
-  /** servers whose session expired and that Shiver cannot renew on its own */
-  signedOutServers: () => invoke<string[]>('signed_out_servers'),
-
-  /** servers Shiver can sign in again by itself, because the user asked it to keep the password */
-  rememberedServers: () => invoke<string[]>('remembered_servers'),
+  /** per server: waiting for a sign-in, password kept, a problem watching it, plugin version */
+  sessionStates: () => invoke<SessionStates>('session_states'),
 
   removeServer: (id: string) => invoke<void>('remove_server', { id }),
 
@@ -53,17 +49,14 @@ export const api = {
   deleteFolder: (id: string) => invoke<void>('delete_folder', { id }),
   setFolderExpanded: (id: string, expanded: boolean) =>
     invoke<void>('set_folder_expanded', { id, expanded }),
-  selectServer: (id: string, dms = false, dmUser?: string) =>
-    invoke<void>('select_server', { id, dms, dmUser }),
-
-
+  selectServer: (id: string, dmUser?: string) => invoke<void>('select_server', { id, dmUser }),
 
   /** which build this is, for the settings screen and for answering "what are you running" */
   appVersion: () => invoke<string>('app_version'),
 
-  /** the newer version, when the core has found one; null otherwise */
   /** takes back the stored password for one server; the session is left alone */
   forgetPassword: (id: string) => invoke<void>('forget_password', { id }),
+  /** the newer version, when the core has found one; null otherwise */
   updateAvailable: () => invoke<string | null>('update_available'),
   /** turn one version down, so nothing mentions it again — not even on the next launch */
   skipUpdate: (version: string) => invoke<void>('skip_update', { version }),
@@ -78,9 +71,10 @@ export const api = {
 
   /** re-reads a server's name and logo from its public /info */
   refreshServerInfo: (id: string) => invoke<ServerEntry>('refresh_server_info', { id }),
+  /** every stored logo as a `data:` uri, by server id */
+  serverIcons: () => invoke<Record<string, string>>('server_icons'),
 
-  /** both refuse unless that server is the one on screen; only its own client can do them */
-
+  /** forgets the server's session and password and wipes its page's storage */
   logOutServer: (id: string) => invoke<void>('log_out_server', { id }),
 
   /** Forgets every session and password Shiver holds; pages' own sign-ins are left alone. */
@@ -92,9 +86,6 @@ export const api = {
   /** Every server's conversations; only Shiver's own pages can see them. */
   listDms: () => invoke<DmEntry[]>('list_dms'),
 
-  /** distributors installed, and how many servers can be woken through the chosen one */
-  watchProblems: () => invoke<WatchProblem[]>('watch_problems'),
-  serverPlugins: () => invoke<PluginStatus[]>('server_plugins'),
   setAcceptAnySize: (id: string, accept: boolean) =>
     invoke<void>('set_accept_any_size', { id, accept }),
   pushStatus: () => invoke<PushStatus>('push_status'),
@@ -104,6 +95,10 @@ export const api = {
   /** picks a distributor and asks it for an endpoint per server; the endpoints arrive later */
   setPushDistributor: (distributor: string) =>
     invoke<void>('set_push_distributor', { distributor }),
+
+  /** fires when the core's own check finds a newer version */
+  onUpdate: (handler: (version: string) => void) =>
+    listen<string>('shiver://update', (event) => handler(event.payload)),
 
   /** fires when an endpoint arrives or a registration is refused, so the screen can redraw */
   onPush: (handler: () => void) => listen('shiver://push', () => handler()),

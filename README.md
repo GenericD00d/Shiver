@@ -65,7 +65,7 @@ will serve you perfectly well.
 
 **Android**
 
-- **Two-level swipe** — Sharkord's channel drawer, then Shiver's rail over the top of it
+- **Two-level swipe** — Sharkord's channel drawer, then on past it to Shiver's rail
 - **Push notifications while Shiver is closed**, over UnifiedPush (ntfy or another distributor), per
   server and off by default. Needs the companion plugin on that server
 
@@ -78,11 +78,9 @@ server wake your phone. Everyone on the server sees statuses, browser users incl
 ## What it deliberately does not do
 
 Each server's client runs pinned to its own origin with no way to call into Shiver. On desktop the
-rail is Shiver's own webview and a server's page learns nothing about your other servers. On
-Android there is one webview, so the rail is drawn inside the server's page, and that page is handed
-what the rail cannot be drawn without: each server's name, logo as image data, opaque id, place in
-the rail and folders, unread count and whether it is signed out — **never an address**, account or
-session, and never who you talk to elsewhere.
+rail is Shiver's own webview; on Android, where there is one webview, the rail is on Shiver's own
+page and a server's page reaches it by leaving. Either way a server's page is told nothing about
+your other servers.
 
 ## Building
 

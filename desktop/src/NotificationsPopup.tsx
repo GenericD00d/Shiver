@@ -1,39 +1,25 @@
-import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useState } from 'react';
 
 import { api } from './api';
+import { EVENTS, useCoreEvent } from './events';
 import { NotificationList } from './components/NotificationList';
 import { applyTheme } from '../../shared/web/theme';
 import type { Notification } from './types';
-
-const FEED_EVENT = 'shiver://feed';
-const SETTINGS_EVENT = 'shiver://settings';
 
 /** The unified notification feed, in its own webview under the bell. */
 export const NotificationsPopup = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
-  const refresh = useCallback(async () => {
-    const [feed, settings] = await Promise.all([api.listNotifications(), api.getSettings()]);
-
-    setNotifications(feed);
-    applyTheme(settings);
-  }, []);
+  const refresh = useCallback(async () => setNotifications(await api.listNotifications()), []);
+  const loadTheme = useCallback(async () => applyTheme(await api.getSettings()), []);
 
   useEffect(() => {
-    refresh();
+    void refresh();
+    void loadTheme();
+  }, [refresh, loadTheme]);
 
-    const pending = [
-      listen(FEED_EVENT, () => refresh()),
-      listen(SETTINGS_EVENT, () => refresh())
-    ];
-
-    return () => {
-      for (const handle of pending) {
-        handle.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-      }
-    };
-  }, [refresh]);
+  useCoreEvent(EVENTS.feed, () => void refresh());
+  useCoreEvent(EVENTS.settings, () => void loadTheme());
 
   const handleClear = useCallback(async () => {
     await api.clearNotifications();

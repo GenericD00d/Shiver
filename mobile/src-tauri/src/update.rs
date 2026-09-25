@@ -9,13 +9,16 @@ use shiver_core::LockExt;
 use tauri::{AppHandle, Manager};
 
 use crate::{
-    error::{Error, Result},
+    error::{Core, Error, Result},
     store::{RegistryStore, Store},
 };
 
 const MANIFEST: &str = "https://github.com/GenericD00d/Shiver/releases/latest/download/latest.json";
 const RELEASES: &str = "https://github.com/GenericD00d/Shiver/releases/latest";
 const REPOSITORY: &str = "https://github.com/GenericD00d/Shiver";
+
+/// Tells Shiver's page a newer version was found, so its notice appears without asking on a timer.
+const UPDATE_EVENT: &str = "shiver://update";
 const FIRST_CHECK: Duration = Duration::from_secs(45);
 const NOTIFICATION_ID: i32 = 1;
 /// `latest.json` is a few hundred bytes.
@@ -68,7 +71,7 @@ fn open(app: &AppHandle, url: &str) -> Result<()> {
 pub async fn check_for_update(app: AppHandle) -> Result<Option<String>> {
     let newest = fetch()
         .await
-        .ok_or_else(|| Error::Unreachable("GitHub, to check for updates".into()))?;
+        .ok_or_else(|| Core::Unreachable("GitHub, to check for updates".into()))?;
 
     if !is_newer(&newest, &app.package_info().version.to_string()) {
         return Ok(None);
@@ -116,6 +119,7 @@ pub fn start(app: &AppHandle) {
         }
 
         app.state::<Available>().set(Some(newest.clone()));
+        crate::webview::emit_home(&app, UPDATE_EVENT, &newest);
 
         use tauri_plugin_notification::NotificationExt;
 

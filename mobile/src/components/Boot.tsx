@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react';
+
 import type { ServerEntry } from '../types';
 
-/** An action a server page's rail asked for by navigating here; confirmed on Shiver's own page, since any page can navigate. */
+/** A rail menu action that is confirmed before it runs. */
 export type ConfirmAction = 'remove' | 'forgetpw' | 'logout';
 
 export type BootState =
@@ -8,6 +10,8 @@ export type BootState =
   | { kind: 'connecting'; server: ServerEntry }
   | { kind: 'failed'; server: ServerEntry }
   | { kind: 'confirm'; action: ConfirmAction; server: ServerEntry }
+  /** a server's page came back to the rail; `server` is the one it left */
+  | { kind: 'home'; server: ServerEntry }
   | { kind: 'empty' };
 
 type Props = {
@@ -23,8 +27,20 @@ const QUESTIONS: Record<ConfirmAction, { question: (name: string) => string; act
   logout: { question: (name) => `Log out of ${name}?`, action: 'Log out' }
 };
 
-/** Shiver's only front page (mobile has no home screen): a spinner, a failure, a confirmation or "add a server". */
+/** Shiver's front page: a spinner, a failure, a confirmation, the way back from the rail, or "add a server". */
+const ARM_MS = 1000;
+
 export const Boot = ({ state, onRetry, onAdd, onConfirm }: Props) => {
+  const [armed, setArmed] = useState(false);
+
+  useEffect(() => {
+    setArmed(false);
+
+    const timer = window.setTimeout(() => setArmed(true), ARM_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [state]);
+
   if (state.kind === 'empty') {
     return (
       <div className="boot">
@@ -49,6 +65,18 @@ export const Boot = ({ state, onRetry, onAdd, onConfirm }: Props) => {
     );
   }
 
+  if (state.kind === 'home') {
+    return (
+      <div className="boot">
+        <p className="hint">Pick a server from the rail.</p>
+
+        <button type="button" className="primary" onClick={() => onRetry(state.server)}>
+          Back to {state.server.name}
+        </button>
+      </div>
+    );
+  }
+
   if (state.kind === 'confirm') {
     const { question, action } = QUESTIONS[state.action];
 
@@ -56,7 +84,7 @@ export const Boot = ({ state, onRetry, onAdd, onConfirm }: Props) => {
       <div className="boot">
         <p>{question(state.server.name)}</p>
 
-        <button type="button" className="primary" onClick={() => onConfirm(true)}>
+        <button type="button" className="primary" disabled={!armed} onClick={() => onConfirm(true)}>
           {action}
         </button>
 

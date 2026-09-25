@@ -175,6 +175,15 @@ pub fn sync(app: &AppHandle) {
     }
 }
 
+/// Drops what the sockets learnt about a server that was removed or logged out of, so its missed
+/// count leaves the badges.
+pub fn forget(app: &AppHandle, entry_id: &str) {
+    app.state::<Missed>().clear(entry_id);
+    app.state::<ReadStates>().0.locked().remove(entry_id);
+    app.state::<Plugins>().0.locked().remove(entry_id);
+    app.state::<Reported>().0.locked().remove(entry_id);
+}
+
 /// Drops a server's socket (and any park) so the next attempt uses whatever just changed.
 pub fn restart(app: &AppHandle, entry_id: &str) {
     let watcher = app.state::<Watcher>();
@@ -189,7 +198,8 @@ pub fn restart(app: &AppHandle, entry_id: &str) {
     sync(app);
 }
 
-/// Removes this task's own record, and parks the entry if it stopped for want of a session.
+/// Removes this task's own record, and parks the entry if it stopped for want of a session or
+/// because the server sends more than it accepts.
 fn finished(app: &AppHandle, entry_id: &str, task_id: u64, park: bool) {
     let watcher = app.state::<Watcher>();
     let mut tasks = watcher.tasks.locked();
@@ -205,7 +215,8 @@ fn finished(app: &AppHandle, entry_id: &str, task_id: u64, park: bool) {
 }
 
 /// Watches one server; renews its session from the stored password, and parks the entry (until
-/// it is signed in) when there is no session or fresh sessions keep being refused.
+/// it is signed in, or its size limit changes) when there is no session, fresh sessions keep being
+/// refused, or it sends more than Shiver accepts.
 async fn watch(app: AppHandle, entry: ServerEntry, task_id: u64) {
     let key = entry.id.clone();
 
@@ -276,6 +287,7 @@ impl sharkord::Watcher for Watch {
 
     fn too_large(&mut self, size: usize) {
         report_too_large(&self.app, &self.entry.id, size);
+        finished(&self.app, &self.entry.id, self.task_id, true);
     }
 
     fn disconnected(&mut self) {
@@ -352,9 +364,9 @@ fn recount<R: Runtime>(app: &AppHandle<R>, entry_id: &str) -> bool {
         .cloned()
         .unwrap_or_default();
     let muted = muted_set(app, entry_id);
-    let recomputed = app
-        .state::<ReadStates>()
-        .apply(entry_id, |states| missed_since(states, &floor, &muted));
+    let recomputed = app.state::<ReadStates>().apply(entry_id, |states| {
+        sharkord::unread_total(states, &floor, &muted) as usize
+    });
 
     app.state::<Missed>().lower_to(entry_id, recomputed)
 }
@@ -430,25 +442,8 @@ fn count_missed<R: Runtime>(
 
     app.state::<Missed>().set(
         entry_id,
-        missed_since(read_states, &baseline, &muted_set(app, entry_id)),
+        sharkord::unread_total(read_states, &baseline, &muted_set(app, entry_id)) as usize,
     );
-}
-
-/// Unread above the floor, skipping muted channels; a channel below its floor counts zero.
-fn missed_since(
-    read_states: &HashMap<i64, u32>,
-    baseline: &HashMap<i64, u32>,
-    muted: &HashSet<i64>,
-) -> usize {
-    sharkord::unread_total(read_states, baseline, muted) as usize
-}
-
-fn account_label(entry: &ServerEntry) -> String {
-    entry
-        .account_label
-        .clone()
-        .or_else(|| entry.identity.clone())
-        .unwrap_or_default()
 }
 
 /// Hands the join's conversation list to the inbox.
@@ -457,7 +452,7 @@ fn publish_dms(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
         .state::<Store>()
         .registry()
         .server(entry_id)
-        .map(|entry| (entry.name.clone(), account_label(entry)))
+        .map(|entry| (entry.name.clone(), entry.label()))
     else {
         return;
     };
@@ -484,7 +479,7 @@ fn announce(
     joined: &sharkord::Joined,
     message: &sharkord::NewMessage,
 ) {
-    if message.user_id.is_some() && message.user_id == joined.own_user_id {
+    if message.is_own(joined) {
         return;
     }
 
@@ -504,25 +499,11 @@ fn announce(
         return;
     };
 
-    let author = message
-        .plugin_id
-        .clone()
-        .or_else(|| {
-            message
-                .user_id
-                .and_then(|id| joined.user_names.get(&id).cloned())
-        })
-        .unwrap_or_else(|| "Someone".into());
-
     let raw = RawNotification {
         channel_id: Some(message.channel_id),
         channel_name: joined.channel_names.get(&message.channel_id).cloned(),
-        author,
-        body: if message.text.is_empty() {
-            "Sent an attachment".into()
-        } else {
-            message.text.clone()
-        },
+        author: message.author(joined),
+        body: message.body().to_string(),
         icon_url: None,
         is_dm: joined.dm_channels.contains(&message.channel_id),
     };
@@ -558,10 +539,7 @@ fn report_too_large(app: &AppHandle, entry_id: &str, size: usize) {
         return;
     }
 
-    let size = match size as f64 / (1024.0 * 1024.0) {
-        mb if mb < 1.0 => format!("{} KB", size / 1024),
-        mb => format!("{mb:.1} MB"),
-    };
+    let size = sharkord::readable_size(size);
 
     app.state::<Feed>().push(
         entry_id,
@@ -587,32 +565,6 @@ fn report_too_large(app: &AppHandle, entry_id: &str, size: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn muted<const N: usize>(channels: [i64; N]) -> HashSet<i64> {
-        channels.into_iter().collect()
-    }
-
-    #[test]
-    fn missed_counts_only_what_is_above_the_floor_and_unmuted() {
-        let floor = HashMap::from([(1, 5), (2, 9)]);
-
-        assert_eq!(
-            missed_since(&HashMap::from([(1, 8), (2, 9)]), &floor, &muted([])),
-            3
-        );
-        assert_eq!(
-            missed_since(&HashMap::from([(1, 2)]), &floor, &muted([])),
-            0
-        );
-        assert_eq!(
-            missed_since(&HashMap::from([(7, 4)]), &floor, &muted([])),
-            4
-        );
-        assert_eq!(
-            missed_since(&HashMap::from([(7, 4), (1, 9)]), &floor, &muted([7])),
-            4
-        );
-    }
 
     /// The reported bug: a read elsewhere must bring the badge down, and nothing may push it up.
     #[test]

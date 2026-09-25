@@ -49,22 +49,37 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
 
 ## Things worth knowing before you look
 
-- **Only Mozilla's root set is trusted**, not the OS trust store — `rustls-tls-webpki-roots` for the
-  websocket and reqwest's `rustls-tls` for http. A server behind a private CA will not connect even
-  if the machine trusts it. That is a deliberate trade and it is also why "could not reach the
-  server" is sometimes a certificate problem.
+- **Servers are checked against Mozilla's root set only**, not the OS trust store —
+  `rustls-tls-webpki-roots` for the websocket and reqwest's `rustls-tls` for http. A server behind a
+  private CA will not connect even if the machine trusts it. That is a deliberate trade and it is
+  also why "could not reach the server" is sometimes a certificate problem. The desktop updater is
+  the exception: `tauri-plugin-updater` brings its own client, which uses the OS trust store; what it
+  downloads must still carry a valid signature.
 - **https is required everywhere**, with no exemption for localhost or a private address.
+- **Server pages cannot call Shiver.** Tauri refuses commands from remote origins, and desktop also
+  refuses any command not sent by Shiver's own webviews. Android reports a new page's origin late,
+  so it refuses every command while a server is on screen or being opened, or while a page Shiver
+  did not open (a step back through history) is loading on its way home.
+- **Only the user opens the browser.** A page's own navigations off its origin and its new windows
+  are refused; the browser gets only links the user clicked and one window per click, rationed per
+  server.
 - **Sessions never reach a webview's storage.** A small script that runs before the page's own
   patches `Storage.prototype` so Sharkord's auto-login token and live session are served from
   memory (`shared/web/session.ts`). On desktop it is part of the initialization script; on Android
   the token arrives in a `#shiver-seed=` fragment that the document-start script removes before any
-  page script runs. It steps aside if the server refuses the token or the user signs in on the page.
-- **What a server's page can learn on Android.** There is one webview, so the rail is drawn inside
-  the server's page. It is handed, for every server in the rail: display name, inlined logo,
-  opaque entry id, position and folder, unread count and a signed-out flag; plus folder names. It
-  is never handed another server's address, account, session or push endpoint. Actions the page's
-  rail requests by navigating to Shiver's own page (remove, log out, forget password) need
-  confirmation there.
+  page script runs, and is only accepted with a key derived from a per-launch secret held in that
+  script and the page's origin, so a link cannot seed a session, even one from a server that has seen
+  its own key. A URL carrying it is never handed to the browser, and an off-origin redirect
+  before the server's first load is refused. It steps aside if the server refuses the token or the
+  user signs in on the page; logging out of or removing a server clears what its page stored
+  (on Android every account on one address shares that storage, so it is cleared for all of them).
+- **What a server's page can learn on Android.** There is one webview, but the rail is on Shiver's
+  own page, not in the server's. A server's page is handed its own entry's settings, mutes, session
+  and push endpoint, and the address of Shiver's page (going home is a navigation there); nothing
+  about other servers. It can navigate to Shiver's page, whose fragment can only ask to show the
+  rail, or reopen a server (or say it failed) by id; nothing is changed from a URL. The core's
+  events (unread counts, push, updates) are sent only while Shiver's page is up, because the one
+  webview keeps that page's event listeners after it navigates to a server.
 - **The plugin's push delivery is pinned.** The endpoint is resolved once, every address is
-  checked, and the request is sent over TLS to that vetted address with the hostname as SNI, so
-  DNS rebinding cannot redirect it.
+  checked, and the request is sent over TLS on port 443 to that vetted address with the hostname as
+  SNI, so DNS rebinding cannot redirect it. Deliveries in flight are capped server-wide.

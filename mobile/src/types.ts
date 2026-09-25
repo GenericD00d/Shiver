@@ -9,11 +9,9 @@ export type ServerEntry = {
   acceptAnySize?: boolean;
   id: string;
   origin: string;
-  serverId: string | null;
   name: string;
-  iconUrl: string | null;
-  /** the logo as a `data:` uri, sent to the bridge so a server's page never learns another's address */
-  iconData: string | null;
+  /** the stored logo as a `data:` uri, read separately (`api.serverIcons`) */
+  icon?: string;
   identity: string | null;
   accountLabel: string | null;
   folderId: string | null;
@@ -39,13 +37,11 @@ export type PushStatus = {
   /** package names of the UnifiedPush distributors installed on this phone */
   distributors: string[];
   chosen: string | null;
-  registered: number;
-  failed: number;
   /** every server, with whether it was chosen to wake the phone and how that is going */
   servers: PushServer[];
 };
 
-export type PushServer = {
+type PushServer = {
   id: string;
   name: string;
   wanted: boolean;
@@ -53,17 +49,15 @@ export type PushServer = {
   state: 'off' | 'waiting' | 'ready' | 'failed';
 };
 
-/** What Shiver found out about a server's companion plugin, once it had connected to it. */
-export type PluginStatus = {
-  entryId: string;
-  /** null where Shiver connected and the plugin was not installed */
-  version: string | null;
-};
-
-/** A server Shiver cannot watch, and the reason in words meant for a person. */
-export type WatchProblem = {
-  entryId: string;
-  reason: string;
+/** `SessionStates` in commands.rs: what Shiver's screens show about each server's session. */
+export type SessionStates = {
+  signedOut: string[];
+  /** servers Shiver can sign in again by itself, because it keeps the password */
+  remembered: string[];
+  /** entry id -> a problem watching it that will not fix itself, in words meant for a person */
+  problems: Record<string, string>;
+  /** entry id -> plugin version, null where connected without one; absent until connected */
+  plugins: Record<string, string | null>;
 };
 
 export type Settings = {

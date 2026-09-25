@@ -41,8 +41,8 @@ export const ServerList = ({
       {servers.map((server) => (
         <li key={server.id} className={problems[server.id] ? "has-problem" : undefined}>
           <button type="button" className="server" onClick={() => onOpen(server.id)}>
-            {server.iconUrl ? (
-              <img src={server.iconUrl} alt="" />
+            {server.icon ? (
+              <img src={server.icon} alt="" />
             ) : (
               <span className="server-icon">{initials(server.name)}</span>
             )}

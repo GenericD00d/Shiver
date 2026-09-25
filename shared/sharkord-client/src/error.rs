@@ -15,10 +15,23 @@ pub enum Error {
     NotSharkord(String),
 
     /// A size limit was hit; retrying gets the same oversized answer.
-    #[error("{size} bytes in one message, and Shiver accepts {max}")]
+    #[error("{} in one message, and Shiver accepts {}", crate::readable_size(*size), crate::readable_size(*max))]
     TooLarge { size: usize, max: usize },
 
     /// The server said no (an expired session looks like this); the message is its own.
     #[error("{0}")]
     Refused(String),
+}
+
+/// For the add-server check: the same kind, and the same words, in the shared error.
+impl From<Error> for shiver_core::Error {
+    fn from(error: Error) -> Self {
+        match error {
+            Error::InvalidOrigin(message) => Self::InvalidOrigin(message),
+            Error::Unreachable(detail) => Self::Unreachable(detail),
+            Error::NotSharkord(origin) => Self::NotSharkord(origin),
+            Error::Refused(message) => Self::Refused(message),
+            too_large @ Error::TooLarge { .. } => Self::Refused(too_large.to_string()),
+        }
+    }
 }

@@ -54,6 +54,6 @@ pub async fn bytes_within_limit(response: reqwest::Response, limit: usize) -> Op
 }
 
 /// The body as json, read within [`MAX_BODY`].
-pub async fn json_within_limit(response: reqwest::Response) -> Option<Value> {
+pub(crate) async fn json_within_limit(response: reqwest::Response) -> Option<Value> {
     serde_json::from_slice(&bytes_within_limit(response, MAX_BODY).await?).ok()
 }

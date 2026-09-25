@@ -57,8 +57,8 @@ class MainActivity : TauriActivity() {
           val view = this@MainActivity.webView ?: return leave()
           val serverPage = !isShiverPage(view.url)
 
-          // A server page's rail answers the press (closing a menu, toggling the rail), but a page
-          // could answer "true" forever, so a second press soon after a swallowed one always goes back.
+          // A server page answers the press (closing a menu, or leaving for Shiver's rail), but a
+          // page could answer "true" forever, so a second press soon after a swallowed one always goes back.
           if (serverPage && SystemClock.uptimeMillis() - swallowedAt < ESCAPE_MS) {
             swallowedAt = 0
             return goBack(view)
@@ -71,14 +71,16 @@ class MainActivity : TauriActivity() {
         }
 
         /**
-         * Back through the webview's history, except from a server page into Shiver's boot page
-         * (which would only reopen the server): then whatever the system would do.
+         * Back through the webview's history, but never between Shiver's pages and a server's: a
+         * history step passes no navigation guard, so a server would arrive without its session
+         * (the core sends such a page home), and into Shiver's boot page it would only reopen the
+         * server. Then whatever the system would do.
          */
         private fun goBack(view: WebView) {
           val history = view.copyBackForwardList()
           val previous = if (history.currentIndex > 0) history.getItemAtIndex(history.currentIndex - 1)?.url else null
 
-          if (previous != null && (isShiverPage(view.url) || !isShiverPage(previous))) view.goBack() else leave()
+          if (previous != null && isShiverPage(view.url) == isShiverPage(previous)) view.goBack() else leave()
         }
 
         /** Shiver's bundled origin, or (debug builds only) the vite dev server. */

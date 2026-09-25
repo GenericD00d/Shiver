@@ -146,7 +146,8 @@ export function markAllChannelsRead() {
   if (typeof selectedChannelId === 'number') selectChannel(selectedChannelId);
 }
 
-const MUTE_CLASS = 'shiver-muted-channel';
+/** an attribute rather than a class: React rewrites a row's classes, never an attribute it did not set */
+const MUTED = 'data-shiver-muted';
 const SHIVER_MENU_ITEM = 'shiver-menu-item';
 
 /**
@@ -155,8 +156,8 @@ const SHIVER_MENU_ITEM = 'shiver-menu-item';
  */
 export function installMuteStyles() {
   ensureStyle('shiver-mute-style').textContent = `
-.${MUTE_CLASS} { opacity: 0.45; }
-.${MUTE_CLASS} ${UNREAD_COUNT} { display: none !important; }
+[${MUTED}] { opacity: 0.45; }
+[${MUTED}] ${UNREAD_COUNT} { display: none !important; }
 .${SHIVER_MENU_ITEM}:hover, .${SHIVER_MENU_ITEM}:focus { background-color: var(--accent); color: var(--accent-foreground); }
 ${REACTED_PILL} {
   background-color: color-mix(in srgb, var(--primary) 22%, transparent) !important;
@@ -166,39 +167,46 @@ ${REACTED_PILL} {
 }
 
 /**
- * Marks the sidebar rows of muted channels. Rows carry no channel id, so they are matched by name
- * (two channels sharing a name dim together; the mute itself is keyed on the id).
+ * Marks the sidebar rows of muted channels: `rows`, or every row. Rows carry no channel id, so
+ * they are matched by name (two channels sharing a name dim together; the mute is keyed on the id).
  */
-export function paintMuted(muted: ReadonlySet<number>) {
+export function paintMuted(muted: ReadonlySet<number>, rows: Iterable<Element> = document.querySelectorAll(CHANNEL_ITEM)) {
+  const list = [...rows];
+
+  if (!list.length) return;
+
   const names = new Set(
     (sharkordStore()?.getState().channels ?? []).filter((channel) => muted.has(channel.id)).map((channel) => channel.name)
   );
 
-  for (const row of document.querySelectorAll<HTMLElement>(CHANNEL_ITEM)) {
-    row.classList.toggle(MUTE_CLASS, names.has(rowName(row)));
-  }
+  for (const row of list) row.toggleAttribute(MUTED, names.has(rowName(row)));
 }
 
 /**
  * Adds "Mute/Unmute in Shiver" to one of Sharkord's own (Radix) menus, styled like its siblings.
- * Replaces an item left from an earlier open, since Radix reuses its menu.
+ * Replaces Shiver's items left from an earlier open, since Radix reuses its menu.
  */
 export function addMuteItem(menu: HTMLElement, isMuted: boolean, toggle: () => void) {
-  menu.querySelector(`.${SHIVER_MENU_ITEM}`)?.remove();
+  for (const stale of menu.querySelectorAll(`.${SHIVER_MENU_ITEM}`)) stale.remove();
 
-  const sibling = menu.querySelector<HTMLElement>('[role="menuitem"]');
+  addMenuItem(menu, isMuted ? 'Unmute in Shiver' : 'Mute in Shiver', toggle);
+}
+
+/** Appends one of Shiver's items to a Sharkord menu, styled as Sharkord's own. */
+export function addMenuItem(menu: HTMLElement, label: string, run: () => void) {
+  const sibling = menu.querySelector<HTMLElement>(`[role="menuitem"]:not(.${SHIVER_MENU_ITEM})`);
   const item = document.createElement('div');
 
   item.setAttribute('role', 'menuitem');
   item.tabIndex = -1;
   item.className = `${sibling?.className ?? ''} ${SHIVER_MENU_ITEM}`.trim();
-  item.textContent = isMuted ? 'Unmute in Shiver' : 'Mute in Shiver';
+  item.textContent = label;
 
   item.addEventListener('mouseenter', () => item.focus());
   item.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    toggle();
+    run();
     // lets Sharkord close its menu as it would for any item
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   });

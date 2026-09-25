@@ -16,7 +16,6 @@ export const AddServerPanel = ({ onAdded, onCancel, canCancel }: Props) => {
   const [accountLabel, setAccountLabel] = useState('');
   // the escape hatch for servers behind an identity provider, where Shiver cannot sign in itself
   const [signInHere, setSignInHere] = useState(true);
-  // off by default: Shiver keeps as little as it can, and the session alone opens the server
   const [preview, setPreview] = useState<ServerCheck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

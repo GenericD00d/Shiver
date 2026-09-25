@@ -6,7 +6,7 @@
  * controls and the channel menu's mute item, which all use the page's own controls.
  */
 
-import { defineHook, ensureStyle, installExternalLinks, isTopFrame, onDomSettled, openMenuOnScreen, addedMenu, whenDocumentReady } from '../../shared/web/bridge/dom';
+import { defineHook, ensureStyle, installExternalLinks, onDomSettled, openMenuOnScreen, addedMenu, touched, whenDocumentReady } from '../../shared/web/bridge/dom';
 import { installAttachmentCards, installRoleColors, installSoundVolume, installStatusButton, installVoiceColors } from '../../shared/web/bridge/features';
 import { pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
 import {
@@ -39,10 +39,8 @@ type ShiverConfig = {
   /** the session Shiver signed in with; served to the page from memory, never stored */
   token: string | null;
   muted: number[];
-  /** `server` browses channels and reports; `dm` shows one conversation and reports nothing else */
-  role: 'server' | 'dm';
-  /** for a `dm` page, the conversation to open once possible */
-  openDm: string | null;
+  /** the page was opened to show this conversation beside Shiver's DM list */
+  conversation: string | null;
   /** another server holds the voice session (which one is never said), so joins are refused */
   voiceLocked: boolean;
   minimiseAttachments: boolean;
@@ -78,8 +76,8 @@ type VoiceAction = 'mic' | 'sound' | 'leave';
 declare global {
   interface Window {
     __SHIVER__?: ShiverConfig;
-    /** everything queued since the last call; the core drains it on a timer */
-    __SHIVER_DRAIN__?: () => {
+    /** everything queued since the last call; null when nothing changed, unless `full` (the core drains it on a timer) */
+    __SHIVER_DRAIN__?: (full: boolean) => {
       notifications: QueuedNotification[];
       dms: DmChannel[] | null;
       mutes: QueuedMute[];
@@ -98,12 +96,12 @@ declare global {
       open: string[];
       /** something is fullscreen, so Shiver hides its overlay webviews */
       fullscreen: boolean;
-    };
+    } | null;
     __SHIVER_SET_MUTED__?: (muted: number[]) => void;
-    __SHIVER_OPEN_DM__?: (name: string) => void;
+    /** shows one conversation beside Shiver's DM list, or (null) goes back to the channels */
+    __SHIVER_CONVERSATION__?: (name: string | null) => void;
     __SHIVER_SELECT_CHANNEL__?: (channelId: number) => void;
     __SHIVER_SET_READ_FLOOR__?: (floor: Record<string, number>) => void;
-    __SHIVER_SET_DM_MODE__?: (enabled: boolean) => void;
     __SHIVER_SET_THEME__?: (theme: ShiverTheme | null) => void;
     /** the window is minimised, which the page cannot otherwise tell */
     __SHIVER_SET_HIDDEN__?: (hidden: boolean) => void;
@@ -115,15 +113,13 @@ declare global {
 
 const OPEN_DM_TIMEOUT_MS = 25_000;
 
+// taken before the page's scripts run, so a page cannot fake fullscreen to hide Shiver's chrome
+const nativeFullscreenElement = Object.getOwnPropertyDescriptor(Document.prototype, 'fullscreenElement')?.get;
+const nativeApply = Reflect.apply;
+const isFullscreen = () => !!nativeFullscreenElement && nativeApply(nativeFullscreenElement, document, []) !== null;
+
 function install(shiver: ShiverConfig) {
   seedSession(shiver.token);
-
-  if (shiver.role === 'dm') {
-    installConversationView(shiver);
-
-    return;
-  }
-
   seedDefaults();
 
   // prototype patches, which must be in place before the page's scripts; the volume first, since
@@ -144,6 +140,8 @@ function install(shiver: ShiverConfig) {
   const lastSeen = new Map<number, number>();
   let lastSeenVersion = 0;
 
+  installExternalLinks((href) => openQueue.push(href));
+
   reportOpenDmFailure = (name) => {
     openDmFailure = name;
   };
@@ -160,7 +158,9 @@ function install(shiver: ShiverConfig) {
   defineHook('__SHIVER_VOICE__', runVoiceAction);
   defineHook('__SHIVER_MARK_ALL_READ__', markAllChannelsRead);
 
-  defineHook('__SHIVER_DRAIN__', () => {
+  let reported = '';
+
+  defineHook('__SHIVER_DRAIN__', (full) => {
     const drained = {
       notifications: resolveDmChannels(queue, state).splice(0),
       mutes: muteQueue.splice(0),
@@ -170,7 +170,7 @@ function install(shiver: ShiverConfig) {
       openDmFailed: openDmFailure,
       ready: isClientReady(state),
       signedOut: isSignedOut(),
-      fullscreen: document.fullscreenElement !== null,
+      fullscreen: isFullscreen(),
       voice: readVoice(state),
       // an open DM first: `selectedChannelId` keeps naming the last ordinary channel
       viewingChannelId: openDmChannelId(state) ?? (typeof state.selectedChannelId === 'number' ? state.selectedChannelId : null)
@@ -180,13 +180,21 @@ function install(shiver: ShiverConfig) {
     syncedMutes = null;
     openDmFailure = null;
 
+    const { notifications, mutes, open, ready, signedOut, fullscreen, voice, viewingChannelId } = drained;
+    const now = JSON.stringify([ready, signedOut, fullscreen, voice, viewingChannelId]);
+    const queued = notifications.length || mutes.length || open.length || drained.dms || drained.syncedMutes || drained.openDmFailed;
+
+    // a signed-out page keeps saying so: recovery retries on those reports
+    if (!full && !queued && !signedOut && now === reported) return null;
+
+    reported = now;
+
     return drained;
   });
 
-  defineHook('__SHIVER_OPEN_DM__', openDirectMessage);
+  defineHook('__SHIVER_CONVERSATION__', showConversation);
   defineHook('__SHIVER_SELECT_CHANNEL__', selectChannelWhenReady);
   defineHook('__SHIVER_SET_READ_FLOOR__', (floor) => void storeReadFloor(floor));
-  defineHook('__SHIVER_SET_DM_MODE__', setDmMode);
   defineHook('__SHIVER_SET_THEME__', applyPageTheme);
   defineHook('__SHIVER_SET_HIDDEN__', setWindowHidden);
 
@@ -218,13 +226,13 @@ function install(shiver: ShiverConfig) {
     installAttachmentFocus();
     installVoiceColors();
     installVoiceLock(shiver.voiceLocked, () => state);
-    installExternalLinks((href) => openQueue.push(href));
+
+    if (shiver.conversation) showConversation(shiver.conversation);
 
     let dmInputs: unknown[] = [];
 
     watchStore((next) => {
       state = next;
-      paintMuted(muted);
 
       // the DM list only changes with channels, users or a newly seen message
       const inputs = [next.channels, next.users, next.ownUserId, lastSeenVersion];
@@ -255,67 +263,8 @@ function install(shiver: ShiverConfig) {
       paintMuted(muted);
     });
 
-    // Sharkord re-renders the channel list constantly, dropping the dimming
-    onDomSettled(() => paintMuted(muted));
-  });
-}
-
-/**
- * A second page for the same server showing one DM. It hides its sidebar, throws its notifications
- * away (the server page reports them) and reports only a failed open, links and the channel on
- * screen.
- */
-function installConversationView(shiver: ShiverConfig) {
-  const openQueue: string[] = [];
-  let openDmFailure: string | null = null;
-
-  installSoundVolume(shiver.soundVolume);
-  silenceMessagePing();
-  installNotificationWrapper(() => undefined);
-
-  reportOpenDmFailure = (name) => {
-    openDmFailure = name;
-  };
-
-  defineHook('__SHIVER_OPEN_DM__', openDirectMessage);
-  defineHook('__SHIVER_SET_THEME__', applyPageTheme);
-
-  defineHook('__SHIVER_DRAIN__', () => {
-    const failure = openDmFailure;
-    const selected = sharkordStore()?.getState().selectedChannelId;
-
-    openDmFailure = null;
-
-    return {
-      notifications: [],
-      mutes: [],
-      dms: null,
-      syncedMutes: null,
-      open: openQueue.splice(0),
-      openDmFailed: failure,
-      ready: false,
-      signedOut: false,
-      fullscreen: false,
-      voice: null,
-      viewingChannelId: typeof selected === 'number' ? selected : null
-    };
-  });
-
-  whenDocumentReady(() => {
-    if (shiver.theme) applyPageTheme(shiver.theme);
-
-    reserveTopBarSpace();
-    setDmMode(true);
-    installRoleColors();
-    installAttachmentCards(shiver.minimiseAttachments);
-    installAttachmentFocus();
-    installVoiceColors();
-    installExternalLinks((href) => openQueue.push(href));
-
-    if (shiver.openDm) openDirectMessage(shiver.openDm);
-
-    // DM mode has to survive the sidebar being re-rendered as the client connects
-    onDomSettled(() => setDmMode(true));
+    // rows Sharkord adds or redraws
+    onDomSettled((changed) => paintMuted(muted, touched(changed, CHANNEL_ITEM)));
   });
 }
 
@@ -538,13 +487,34 @@ function readDms(origin: string, state: SharkordState, lastSeen: Map<number, num
   return list.sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0) || a.name.localeCompare(b.name));
 }
 
-/** Hides Sharkord's sidebar while Shiver's DM list is beside the page. */
-function setDmMode(enabled: boolean) {
-  ensureStyle('shiver-dm-mode').textContent = enabled ? `${SIDEBAR} { display: none !important; }` : '';
+/** whether the page left Sharkord's channels to show a conversation, so leaving goes back to them */
+let conversationLeftChannels: boolean | null = null;
+
+/**
+ * Shows the conversation with `name` beside Shiver's DM list, hiding Sharkord's sidebar (Shiver's
+ * list stands in for it); `null` shows the sidebar again and, if the page was on its channels
+ * before, goes back to them.
+ */
+function showConversation(name: string | null) {
+  if (name === null) {
+    if (conversationLeftChannels === null) return;
+
+    ensureStyle('shiver-dm-mode').textContent = '';
+
+    if (conversationLeftChannels && document.querySelector(DM_ITEM)) document.querySelector<HTMLElement>(DM_TOGGLE)?.click();
+
+    conversationLeftChannels = null;
+
+    return;
+  }
+
+  conversationLeftChannels ??= !document.querySelector(DM_ITEM);
+  ensureStyle('shiver-dm-mode').textContent = `${SIDEBAR} { display: none !important; }`;
+  openDirectMessage(name);
 }
 
 let openDmTimer: number | null = null;
-/** set by the installers, so a failed open reaches the next drain */
+/** set by `install`, so a failed open reaches the next drain */
 let reportOpenDmFailure: (name: string) => void = () => undefined;
 
 /**
@@ -935,30 +905,21 @@ function setWindowHidden(hidden: boolean) {
   document.dispatchEvent(new Event('visibilitychange'));
 }
 
-/** Sharkord's compose editor, and a file waiting to be sent. */
+/** Sharkord's compose editor. */
 const COMPOSE_EDITOR = '[data-testid="message-compose-editor"]';
-const PENDING_FILE = 'div[class~="w-48"][class~="group"][class~="rounded-lg"]';
 
 /**
- * Returns focus to the compose editor (caret at the end) when a file is attached, so Enter sends
- * it; picking a file leaves focus on the paperclip. Never steals focus from another text field.
+ * Returns focus to the compose editor (caret at the end) once a file is picked or dropped, so Enter
+ * sends it; picking a file leaves focus on the paperclip. Not for a file picked in a dialog (an
+ * avatar), and never taking focus from another text field.
  */
 function installAttachmentFocus() {
-  let pending = 0;
-
-  onDomSettled(() => {
-    const now = document.querySelectorAll(PENDING_FILE).length;
-    const gained = now > pending;
-
-    pending = now;
-
-    if (!gained) return;
-
+  const refocus = () => {
     const editor = document.querySelector<HTMLElement>(COMPOSE_EDITOR);
     const active = document.activeElement;
 
-    if (!editor) return;
-    if (active instanceof HTMLElement && active !== editor && (active.isContentEditable || active.matches('input, textarea, select'))) return;
+    if (!editor || document.querySelector('[role="dialog"]')) return;
+    if (active instanceof HTMLElement && active !== editor && (active.isContentEditable || active.matches('input:not([type="file"]), textarea, select'))) return;
 
     editor.focus();
 
@@ -969,16 +930,24 @@ function installAttachmentFocus() {
     range.collapse(false);
     selection?.removeAllRanges();
     selection?.addRange(range);
-  });
+  };
+
+  // after the page has taken the file
+  document.addEventListener('change', (event) => {
+    if (event.target instanceof HTMLInputElement && event.target.type === 'file') window.setTimeout(refocus);
+  }, true);
+  document.addEventListener('drop', (event) => {
+    if (event.dataTransfer?.files.length) window.setTimeout(refocus);
+  }, true);
 }
 
-// Read and removed from the page before anything else runs. Only the top frame installs: the
-// initialization script can also run in embedded cross-origin frames.
+// Read and removed from the page before anything else runs (`bridge_script` in webviews.rs runs
+// this only in the top frame on the entry's origin).
 const config = window.__SHIVER__;
 
 delete window.__SHIVER__;
 
-if (config && isTopFrame()) {
+if (config) {
   try {
     install(config);
   } catch (error) {

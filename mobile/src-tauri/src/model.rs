@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use shiver_core::model::{default_sound_volume, default_true};
 pub use shiver_core::{
     is_same_origin,
     model::{
@@ -11,10 +12,9 @@ pub use shiver_core::{
     },
     normalize_origin,
     probe::ServerInfo,
-    rail::Rail,
 };
 
-shiver_core::rail_server!(ServerEntry);
+shiver_core::registry!(Registry, ServerEntry);
 
 /// One rail entry; `id` identifies it everywhere, never the origin.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -22,15 +22,10 @@ shiver_core::rail_server!(ServerEntry);
 pub struct ServerEntry {
     pub id: String,
     pub origin: String,
-    #[serde(default)]
-    pub server_id: Option<String>,
     pub name: String,
+    /// where the logo is fetched from; Shiver's page draws the copy in `icons`
     #[serde(default)]
     pub icon_url: Option<String>,
-    /// the logo as a `data:` uri: the rail is drawn inside other servers' pages, and a url would
-    /// tell them where this server lives
-    #[serde(default)]
-    pub icon_data: Option<String>,
     /// raises (never removes) the websocket message size limit for a server the user trusts
     #[serde(default)]
     pub accept_any_size: bool,
@@ -45,6 +40,9 @@ pub struct ServerEntry {
     /// carry a known token are trusted; the entry id cannot serve, because every page sees those.
     #[serde(default)]
     pub push_token: Option<String>,
+    /// endpoints this server should forget, handed to its page on the next load
+    #[serde(default)]
+    pub retired_push_endpoints: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,14 +63,6 @@ pub struct Settings {
     pub push_servers: Vec<String>,
     #[serde(default)]
     pub skipped_update: Option<String>,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_sound_volume() -> u16 {
-    100
 }
 
 impl Default for Settings {
@@ -115,38 +105,6 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn server(&self, id: &str) -> Option<&ServerEntry> {
-        self.servers.iter().find(|server| server.id == id)
-    }
-
-    pub fn server_mut(&mut self, id: &str) -> Option<&mut ServerEntry> {
-        self.servers.iter_mut().find(|server| server.id == id)
-    }
-
-    pub fn muted_for(&self, entry_id: &str) -> Vec<i64> {
-        shiver_core::model::muted_for(&self.muted, entry_id)
-    }
-
-    pub fn set_muted_for(
-        &mut self,
-        entry_id: &str,
-        channels: impl IntoIterator<Item = i64>,
-    ) -> Vec<i64> {
-        shiver_core::model::set_muted_for(&mut self.muted, entry_id, channels)
-    }
-
-    /// The next free top-level position.
-    pub fn next_position(&self) -> i32 {
-        shiver_core::rail::next_position(&self.servers, &self.folders)
-    }
-
-    pub fn rail(&mut self) -> Rail<'_, ServerEntry> {
-        Rail {
-            servers: &mut self.servers,
-            folders: &mut self.folders,
-        }
-    }
-
     /// The entry a push token belongs to.
     pub fn entry_for_push_token(&self, token: &str) -> Option<&ServerEntry> {
         self.servers

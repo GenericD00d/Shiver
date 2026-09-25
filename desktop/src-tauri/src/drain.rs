@@ -1,11 +1,14 @@
 //! Polling the server pages.
 //!
-//! A Sharkord page has no Tauri IPC. Every `POLL_INTERVAL` the core evaluates
-//! `__SHIVER_DRAIN__()` in each page and applies what it returns. A page answers only about itself,
-//! and everything it says is treated as a claim: bounded, and never trusted beyond its own entry.
+//! A Sharkord page has no Tauri IPC, so the core evaluates `__SHIVER_DRAIN__` in it and applies
+//! what it returns: every `POLL_INTERVAL` for the page on screen, one still connecting and the one
+//! holding the call, every `BACKGROUND_EVERY`th for the rest. A page answers with nothing when
+//! nothing changed, except the one on screen (its channel counts as read) and a signed-out one
+//! (recovery retries on its reports). A page answers only about itself, and everything it says is
+//! treated as a claim: bounded, and never trusted beyond its own entry.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -19,16 +22,21 @@ use crate::{
     session,
     store::{RegistryStore, Store},
     voice::VoiceState,
-    webviews::{self, ActiveServer, OVERLAY_WEBVIEW, SHELL_WEBVIEW},
+    webviews::{self, OVERLAY_WEBVIEW, SHELL_WEBVIEW},
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(750);
+
+/// Pages in the background are drained on every this many polls (about two seconds).
+const BACKGROUND_EVERY: u64 = 3;
 
 /// How long a server may be connecting before the rail calls it offline.
 const CONNECT_GRACE: Duration = Duration::from_secs(20);
 
 /// Most notifications taken from one drain; the rest are dropped.
 const MAX_NOTIFICATIONS_PER_DRAIN: usize = 50;
+
+const MAX_DRAIN_BYTES: usize = 4 * 1024 * 1024;
 
 pub const FEED_EVENT: &str = "shiver://feed";
 pub const DM_FAILED_EVENT: &str = "shiver://dm-failed";
@@ -118,14 +126,14 @@ pub fn spawn(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(POLL_INTERVAL);
 
-        loop {
+        for turn in (0..BACKGROUND_EVERY).cycle() {
             ticker.tick().await;
-            poll_once(&app);
+            poll_once(&app, turn == 0);
         }
     });
 }
 
-fn poll_once(app: &AppHandle) {
+fn poll_once(app: &AppHandle, background_turn: bool) {
     let entry_ids: Vec<String> = app
         .state::<Store>()
         .registry()
@@ -133,15 +141,19 @@ fn poll_once(app: &AppHandle) {
         .iter()
         .map(|entry| entry.id.clone())
         .collect();
+    let in_call = app.state::<VoiceState>().holder();
 
     for entry_id in &entry_ids {
-        for (label, is_server_page) in [
-            (webviews::webview_label(entry_id), true),
-            (webviews::dm_webview_label(entry_id), false),
-        ] {
-            if let Some(webview) = app.get_webview(&label) {
-                drain_webview(app, &webview, entry_id.clone(), is_server_page);
-            }
+        let Some(webview) = app.get_webview(&webviews::webview_label(entry_id)) else {
+            continue;
+        };
+        let on_screen = crate::badges::is_on_screen(app, entry_id);
+        let urgent = on_screen
+            || in_call.as_ref() == Some(entry_id)
+            || !app.state::<Readiness>().is_ready(entry_id);
+
+        if urgent || background_turn {
+            drain_webview(app, &webview, entry_id.clone(), on_screen);
         }
     }
 
@@ -190,18 +202,20 @@ fn reconcile_voice(app: &AppHandle, entry_ids: &[String]) {
     }
 }
 
-fn drain_webview(
-    app: &AppHandle,
-    webview: &tauri::Webview,
-    entry_id: String,
-    is_server_page: bool,
-) {
+fn drain_webview(app: &AppHandle, webview: &tauri::Webview, entry_id: String, full: bool) {
     let app = app.clone();
 
-    // null until the bridge has installed itself
-    let script = "(window.__SHIVER_DRAIN__ && window.__SHIVER_DRAIN__()) || null";
+    // null until the bridge has installed itself, and when nothing changed (unless `full`)
+    let script = format!("(window.__SHIVER_DRAIN__ && window.__SHIVER_DRAIN__({full})) || null");
 
     let _ = webview.eval_with_callback(script, move |raw| {
+        if raw.len() > MAX_DRAIN_BYTES {
+            return eprintln!(
+                "[shiver] {entry_id} answered a drain with {} bytes",
+                raw.len()
+            );
+        }
+
         let result = match serde_json::from_str::<Option<DrainResult>>(&raw) {
             Ok(Some(result)) => result,
             Ok(None) => return,
@@ -213,13 +227,11 @@ fn drain_webview(
         // off the UI thread: applying can write the registry to disk
         let (app, entry_id) = (app.clone(), entry_id.clone());
 
-        tauri::async_runtime::spawn_blocking(move || {
-            apply(&app, &entry_id, result, is_server_page)
-        });
+        tauri::async_runtime::spawn_blocking(move || apply(&app, &entry_id, result));
     });
 }
 
-fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_page: bool) {
+fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
     let (server_name, account_label, muted, has_identity, origin) = {
         let store = app.state::<Store>();
         let registry = store.registry();
@@ -230,38 +242,29 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
 
         (
             entry.name.clone(),
-            entry
-                .account_label
-                .clone()
-                .or_else(|| entry.identity.clone())
-                .unwrap_or_default(),
+            entry.label(),
             registry.muted_for(entry_id),
             entry.identity.is_some(),
             entry.origin.clone(),
         )
     };
 
-    if is_server_page {
-        apply_server_page(
-            app,
-            entry_id,
-            &server_name,
-            &account_label,
-            has_identity,
-            &mut result,
-        );
-    } else if let Some(channel_id) = result.viewing_channel_id {
-        // the conversation view is the only thing that knows which DM is being read
-        if app.state::<ActiveServer>().dm_on_screen().as_deref() == Some(entry_id) {
-            crate::badges::channel_viewed(app, entry_id, channel_id);
-        }
-    }
+    apply_page_state(
+        app,
+        entry_id,
+        &server_name,
+        &account_label,
+        has_identity,
+        &mut result,
+    );
 
-    for address in std::mem::take(&mut result.open) {
-        match url::Url::parse(&address) {
-            Ok(url) => webviews::open_for_page(app, entry_id, &url),
-            Err(error) => eprintln!("[shiver] {entry_id} asked to open {address}: {error}"),
-        }
+    for url in app
+        .state::<webviews::Openings>()
+        .grant(entry_id, &result.open)
+        .iter()
+        .filter_map(|address| url::Url::parse(address).ok())
+    {
+        webviews::open_in_browser(app, &url);
     }
 
     let feed = app.state::<Feed>();
@@ -287,28 +290,32 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
     // Mutes: the plugin's reconciled list replaces ours, then toggles from Sharkord's channel menu
     // apply on top. One registry write for the lot.
     if result.synced_mutes.is_some() || !result.mutes.is_empty() {
-        let mut next: Vec<i64> = result.synced_mutes.unwrap_or(muted);
+        let mut next: BTreeSet<i64> = result
+            .synced_mutes
+            .unwrap_or_else(|| muted.clone())
+            .into_iter()
+            .collect();
 
         for mute in &result.mutes {
-            next.retain(|channel_id| *channel_id != mute.channel_id);
-
-            if mute.muted {
-                next.push(mute.channel_id);
-            }
+            let _ = if mute.muted {
+                next.insert(mute.channel_id)
+            } else {
+                next.remove(&mute.channel_id)
+            };
         }
 
-        let had_toggles = !result.mutes.is_empty();
+        let next = shiver_core::model::normalized_mutes(next);
+        let stored = next == muted
+            || app
+                .state::<Store>()
+                .update(|registry| Ok(registry.set_muted_for(entry_id, next.clone())))
+                .is_ok();
 
-        if let Ok(remaining) = app
-            .state::<Store>()
-            .update(|registry| Ok(registry.set_muted_for(entry_id, next)))
-        {
-            if had_toggles {
-                webviews::push_muted(app, entry_id, &remaining);
-            }
-
-            changed = true;
+        if stored && !result.mutes.is_empty() {
+            webviews::push_muted(app, entry_id, &next);
         }
+
+        changed |= stored && next != muted;
     }
 
     if let Some(name) = result.open_dm_failed {
@@ -328,14 +335,16 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult, is_server_pag
 pub fn notify_feed_changed<R: tauri::Runtime>(app: &AppHandle<R>) {
     crate::badge::refresh(app);
 
+    let summary = app.state::<Feed>().summary();
+
     for label in [SHELL_WEBVIEW, OVERLAY_WEBVIEW, webviews::POPUP_WEBVIEW] {
-        let _ = app.emit_to(label, FEED_EVENT, ());
+        let _ = app.emit_to(label, FEED_EVENT, summary);
     }
 }
 
-/// The parts of a drain only the server page answers for: fullscreen, sign-in state, readiness,
-/// voice and the channel on screen.
-fn apply_server_page(
+/// The page's own state in a drain: fullscreen, sign-in state, readiness, voice and the channel on
+/// screen.
+fn apply_page_state(
     app: &AppHandle,
     entry_id: &str,
     server_name: &str,
@@ -375,10 +384,13 @@ fn apply_server_page(
         );
     }
 
-    if app
-        .state::<VoiceState>()
-        .report(entry_id, server_name, account_label, result.voice.take())
-    {
+    if app.state::<VoiceState>().report(
+        entry_id,
+        server_name,
+        account_label,
+        result.voice.take(),
+        crate::badges::is_on_screen(app, entry_id),
+    ) {
         let _ = app.emit_to(SHELL_WEBVIEW, VOICE_EVENT, ());
     }
 

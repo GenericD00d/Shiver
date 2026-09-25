@@ -7,16 +7,14 @@ use serde_json::Value;
 use crate::{
     error::{Error, Result},
     http,
+    text::presentable,
 };
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// The longest server message Shiver will quote back to the user.
-const MAX_SERVER_MESSAGE: usize = 200;
-
 /// `origin` plus the innermost cause of a transport failure (a certificate or DNS problem, say),
 /// so "could not reach" says why.
-pub fn unreachable(origin: &str, error: &(dyn std::error::Error + 'static)) -> Error {
+pub(crate) fn unreachable(origin: &str, error: &(dyn std::error::Error + 'static)) -> Error {
     let mut cause = error;
 
     while let Some(inner) = cause.source() {
@@ -53,67 +51,36 @@ pub async fn sign_in(origin: &str, identity: &str, password: &str) -> Result<Str
     let body = http::json_within_limit(response).await;
 
     if !status.is_success() {
-        return Err(Error::Refused(match body {
-            Some(body) => login_error_message(&body),
-            None => format!("The server refused the sign-in ({status})"),
-        }));
+        return Err(failure(origin, status, body));
     }
 
-    body.ok_or_else(|| Error::NotSharkord(origin.to_string()))?
-        .get("token")
+    body.as_ref()
+        .and_then(|body| body.get("token"))
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| Error::Refused("The server did not return a session".into()))
+        .ok_or_else(|| Error::NotSharkord(origin.to_string()))
+}
+
+/// Only a 4xx (bar 408 and 429) refuses the credentials; anything else is the server's trouble.
+fn failure(origin: &str, status: reqwest::StatusCode, body: Option<Value>) -> Error {
+    if !status.is_client_error() || matches!(status.as_u16(), 408 | 429) {
+        return Error::Unreachable(format!("{origin} (it answered {status})"));
+    }
+
+    Error::Refused(body.map_or_else(
+        || format!("The server refused the sign-in ({status})"),
+        |body| login_error_message(&body),
+    ))
 }
 
 /// Sharkord's `{ errors: { field: msg } }` or `{ error: msg }`, made presentable.
-pub fn login_error_message(body: &Value) -> String {
+fn login_error_message(body: &Value) -> String {
     body.get("errors")
         .and_then(Value::as_object)
         .and_then(|errors| errors.values().find_map(Value::as_str))
         .or_else(|| body.get("error").and_then(Value::as_str))
-        .map(presentable)
+        .and_then(presentable)
         .unwrap_or_else(|| "Could not sign in".to_string())
-}
-
-/// A server's words made safe for Shiver's own panel: one line, no control characters, no links,
-/// no bidi tricks, bounded. It is shown while the user is being asked for credentials.
-pub fn presentable(message: &str) -> String {
-    let cleaned = message
-        .chars()
-        .filter(|character| !is_invisible(*character))
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .filter(|word| !looks_like_link(word))
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    if cleaned.is_empty() {
-        return "Could not sign in".to_string();
-    }
-
-    cleaned.chars().take(MAX_SERVER_MESSAGE).collect()
-}
-
-fn looks_like_link(word: &str) -> bool {
-    let word = word.to_ascii_lowercase();
-    let word = word.trim_matches(|character: char| !character.is_alphanumeric());
-
-    word.contains("://")
-        || word.starts_with("www.")
-        // a bare domain with a path: `evil.example/reset`
-        || word.split('/').next().is_some_and(|host| host.contains('.') && word.contains('/'))
-}
-
-fn is_invisible(character: char) -> bool {
-    matches!(character, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}')
 }
 
 #[cfg(test)]
@@ -125,6 +92,23 @@ mod tests {
         let refused = sign_in("http://chat.example.com", "someone", "hunter2").await;
 
         assert!(matches!(refused, Err(Error::Refused(message)) if message.contains("https")));
+    }
+
+    #[test]
+    fn only_a_client_error_refuses_the_credentials() {
+        use reqwest::StatusCode;
+
+        for (status, refused) in [
+            (StatusCode::UNAUTHORIZED, true),
+            (StatusCode::BAD_REQUEST, true),
+            (StatusCode::TOO_MANY_REQUESTS, false),
+            (StatusCode::BAD_GATEWAY, false),
+            (StatusCode::FOUND, false),
+        ] {
+            let error = failure("https://chat.example.com", status, None);
+
+            assert_eq!(matches!(error, Error::Refused(_)), refused, "{status}");
+        }
     }
 
     #[test]
@@ -140,18 +124,5 @@ mod tests {
             login_error_message(&serde_json::json!({})),
             "Could not sign in"
         );
-    }
-
-    #[test]
-    fn a_server_message_cannot_carry_links_or_tricks() {
-        assert_eq!(
-            presentable(
-                "Session expired,\nreset it at https://evil.example/x or evil.example/reset now"
-            ),
-            "Session expired, reset it at or now"
-        );
-        assert_eq!(presentable("ad\u{202e}min"), "admin");
-        assert_eq!(presentable(&"x".repeat(500)).len(), MAX_SERVER_MESSAGE);
-        assert_eq!(presentable("https://only.a.link"), "Could not sign in");
     }
 }

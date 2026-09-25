@@ -1,72 +1,50 @@
-import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api } from './api';
+import { EVENTS, useCoreEvent } from './events';
 import { BellIcon } from './components/icons';
 import { playNotificationSound } from './sounds';
+import type { FeedSummary, Settings } from './types';
 import { applyTheme } from '../../shared/web/theme';
-
-const FEED_EVENT = 'shiver://feed';
-const SETTINGS_EVENT = 'shiver://settings';
-const POPUP_EVENT = 'shiver://popup';
 
 /** The notification bell, in a fixed 48x48 webview; the feed opens in a separate webview below it. */
 export const Bell = () => {
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
-  // the newest notification already sounded for, so a refresh never re-pings
+  // the newest notification already sounded for; nothing sounds for what was there on launch
   const lastSounded = useRef<number | null>(null);
+  const settings = useRef<Settings | null>(null);
 
-  const refresh = useCallback(async () => {
-    const [count, feed, settings] = await Promise.all([
-      api.unreadCount(),
-      api.listNotifications(),
-      api.getSettings()
-    ]);
+  const loadSettings = useCallback(async () => {
+    settings.current = await api.getSettings();
+    applyTheme(settings.current);
+  }, []);
 
+  const take = useCallback(({ unread: count, newest }: FeedSummary) => {
     setUnread(count);
-
-    applyTheme(settings);
-
-    const newest = feed[0]?.id ?? null;
 
     if (newest === null) return;
 
-    // nothing sounds on the first load, only on something that arrived since
-    if (lastSounded.current !== null && newest > lastSounded.current && settings.notificationSounds) {
-      playNotificationSound(settings.soundVolume);
+    const sounds = settings.current?.notificationSounds;
+
+    if (sounds && lastSounded.current !== null && newest > lastSounded.current) {
+      playNotificationSound(settings.current?.soundVolume);
     }
 
     lastSounded.current = newest;
   }, []);
 
   useEffect(() => {
-    refresh();
+    void loadSettings();
+    api.feedSummary().then(take).catch(() => undefined);
+  }, [loadSettings, take]);
 
-    const pending = [
-      listen(FEED_EVENT, () => refresh()),
-      // the settings screen lives in another webview, so a colour change arrives as an event
-      listen(SETTINGS_EVENT, () => refresh())
-    ];
-
-    return () => {
-      for (const handle of pending) {
-        handle.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-      }
-    };
-  }, [refresh]);
-
+  useCoreEvent(EVENTS.feed, take);
+  // the settings screen lives in another webview, so a colour change arrives as an event
+  useCoreEvent(EVENTS.settings, () => void loadSettings());
   // the feed can close without the bell being touched — the user clicks away, or a new server
   // webview takes it down — and the bell would otherwise stay drawn as active over nothing
-  useEffect(() => {
-    const pending = listen<{ open: boolean }>(POPUP_EVENT, (event) => {
-      setOpen(event.payload.open);
-    });
-
-    return () => {
-      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-    };
-  }, []);
+  useCoreEvent<{ open: boolean }>(EVENTS.popup, ({ open }) => setOpen(open));
 
   const toggle = useCallback(async () => {
     try {
@@ -77,11 +55,10 @@ export const Bell = () => {
       if (!next) return;
 
       await api.markNotificationsRead();
-      await refresh();
     } catch {
       // the core owns this state, so leave the button as it was rather than guessing
     }
-  }, [refresh]);
+  }, []);
 
   return (
     <div className="bell-root">

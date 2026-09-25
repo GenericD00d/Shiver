@@ -16,10 +16,11 @@ use std::collections::{HashMap, HashSet};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
+use shiver_core::text::presentable;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
-pub use crate::check::{check_server, ServerCheck};
+pub use crate::check::{check_server, CheckedSessions, ServerCheck};
 pub use crate::error::{Error, Result};
 
 mod check;
@@ -55,7 +56,7 @@ const READ_STATE_UPDATE_PATH: &str = "channels.onReadStateUpdate";
 const MESSAGE_PATH: &str = "messages.onNew";
 
 /// The id Shiver's companion plugin installs under.
-pub const SHIVER_PLUGIN_ID: &str = "shiver";
+const SHIVER_PLUGIN_ID: &str = "shiver";
 
 /// One direct-message conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +71,6 @@ pub struct DirectMessage {
 /// What the server says about itself and this user when Shiver joins.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Joined {
-    pub server_id: Option<String>,
     pub own_user_id: Option<i64>,
     /// unread per channel id, the baseline later events are applied to
     pub read_states: HashMap<i64, u32>,
@@ -94,6 +94,40 @@ pub struct NewMessage {
     pub plugin_id: Option<String>,
     /// the message as plain text
     pub text: String,
+}
+
+impl NewMessage {
+    /// Whether the user wrote it themselves.
+    pub fn is_own(&self, joined: &Joined) -> bool {
+        self.user_id.is_some() && self.user_id == joined.own_user_id
+    }
+
+    /// Who wrote it: a plugin by its id, a user by the name the join gave them.
+    pub fn author(&self, joined: &Joined) -> String {
+        self.plugin_id
+            .clone()
+            .or_else(|| {
+                self.user_id
+                    .and_then(|id| joined.user_names.get(&id).cloned())
+            })
+            .unwrap_or_else(|| "Someone".into())
+    }
+
+    /// The text, or what to say for a message that is only an attachment.
+    pub fn body(&self) -> &str {
+        match self.text.as_str() {
+            "" => "Sent an attachment",
+            text => text,
+        }
+    }
+}
+
+/// A byte count as people read it: KB below a megabyte, MB with one decimal above.
+pub fn readable_size(bytes: usize) -> String {
+    match bytes as f64 / (1024.0 * 1024.0) {
+        mb if mb < 1.0 => format!("{} KB", bytes / 1024),
+        mb => format!("{mb:.1} MB"),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,12 +197,10 @@ fn parse_reply(text: &str) -> Reply {
         let message = error
             .get("message")
             .and_then(Value::as_str)
-            .unwrap_or("The server refused the request");
+            .and_then(presentable)
+            .unwrap_or_else(|| "The server refused the request".into());
 
-        return Reply::Failed {
-            id,
-            message: message.to_string(),
-        };
+        return Reply::Failed { id, message };
     }
 
     let Some(result) = value.get_mut("result") else {
@@ -224,10 +256,6 @@ fn channel_counts(value: &Value) -> Option<HashMap<i64, u32>> {
 /// The parts of `others.joinServer`'s answer Shiver uses. Missing fields read as empty.
 fn parse_join(data: &Value) -> Joined {
     let mut joined = Joined {
-        server_id: data
-            .get("serverId")
-            .and_then(Value::as_str)
-            .map(str::to_string),
         own_user_id: data.get("ownUserId").and_then(Value::as_i64),
         read_states: data
             .get("readStates")
@@ -279,6 +307,12 @@ fn plugin_version(data: &Value, plugin_id: &str) -> Option<String> {
         .find(|plugin| plugin.get("pluginId").and_then(Value::as_str) == Some(plugin_id))?
         .get("version")?
         .as_str()
+        .filter(|version| {
+            version.len() <= 32
+                && version
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || ".+-".contains(character))
+        })
         .map(str::to_string)
 }
 
@@ -341,7 +375,7 @@ fn parse_delta(data: &Value) -> Option<Event> {
 /// Sharkord's message html as one line of text for a notification. Tags become word breaks, common
 /// entities are decoded (named and numeric) and whitespace collapses. Not a sanitiser: the result
 /// is never put back into html.
-pub fn plain_text(html: &str) -> String {
+fn plain_text(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
     let mut pending_space = false;
     let mut rest = html;
@@ -469,7 +503,7 @@ pub fn apply_delta(read_states: &mut HashMap<i64, u32>, channel_id: i64, delta: 
 /// How long to wait before reconnecting after `attempt` consecutive failures: 30s doubling to a
 /// 10-minute ceiling, plus a stable per-server offset (from `key`) so a whole rail does not
 /// reconnect in lockstep.
-pub fn retry_delay(attempt: u32, key: &str) -> std::time::Duration {
+fn retry_delay(attempt: u32, key: &str) -> std::time::Duration {
     const FIRST: std::time::Duration = std::time::Duration::from_secs(30);
     const CEILING: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
@@ -498,13 +532,13 @@ pub trait Watcher: Send {
     /// The server refused the session (`refusals` in a row). `true` retries at once (after the
     /// watcher renewed the session); `false` stops watching.
     fn refused(&mut self, refusals: u32) -> impl std::future::Future<Output = bool> + Send;
-    /// A message exceeded the frame limit (retrying will not fix it).
+    /// A message exceeded the frame limit. Watching stops, since retrying will not fix it.
     fn too_large(&mut self, size: usize);
     /// The connection is down, before the backoff.
     fn disconnected(&mut self) {}
 }
 
-/// Holds one server's connection open, reconnecting with [`retry_delay`] backoff (keyed by `key`)
+/// Holds one server's connection open, reconnecting with `retry_delay` backoff (keyed by `key`)
 /// until the watcher stops it.
 pub async fn watch(key: &str, mut watcher: impl Watcher) {
     let mut failures: u32 = 0;
@@ -540,8 +574,10 @@ pub async fn watch(key: &str, mut watcher: impl Watcher) {
                     "[shiver] {origin} sent {size} bytes in one message; Shiver accepts {max}"
                 );
                 watcher.too_large(size);
+
+                return;
             }
-            Err(error) => eprintln!("[shiver] could not watch {origin}: {error}"),
+            Err(error) => eprintln!("[shiver] could not watch a server: {error}"),
         }
 
         watcher.disconnected();
@@ -574,13 +610,13 @@ fn frame_cap(accept_any_size: bool) -> usize {
 }
 
 /// A live, joined connection to one server.
-pub struct Session {
+pub(crate) struct Session {
     socket: Socket,
-    pub joined: Joined,
+    pub(crate) joined: Joined,
 }
 
 /// Connects, authenticates, joins and subscribes. Returns once the join has been answered.
-pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Session> {
+pub(crate) async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Session> {
     let url = ws_url(origin)?;
     let cap = frame_cap(accept_any_size);
     let limits = tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
@@ -597,15 +633,22 @@ pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Se
     .map_err(|_| Error::Unreachable(format!("{origin} (timed out)")))?
     .map_err(|error| Error::Unreachable(format!("{origin} ({error})")))?;
 
-    send(&mut socket, params_frame(token)).await?;
+    // every failure names the server, whichever step it came from
+    let joined = join(&mut socket, origin, token)
+        .await
+        .map_err(|error| match error {
+            Error::Unreachable(detail) => Error::Unreachable(format!("{origin} ({detail})")),
+            other => other,
+        })?;
 
-    let handshake = call(
-        &mut socket,
-        HANDSHAKE_ID,
-        "others.handshake",
-        Some(Value::Null),
-    )
-    .await?;
+    Ok(Session { socket, joined })
+}
+
+/// Authenticates, joins and subscribes on a connected socket.
+async fn join(socket: &mut Socket, origin: &str, token: &str) -> Result<Joined> {
+    send(socket, params_frame(token)).await?;
+
+    let handshake = call(socket, HANDSHAKE_ID, "others.handshake", Some(Value::Null)).await?;
     let hash = handshake
         .get("handshakeHash")
         .and_then(Value::as_str)
@@ -614,7 +657,7 @@ pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Se
 
     let mut joined = parse_join(
         &call(
-            &mut socket,
+            socket,
             JOIN_ID,
             "others.joinServer",
             Some(serde_json::json!({ "handshakeHash": hash })),
@@ -623,7 +666,7 @@ pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Se
     );
 
     // Optional extras: failing either costs that feature, not the connection.
-    match call(&mut socket, DMS_ID, "dms.get", None).await {
+    match call(socket, DMS_ID, "dms.get", None).await {
         Ok(Value::Array(conversations)) => {
             joined.dms = parse_dms(&conversations, &joined.user_names)
         }
@@ -634,14 +677,7 @@ pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Se
     if joined.plugin_version.is_some() {
         let input = serde_json::json!({ "pluginId": SHIVER_PLUGIN_ID });
 
-        match call(
-            &mut socket,
-            PLUGIN_DATA_ID,
-            "plugins.getUserData",
-            Some(input),
-        )
-        .await
-        {
+        match call(socket, PLUGIN_DATA_ID, "plugins.getUserData", Some(input)).await {
             Ok(stored) => joined.shared_floor = parse_shared_floor(&stored),
             Err(error) => {
                 eprintln!("[shiver] could not read {origin}'s shared unread floor: {error}")
@@ -655,19 +691,19 @@ pub async fn open(origin: &str, token: &str, accept_any_size: bool) -> Result<Se
         (MESSAGE_ID, MESSAGE_PATH),
     ] {
         send(
-            &mut socket,
+            socket,
             request_frame(id, "subscription", path, Some(Value::Null)),
         )
         .await?;
     }
 
-    Ok(Session { socket, joined })
+    Ok(joined)
 }
 
 impl Session {
     /// The next event, or `None` once the connection has ended or gone silent for `IDLE_TIMEOUT`.
     /// Answers tRPC's `PING` (the server drops sockets that do not) and skips unknown frames.
-    pub async fn next_event(&mut self) -> Option<Event> {
+    async fn next_event(&mut self) -> Option<Event> {
         loop {
             let frame = match tokio::time::timeout(IDLE_TIMEOUT, self.socket.next()).await {
                 Ok(Some(Ok(frame))) => frame,
@@ -785,6 +821,12 @@ mod tests {
         assert!(retry_delay(1, "a") > retry_delay(0, "a"));
         assert!(retry_delay(30, "a") <= ceiling + ceiling / 4);
         assert_eq!(retry_delay(2, "a"), retry_delay(2, "a"));
+    }
+
+    #[test]
+    fn sizes_read_as_kilobytes_or_megabytes() {
+        assert_eq!(readable_size(512 * 1024), "512 KB");
+        assert_eq!(readable_size(3 * 1024 * 1024 / 2), "1.5 MB");
     }
 
     #[test]
@@ -915,6 +957,16 @@ mod tests {
                 message: "You must be authenticated.".into()
             }
         );
+        assert_eq!(
+            parse_reply(&format!(
+                r#"{{"id":2,"error":{{"message":"see https://evil.example {}"}}}}"#,
+                "x".repeat(300)
+            )),
+            Reply::Failed {
+                id: Some(2),
+                message: format!("see {}", "x".repeat(196))
+            }
+        );
         assert_eq!(parse_reply("not json"), Reply::Other);
     }
 
@@ -928,7 +980,6 @@ mod tests {
             "pluginsMetadata": [{ "pluginId": "other", "version": "2.0.0" }, { "pluginId": "shiver", "version": "0.1.0" }]
         }));
 
-        assert_eq!(joined.server_id.as_deref(), Some("019c1482"));
         assert_eq!(joined.read_states.get(&140), Some(&2));
         assert_eq!(joined.dm_channels, vec![9]);
         assert_eq!(
@@ -936,6 +987,13 @@ mod tests {
             Some("Smiddy")
         );
         assert_eq!(joined.plugin_version.as_deref(), Some("0.1.0"));
+        assert_eq!(
+            plugin_version(
+                &serde_json::json!({ "pluginsMetadata": [{ "pluginId": "shiver", "version": "1.0\u{202e}" }] }),
+                SHIVER_PLUGIN_ID
+            ),
+            None
+        );
         assert_eq!(parse_join(&serde_json::json!({})), Joined::default());
     }
 

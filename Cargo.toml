@@ -9,8 +9,7 @@ members = [
     "mobile/plugins/tauri-plugin-shiver-push",
 ]
 
-# The one place Shiver's version lives. Every crate inherits it, and both `tauri.conf.json` files
-# omit `version` so Tauri takes it from the crate.
+# Every crate inherits this; Android also needs it in its tauri.conf.json (scripts/check-version.py).
 [workspace.package]
 version = "0.1.5"
 edition = "2021"

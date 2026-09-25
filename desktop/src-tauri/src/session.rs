@@ -192,7 +192,6 @@ fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: &str) {
         return;
     }
 
-    webviews::close_dm_view(app, &entry.id);
     app.state::<Readiness>().forget_entry(&entry.id);
 
     let locked = app
@@ -206,9 +205,7 @@ fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: &str) {
         webviews::preload_server(app, entry, &settings, Some(token), &muted, locked)
     };
 
-    if let Err(error) =
-        built.and_then(|()| webviews::preload_dm_view(app, entry, &settings, Some(token)))
-    {
+    if let Err(error) = built {
         eprintln!("[shiver] could not rebuild {}: {error}", entry.origin);
     }
 }
