@@ -3,7 +3,8 @@
  * not run in a backgrounded webview, so the user returns to a client that gave up. Shiver presses
  * Sharkord's own "try again" button (absent when reconnecting is not allowed, e.g. a ban), after
  * re-seeding the session it holds, or has Shiver reopen the server once it answers again. A bounded
- * number of attempts, counted across reloads in `sessionStorage`; coming back to the app resets them.
+ * number of attempts, counted across reloads in `sessionStorage`; coming back to the app resets them,
+ * and they lapse a while after the last.
  *
  * Either way the user sees only a small spinner in the accent colour, never a wall of text.
  */
@@ -14,12 +15,20 @@ import { installSessionShim } from '../../shared/web/session';
 import { goHome } from './home';
 
 const POLL_MS = 2000;
-const DELAYS_MS = [0, 3000, 8000, 15000];
+/**
+ * Waits before each attempt. The last lands past a minute: Sharkord allows five joins a minute, and
+ * a client refused for joining too often looks exactly like one whose session was refused.
+ */
+const DELAYS_MS = [0, 3000, 15000, 65000];
 const ATTEMPTS_KEY = 'shiver-reconnect-attempts';
+/** A spent budget is forgotten this long after its last attempt, so opening the server later tries again. */
+const BUDGET_MS = 90_000;
 
 const readAttempts = () => {
   try {
-    return Number(sessionStorage.getItem(ATTEMPTS_KEY)) || 0;
+    const [attempts, at] = (sessionStorage.getItem(ATTEMPTS_KEY) ?? '').split(':').map(Number);
+
+    return Date.now() - at < BUDGET_MS ? attempts || 0 : 0;
   } catch {
     return 0;
   }
@@ -27,7 +36,7 @@ const readAttempts = () => {
 
 const writeAttempts = (attempts: number) => {
   try {
-    if (attempts) sessionStorage.setItem(ATTEMPTS_KEY, String(attempts));
+    if (attempts) sessionStorage.setItem(ATTEMPTS_KEY, `${attempts}:${Date.now()}`);
     else sessionStorage.removeItem(ATTEMPTS_KEY);
   } catch {
     // in-memory budget only
