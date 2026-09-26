@@ -144,7 +144,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 | `theme.ts` | `applyTheme` (`--shiver-*` vars on Shiver's own pages) |
 | `session.ts` | `installSessionShim`, `takeSeedFromLocation`, `AUTO_LOGIN*` (session kept off disk) |
 | `bridge/dom.ts` | `ensureStyle`, `defineHook`, `onDomSettled` (hands callbacks what changed), `touched`, `isTopFrame`, `whenDocumentReady`, `openMenuOnScreen`, `addedMenu`, `installExternalLinks` |
-| `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `addMuteItem`, `addMenuItem`, `closeDialog` (Sharkord's topmost open dialog, as Escape), `SHIVER_PLUGIN_ID` |
+| `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `addMuteItem`, `addMenuItem`, `closeDialog` (Sharkord's topmost open dialog, as Escape), `IMAGE_VIEWER`, `RECONNECTING_OVERLAY`, `SHIVER_PLUGIN_ID` |
 | `bridge/plugin.ts` | `callPlugin`, `waitForPlugin`, `syncMutesWithPlugin`, `pushMutesToPlugin`, `storeReadFloor` |
 | `bridge/features.ts` | `installSoundVolume`, `installAttachmentCards`, `installVoiceColors`, `installRoleColors`, `installStatusButton` |
 | `bridge/theme.ts` | `ShiverTheme`, `applyPageTheme` |
@@ -163,7 +163,8 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
   `Boot` (confirms rail menu actions; after `#home`, tapping the page left goes back to it), `Rail` (`RailRef`), `ServerList`, `AddServer`, `SignInServer`,
   `SettingsScreen`, `BackgroundNotifications`, `Sessions` (+`TrustedLinks`), `DirectMessages`, `UpdateNotice`, `icons`.
 - **mobile/bridge**: `index.ts` (install, `seedSession`), `home.ts` (`setHome`, `goHome`, `installHomeSwipe`: back and a
-  swipe past the drawer leave for Shiver's page), `touch.ts` (`installTouchStyles`, `installReturnMakesALine`, `installReactionNames`,
+  swipe past the drawer leave for Shiver's page), `touch.ts` (`installTouchStyles`, `installReturnMakesALine`, `installReactionNames`, `installImageZoom` (pinch, pan and
+  double tap in Sharkord's full-screen picture, which only knows the mouse),
   channel menu with mark all read: `installChannelMenu`, `closeChannelMenu`; `drawerIsOpen`, `openConversation`), `reconnect.ts` (`installAutoReconnect`; `installQuietReconnect`: Sharkord's own reconnecting dialog hidden, an accent spinner above the chat box while it retries), `document-start.ts` (seed,
   `__SHIVER_OPEN__`, theme), `types.ts` (`ShiverConfig`).
 

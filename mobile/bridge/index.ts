@@ -16,6 +16,7 @@ import { installAutoReconnect, installQuietReconnect } from './reconnect';
 import {
   closeChannelMenu,
   installChannelMenu,
+  installImageZoom,
   installReactionNames,
   installReturnMakesALine,
   installTouchStyles,
@@ -40,6 +41,7 @@ function install(shiver: ShiverConfig) {
   installVoiceColors();
   installRoleColors();
   installReactionNames();
+  installImageZoom();
   installReturnMakesALine();
   installStatusButton(true);
   installAutoReconnect(shiver.session, shiver.entryId);
