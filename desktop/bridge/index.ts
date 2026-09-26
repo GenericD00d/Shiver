@@ -14,6 +14,7 @@ import {
   CHANNEL_ITEM,
   channelOfRow,
   closeDialog,
+  COMPOSE_EDITOR,
   CONNECT_FORM,
   DM_ITEM,
   DM_TOGGLE,
@@ -923,9 +924,6 @@ function setWindowHidden(hidden: boolean) {
   windowHidden = hidden;
   document.dispatchEvent(new Event('visibilitychange'));
 }
-
-/** Sharkord's compose editor. */
-const COMPOSE_EDITOR = '[data-testid="message-compose-editor"]';
 
 /**
  * Returns focus to the compose editor (caret at the end) once a file is picked or dropped, so Enter

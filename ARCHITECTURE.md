@@ -164,7 +164,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
   `SettingsScreen`, `BackgroundNotifications`, `Sessions` (+`TrustedLinks`), `DirectMessages`, `UpdateNotice`, `icons`.
 - **mobile/bridge**: `index.ts` (install, `seedSession`), `home.ts` (`setHome`, `goHome`, `installHomeSwipe`: back and a
   swipe past the drawer leave for Shiver's page), `touch.ts` (`installTouchStyles`, `installReturnMakesALine`, `installReactionNames`,
-  channel menu with mark all read: `installChannelMenu`, `closeChannelMenu`; `drawerIsOpen`, `openConversation`), `reconnect.ts` (`installAutoReconnect`), `document-start.ts` (seed,
+  channel menu with mark all read: `installChannelMenu`, `closeChannelMenu`; `drawerIsOpen`, `openConversation`), `reconnect.ts` (`installAutoReconnect`; `installQuietReconnect`: Sharkord's own reconnecting dialog hidden, an accent spinner above the chat box while it retries), `document-start.ts` (seed,
   `__SHIVER_OPEN__`, theme), `types.ts` (`ShiverConfig`).
 
 ## plugin (Sharkord companion)
