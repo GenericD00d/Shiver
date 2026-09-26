@@ -4,12 +4,9 @@
  * Sharkord's own "try again" button (absent when reconnecting is not allowed, e.g. a ban), after
  * re-seeding the session it holds, or has Shiver reopen the server once it answers again. A bounded
  * number of attempts, counted across reloads in `sessionStorage`; coming back to the app resets them.
- *
- * Meanwhile the channel stays readable: the page is copied as the app goes to the background, and
- * the copy is shown, frozen, over Sharkord's disconnected screen with a spinner above the chat box.
  */
 
-import { COMPOSE_EDITOR, SIDEBAR } from '../../shared/web/bridge/sharkord';
+import { SIDEBAR } from '../../shared/web/bridge/sharkord';
 import { installSessionShim } from '../../shared/web/session';
 import { goHome } from './home';
 
@@ -48,7 +45,7 @@ const reachable = () =>
     .then((response) => response.ok)
     .catch(() => false);
 
-export function installAutoReconnect(session: string | null, entryId: string) {
+export function installAutoReconnect(session: string | null, serverName: string, entryId: string) {
   let attempts = readAttempts();
   let nextAttemptAt = 0;
   /** a probe is in flight */
@@ -69,13 +66,12 @@ export function installAutoReconnect(session: string | null, entryId: string) {
     if (document.querySelector(SIDEBAR)) {
       reset();
       hideReconnecting();
-      frozen = null;
 
       return;
     }
 
-    // Sharkord still counting down its own retries, in a dialog over its disconnected screen
-    if (document.querySelector('[role="alertdialog"]')) return showReconnecting();
+    // Sharkord still counting down its own retries
+    if (document.querySelector('[role="alertdialog"]')) return hideReconnecting();
 
     const button = document.querySelector('button svg[class*="lucide-refresh"]')?.closest('button') ?? null;
     const form = !!document.querySelector('input[type="password"]');
@@ -95,7 +91,7 @@ export function installAutoReconnect(session: string | null, entryId: string) {
     // without a session Shiver holds, the connect form is the honest place to be
     if (!session || attempts >= DELAYS_MS.length) return hideReconnecting();
 
-    showReconnecting();
+    showReconnecting(serverName);
 
     nextAttemptAt ||= Date.now() + DELAYS_MS[attempts];
 
@@ -125,7 +121,7 @@ export function installAutoReconnect(session: string | null, entryId: string) {
 
   // coming back to the app is the user asking again, which earns a fresh budget
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) return freeze();
+    if (document.hidden) return;
 
     reset();
     tick();
@@ -135,82 +131,29 @@ export function installAutoReconnect(session: string | null, entryId: string) {
 }
 
 const HOST_ID = 'shiver-reconnect';
-const SPINNER_PX = 28;
 
-/** The page as it was when the app went to the background, while it showed a channel. */
-let frozen: { copy: HTMLElement; scrolls: [Element, number][]; chatTop: number | null } | null = null;
-
-/**
- * Copies what is on screen: every element (Sharkord's CSS still applies), where each scrolled
- * list was, and where the chat box starts. The copy loses its test ids and nested ids (so nothing
- * takes it for the live client), its media and its inputs.
- */
-function freeze() {
-  frozen = null;
-
-  if (!document.querySelector(SIDEBAR)) return;
-
-  const copy = document.createElement('div');
-  const live: Element[] = [];
-
-  for (const child of document.body.children) {
-    if (child.id.startsWith('shiver-') || child.tagName === 'SCRIPT') continue;
-
-    live.push(child, ...child.querySelectorAll('*'));
-    copy.append(child.cloneNode(true));
-  }
-
-  const copied = [...copy.children].flatMap((child) => [child, ...child.querySelectorAll('*')]);
-  const scrolls = live.flatMap((element, index): [Element, number][] =>
-    element.scrollTop > 0 && copied[index] ? [[copied[index], element.scrollTop]] : []
-  );
-
-  for (const element of copy.querySelectorAll('[data-testid]')) element.removeAttribute('data-testid');
-  // ids stay only where layout CSS may name them (`#root`); a lookup never finds the copy first
-  for (const element of copy.querySelectorAll(':scope > * [id]')) element.removeAttribute('id');
-  for (const element of copy.querySelectorAll('video, audio, iframe, object, embed')) element.remove();
-  for (const element of copy.querySelectorAll('[contenteditable]')) element.setAttribute('contenteditable', 'false');
-  for (const element of copy.querySelectorAll('input, textarea, select, button')) element.setAttribute('disabled', '');
-
-  const chat = document.querySelector(COMPOSE_EDITOR)?.getBoundingClientRect();
-
-  frozen = { copy, scrolls, chatTop: chat && chat.height > 0 ? chat.top : null };
-}
-
-/** Covers Sharkord's disconnected screen with the frozen page (or its background) and a small spinner in the accent colour. */
-function showReconnecting() {
+/** Covers the server's "connection lost" screen (back and the swipe home still work). */
+function showReconnecting(serverName: string) {
   if (document.getElementById(HOST_ID)) return;
 
   const host = document.createElement('div');
-  const spinner = document.createElement('div');
-  const top = frozen?.chatTop != null ? `${Math.max(frozen.chatTop - SPINNER_PX - 12, 0)}px` : `calc(100% - ${SPINNER_PX + 96}px)`;
+  const root = host.attachShadow({ mode: 'closed' });
+  const label = document.createElement('p');
 
   host.id = HOST_ID;
-  host.style.cssText = `position: fixed; inset: 0; z-index: 2147483645; overflow: hidden; background: ${getComputedStyle(document.body).backgroundColor || '#0a0a0a'};`;
-  // the copy is there to read: its taps do nothing
-  host.addEventListener(
-    'click',
-    (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    },
-    true
-  );
-
-  spinner.attachShadow({ mode: 'closed' }).innerHTML = `<style>
-:host { position: fixed; left: calc(50% - ${SPINNER_PX / 2}px); top: ${top}; z-index: 1; pointer-events: none; }
-span { display: block; width: ${SPINNER_PX}px; height: ${SPINNER_PX}px; box-sizing: border-box; border-radius: 50%;
-  border: 3px solid rgb(255 255 255 / 14%); border-top-color: var(--primary, #5865f2); animation: spin 900ms linear infinite; }
+  root.innerHTML = `<style>
+:host { position: fixed; inset: 0; z-index: 2147483645; }
+div { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 18px; background: #0a0a0a; color: #a1a1a1; font: 500 15px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; }
+span { width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgb(255 255 255 / 14%);
+  border-top-color: #e5e5e5; animation: spin 900ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { span { animation-duration: 3s; } }
-</style><span role="progressbar" aria-label="Reconnecting"></span>`;
+</style><div><span></span></div>`;
 
-  if (frozen) host.append(frozen.copy);
-
-  host.append(spinner);
+  label.textContent = `Reconnecting to ${serverName}…`;
+  root.querySelector('div')?.append(label);
   document.body.append(host);
-
-  for (const [element, scrollTop] of frozen?.scrolls ?? []) element.scrollTop = scrollTop;
 }
 
 function hideReconnecting() {

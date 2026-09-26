@@ -42,7 +42,7 @@ function install(shiver: ShiverConfig) {
   installReactionNames();
   installReturnMakesALine();
   installStatusButton(true);
-  installAutoReconnect(shiver.session, shiver.entryId);
+  installAutoReconnect(shiver.session, shiver.serverName, shiver.entryId);
 
   const muted = new Set(shiver.muted);
   const paint = () => paintMuted(muted);

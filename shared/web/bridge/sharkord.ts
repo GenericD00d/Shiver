@@ -55,7 +55,6 @@ const UNREAD_COUNT = '[data-testid="unread-count"]';
 export const MESSAGE_ITEM = '[data-testid="message-item"]';
 export const MEMBER_ITEM = '[data-testid="member-item"]';
 export const SETTINGS_TRIGGER = '[data-testid="user-settings-trigger"]';
-export const COMPOSE_EDITOR = '[data-testid="message-compose-editor"]';
 export const CONNECT_FORM = '[data-testid="connect-form"]';
 export const SERVER_VIEW = '[data-testid="server-view"]';
 /** each message's wrapper; its parent's previous sibling is the author header */
