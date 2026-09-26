@@ -12,7 +12,7 @@ import { CHANNEL_ITEM, installMuteStyles, paintMuted } from '../../shared/web/br
 import { applyPageTheme } from '../../shared/web/bridge/theme';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
 import { goHome, installHomeSwipe, setHome } from './home';
-import { installAutoReconnect } from './reconnect';
+import { installAutoReconnect, installQuietReconnect } from './reconnect';
 import {
   closeChannelMenu,
   installChannelMenu,
@@ -42,7 +42,8 @@ function install(shiver: ShiverConfig) {
   installReactionNames();
   installReturnMakesALine();
   installStatusButton(true);
-  installAutoReconnect(shiver.session, shiver.serverName, shiver.entryId);
+  installAutoReconnect(shiver.session, shiver.entryId);
+  installQuietReconnect();
 
   const muted = new Set(shiver.muted);
   const paint = () => paintMuted(muted);

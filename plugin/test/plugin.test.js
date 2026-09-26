@@ -5,20 +5,27 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { splitName, uniqueName } from '../server/files.js';
-import { adoptOldStore, onLoad, onUnload, primeFromUserRows } from '../server/index.js';
 import {
+  adoptOldStore,
+  createLimiter,
   createPush,
+  createRows,
+  createStatuses,
   deliver,
   endpointsFrom,
+  floorFrom,
   isPrivateAddress,
+  mutedFrom,
   normaliseEndpoint,
+  onLoad,
+  onUnload,
+  primeFromUserRows,
   REFUSED,
+  splitName,
+  statusFrom,
+  uniqueName,
   vetEndpoint
-} from '../server/push.js';
-import { createLimiter, createRows } from '../server/rows.js';
-import { floorFrom, mutedFrom } from '../server/settings.js';
-import { createStatuses, statusFrom } from '../server/status.js';
+} from '../server/index.js';
 
 /* ── a fake host ── */
 
@@ -382,4 +389,10 @@ test('stored names always get a random suffix and stay within filesystem limits'
   assert.equal(uniqueName('../a\\b\u0000.png', 'abc'), '.._a_b_~abc.png');
   assert.deepEqual(splitName('a.tar.gz'), { base: 'a.tar', ext: '.gz' });
   assert.ok(Buffer.byteLength(uniqueName(`${'é'.repeat(300)}.png`)) <= 255);
+});
+
+test('the server half is one file, so it cannot be run against stale copies of others', async () => {
+  const source = await readFile(new URL('../server/index.js', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(source, /^import .* from '\.{1,2}\//m);
 });

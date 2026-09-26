@@ -30,7 +30,7 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   user did not name.
 - **The companion plugin.** It is optional and server-side. The endpoint it fetches is supplied by
   a user, so anything that gets this server to make a request it should not is in scope — see
-  `plugin/server/push.js`, which is where that check lives.
+  the push section of `plugin/server/index.js`, which is where that check lives.
 - **The updater.** Anything that would get code onto a user's machine without a signature that
   verifies against the key built into the binary.
 - **The bridge.** It is injected into every Sharkord page and is the only Shiver code that runs on

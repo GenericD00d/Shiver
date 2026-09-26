@@ -4,9 +4,12 @@
  * Sharkord's own "try again" button (absent when reconnecting is not allowed, e.g. a ban), after
  * re-seeding the session it holds, or has Shiver reopen the server once it answers again. A bounded
  * number of attempts, counted across reloads in `sessionStorage`; coming back to the app resets them.
+ *
+ * Either way the user sees only a small spinner in the accent colour, never a wall of text.
  */
 
-import { SIDEBAR } from '../../shared/web/bridge/sharkord';
+import { ensureStyle, onDomSettled } from '../../shared/web/bridge/dom';
+import { COMPOSE_EDITOR, RECONNECTING_OVERLAY, SIDEBAR } from '../../shared/web/bridge/sharkord';
 import { installSessionShim } from '../../shared/web/session';
 import { goHome } from './home';
 
@@ -45,7 +48,7 @@ const reachable = () =>
     .then((response) => response.ok)
     .catch(() => false);
 
-export function installAutoReconnect(session: string | null, serverName: string, entryId: string) {
+export function installAutoReconnect(session: string | null, entryId: string) {
   let attempts = readAttempts();
   let nextAttemptAt = 0;
   /** a probe is in flight */
@@ -91,7 +94,7 @@ export function installAutoReconnect(session: string | null, serverName: string,
     // without a session Shiver holds, the connect form is the honest place to be
     if (!session || attempts >= DELAYS_MS.length) return hideReconnecting();
 
-    showReconnecting(serverName);
+    showReconnecting();
 
     nextAttemptAt ||= Date.now() + DELAYS_MS[attempts];
 
@@ -130,29 +133,60 @@ export function installAutoReconnect(session: string | null, serverName: string,
   window.addEventListener('online', tick);
 }
 
+/**
+ * Sharkord's own retries (after a dropped connection) put up a dialog that blurs the channel; it is
+ * hidden, and a spinner sits just above the chat box while they run, the channel readable behind.
+ */
+export function installQuietReconnect() {
+  ensureStyle('shiver-quiet-reconnect').textContent = `${RECONNECTING_OVERLAY} { display: none !important; }`;
+
+  const update = () => {
+    const existing = document.getElementById(RETRYING_ID);
+
+    if (!document.querySelector(RECONNECTING_OVERLAY)) return existing?.remove();
+
+    const chat = document.querySelector(COMPOSE_EDITOR)?.getBoundingClientRect();
+    const top = chat && chat.height > 0 ? `${Math.max(chat.top - SPINNER_PX - 12, 0)}px` : `calc(100% - ${SPINNER_PX + 96}px)`;
+    const host = existing ?? spinner(RETRYING_ID);
+
+    host.style.top = top;
+
+    if (!existing) document.body.append(host);
+  };
+
+  onDomSettled(update);
+  window.addEventListener('resize', update);
+}
+
 const HOST_ID = 'shiver-reconnect';
+const RETRYING_ID = 'shiver-retrying';
+const SPINNER_PX = 28;
+
+/** A text-less spinner in the accent colour (Sharkord's own, or the one Shiver themes it with). */
+function spinner(id: string) {
+  const host = document.createElement('div');
+
+  host.id = id;
+  host.style.cssText = `position: fixed; left: calc(50% - ${SPINNER_PX / 2}px); top: calc(50% - ${SPINNER_PX / 2}px); z-index: 2147483646; pointer-events: none;`;
+  host.attachShadow({ mode: 'closed' }).innerHTML = `<style>
+span { display: block; width: ${SPINNER_PX}px; height: ${SPINNER_PX}px; box-sizing: border-box; border-radius: 50%;
+  border: 3px solid rgb(255 255 255 / 14%); border-top-color: var(--primary, #5865f2); animation: spin 900ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { span { animation-duration: 3s; } }
+</style><span role="progressbar" aria-label="Reconnecting"></span>`;
+
+  return host;
+}
 
 /** Covers the server's "connection lost" screen (back and the swipe home still work). */
-function showReconnecting(serverName: string) {
+function showReconnecting() {
   if (document.getElementById(HOST_ID)) return;
 
   const host = document.createElement('div');
-  const root = host.attachShadow({ mode: 'closed' });
-  const label = document.createElement('p');
 
   host.id = HOST_ID;
-  root.innerHTML = `<style>
-:host { position: fixed; inset: 0; z-index: 2147483645; }
-div { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 18px; background: #0a0a0a; color: #a1a1a1; font: 500 15px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; }
-span { width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgb(255 255 255 / 14%);
-  border-top-color: #e5e5e5; animation: spin 900ms linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { span { animation-duration: 3s; } }
-</style><div><span></span></div>`;
-
-  label.textContent = `Reconnecting to ${serverName}…`;
-  root.querySelector('div')?.append(label);
+  host.style.cssText = 'position: fixed; inset: 0; z-index: 2147483645; background: #0a0a0a;';
+  host.append(spinner(`${HOST_ID}-spinner`));
   document.body.append(host);
 }
 
