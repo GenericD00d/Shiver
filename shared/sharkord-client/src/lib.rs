@@ -58,6 +58,9 @@ const MESSAGE_PATH: &str = "messages.onNew";
 /// The id Shiver's companion plugin installs under.
 const SHIVER_PLUGIN_ID: &str = "shiver";
 
+/// tRPC's code for a rate limit: Sharkord allows each user five joins a minute.
+const TOO_MANY_REQUESTS: i64 = -32029;
+
 /// One direct-message conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectMessage {
@@ -180,9 +183,19 @@ fn request_frame(id: u32, method: &str, path: &str, input: Option<Value>) -> Str
 /// A frame from the server, reduced to what Shiver acts on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Reply {
-    Data { id: Option<u64>, data: Value },
-    Started { id: Option<u64> },
-    Failed { id: Option<u64>, message: String },
+    Data {
+        id: Option<u64>,
+        data: Value,
+    },
+    Started {
+        id: Option<u64>,
+    },
+    /// `busy`: refused for asking too often (`TOO_MANY_REQUESTS`), not for who is asking
+    Failed {
+        id: Option<u64>,
+        message: String,
+        busy: bool,
+    },
     Other,
 }
 
@@ -199,8 +212,10 @@ fn parse_reply(text: &str) -> Reply {
             .and_then(Value::as_str)
             .and_then(presentable)
             .unwrap_or_else(|| "The server refused the request".into());
+        let busy = error.get("code").and_then(Value::as_i64) == Some(TOO_MANY_REQUESTS)
+            || error.pointer("/data/code").and_then(Value::as_str) == Some("TOO_MANY_REQUESTS");
 
-        return Reply::Failed { id, message };
+        return Reply::Failed { id, message, busy };
     }
 
     let Some(result) = value.get_mut("result") else {
@@ -751,7 +766,7 @@ impl Session {
                 Reply::Data { id: Some(id), data } if id == u64::from(MESSAGE_ID) => {
                     parse_message(&data)
                 }
-                Reply::Failed { id, message } => {
+                Reply::Failed { id, message, .. } => {
                     eprintln!("[shiver] the server refused request {id:?}: {message}");
 
                     None
@@ -798,7 +813,14 @@ async fn call(socket: &mut Socket, id: u32, path: &str, input: Option<Value>) ->
             Reply::Failed {
                 id: Some(reply),
                 message,
-            } if reply == u64::from(id) => return Err(Error::Refused(message)),
+                busy,
+            } if reply == u64::from(id) => {
+                return Err(if busy {
+                    Error::Busy(message)
+                } else {
+                    Error::Refused(message)
+                })
+            }
             _ => continue,
         }
     }
@@ -954,7 +976,18 @@ mod tests {
             ),
             Reply::Failed {
                 id: Some(10),
-                message: "You must be authenticated.".into()
+                message: "You must be authenticated.".into(),
+                busy: false
+            }
+        );
+        assert_eq!(
+            parse_reply(
+                r#"{"id":3,"error":{"message":"Too many requests.","code":-32029,"data":{"code":"TOO_MANY_REQUESTS","httpStatus":429}}}"#
+            ),
+            Reply::Failed {
+                id: Some(3),
+                message: "Too many requests.".into(),
+                busy: true
             }
         );
         assert_eq!(
@@ -964,7 +997,8 @@ mod tests {
             )),
             Reply::Failed {
                 id: Some(2),
-                message: format!("see {}", "x".repeat(196))
+                message: format!("see {}", "x".repeat(196)),
+                busy: false
             }
         );
         assert_eq!(parse_reply("not json"), Reply::Other);

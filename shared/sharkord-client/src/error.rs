@@ -21,6 +21,10 @@ pub enum Error {
     /// The server said no (an expired session looks like this); the message is its own.
     #[error("{0}")]
     Refused(String),
+
+    /// The server asked to be left alone for a while (a rate limit): not a verdict on the session.
+    #[error("{0}")]
+    Busy(String),
 }
 
 /// For the add-server check: the same kind, and the same words, in the shared error.
@@ -30,7 +34,7 @@ impl From<Error> for shiver_core::Error {
             Error::InvalidOrigin(message) => Self::InvalidOrigin(message),
             Error::Unreachable(detail) => Self::Unreachable(detail),
             Error::NotSharkord(origin) => Self::NotSharkord(origin),
-            Error::Refused(message) => Self::Refused(message),
+            Error::Refused(message) | Error::Busy(message) => Self::Refused(message),
             too_large @ Error::TooLarge { .. } => Self::Refused(too_large.to_string()),
         }
     }

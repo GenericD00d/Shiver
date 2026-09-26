@@ -79,7 +79,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 ## shared/sharkord-client (`sharkord_client`)
 
 - Types: `Joined` (join payload: read states, user names, `plugin_version`…), `DirectMessage`,
-  `NewMessage` (`is_own`, `author`, `body`), `Event`, `Error` (`TooLarge`, `Refused` matter; converts
+  `NewMessage` (`is_own`, `author`, `body`), `Event`, `Error` (`TooLarge`, `Refused` and `Busy` (a rate limit, retried later, never a refused session) matter; converts
   into `shiver_core::Error`), `readable_size`.
 - Watch loop: `watch(key, impl Watcher)`; `Watcher` trait: `target()→Option<Target{origin,token,accept_any_size}>`,
   `joined`, `event`, `refused(n)→retry now?`, `too_large`, `disconnected`; reconnects with backoff.
