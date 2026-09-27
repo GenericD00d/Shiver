@@ -304,14 +304,6 @@ export function installReturnMakesALine() {
   );
 }
 
-/** Sharkord's reaction pill (`h-9 gap-1`; the border class only marks your own). */
-const REACTION_PILL = 'button[class~="h-9"][class~="gap-1"]';
-
-/**
- * Long-press a reaction to see who reacted. Sharkord's Radix tooltip already lists them but
- * refuses touch pointers, so the hold replays the pointer events as a mouse and Sharkord opens its
- * own tooltip. The hold's click is swallowed so it does not toggle your reaction.
- */
 const MAX_ZOOM = 6;
 /** a second tap this soon (and this close) after the first is a double tap */
 const DOUBLE_TAP_MS = 300;
@@ -465,6 +457,14 @@ export function installImageZoom() {
   window.addEventListener('touchcancel', end, { capture: true, passive: true });
 }
 
+/** Sharkord's reaction pill (`h-9 gap-1`; the border class only marks your own). */
+const REACTION_PILL = 'button[class~="h-9"][class~="gap-1"]';
+
+/**
+ * Long-press a reaction to see who reacted. Sharkord's Radix tooltip already lists them but
+ * refuses touch pointers, so the hold replays the pointer events as a mouse and Sharkord opens its
+ * own tooltip. The hold's click is swallowed so it does not toggle your reaction.
+ */
 export function installReactionNames() {
   let timer = 0;
   let shown: HTMLElement | null = null;
