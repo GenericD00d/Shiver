@@ -64,6 +64,16 @@ android {
         }
         getByName("release") {
             signingConfig = if (canSignRelease) signingConfigs.getByName("release") else null
+            /**
+             * Shiver ships arm64 only. Nothing else filters ABIs, so without this a release built
+             * without `--target aarch64` silently packages every library the CLI left in jniLibs —
+             * and those symlinks outlive the build that made them, so a later arm64 build keeps
+             * carrying them. Debug builds are untouched, since an emulator wants x86_64.
+             */
+            ndk {
+                abiFilters.clear()
+                abiFilters.add("arm64-v8a")
+            }
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }

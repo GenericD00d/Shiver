@@ -122,7 +122,22 @@ Check the signature verifies before publishing.
 
 ```bash
 cd mobile
-./node_modules/.bin/tauri android build --apk   # call the binary directly, not through bun
+./node_modules/.bin/tauri android build --apk --target aarch64   # call the binary directly, not through bun
+```
+
+**Leave `--target aarch64` off and the CLI builds all four Android targets**, symlinking each into
+`gen/android/app/src/main/jniLibs/` — and those symlinks outlive the build that made them, so a
+later arm64 build finds them still there. That used to reach the APK: an installer three times the
+size (29 MB against 9.7 MB) carrying `armeabi-v7a`, `x86` and `x86_64` libraries no release has ever
+shipped, which built, signed and installed perfectly well and said nothing. `abiFilters` on the
+release build type in `gen/android/app/build.gradle.kts` now pins release APKs to `arm64-v8a`
+whatever is in `jniLibs`, so the flag saves three pointless cross-compiles rather than the release.
+Debug builds keep every ABI, because an emulator wants x86_64.
+
+Worth confirming anyway, since it is one command and the claim is in the file name:
+
+```bash
+unzip -l <apk> | grep -o 'lib/[^/]*' | sort -u   # expect only lib/arm64-v8a
 ```
 
 The build now refuses to produce an unsigned release APK — `failOnUnsignedRelease` in
