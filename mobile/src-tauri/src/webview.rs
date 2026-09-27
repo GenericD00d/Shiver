@@ -87,8 +87,8 @@ struct ShowingState {
     stray: bool,
     /// open the conversation with this user on arrival (consumed once)
     pending_dm_user: Option<String>,
-    /// the server last left, and when
-    left: Option<(String, Instant)>,
+    /// when each server was last left
+    left: HashMap<String, Instant>,
 }
 
 /// Where Shiver's own pages live and which server the webview is on.
@@ -112,7 +112,7 @@ impl Showing {
             .take()
             .filter(|previous| entry_id.as_ref() != Some(previous))
         {
-            state.left = Some((previous, Instant::now()));
+            state.left.insert(previous, Instant::now());
         }
 
         state.server = entry_id;
@@ -145,15 +145,16 @@ impl Showing {
         self.0.locked().server.clone()
     }
 
-    /// The server left less than `grace` ago, with how much of it remains.
-    pub fn just_left(&self, grace: Duration) -> Option<(String, Duration)> {
-        let state = self.0.locked();
-        let (entry_id, at) = state.left.as_ref()?;
+    /// The servers left less than `grace` ago, with how much of it remains for each.
+    pub fn just_left(&self, grace: Duration) -> HashMap<String, Duration> {
+        let mut state = self.0.locked();
 
-        grace
-            .checked_sub(at.elapsed())
-            .filter(|rest| !rest.is_zero())
-            .map(|rest| (entry_id.clone(), rest))
+        state.left.retain(|_, at| at.elapsed() < grace);
+        state
+            .left
+            .iter()
+            .map(|(entry_id, at)| (entry_id.clone(), grace.saturating_sub(at.elapsed())))
+            .collect()
     }
 
     pub fn set_pending_dm_user(&self, user: Option<String>) {
@@ -577,23 +578,24 @@ mod tests {
     }
 
     #[test]
-    fn the_server_left_is_remembered_for_its_grace() {
+    fn every_server_left_is_remembered_for_its_grace() {
         let showing = Showing::default();
         let grace = Duration::from_secs(30);
+        let left = |grace| {
+            let mut ids: Vec<String> = showing.just_left(grace).into_keys().collect();
+
+            ids.sort();
+            ids
+        };
 
         showing.set_server(Some("a".into()));
-        assert_eq!(showing.just_left(grace), None);
+        assert!(left(grace).is_empty());
         showing.set_server(None);
-        assert_eq!(
-            showing.just_left(grace).map(|(id, _)| id).as_deref(),
-            Some("a")
-        );
-        assert_eq!(showing.just_left(Duration::ZERO), None);
+        assert_eq!(left(grace), ["a"]);
         showing.set_server(Some("b".into()));
-        assert_eq!(
-            showing.just_left(grace).map(|(id, _)| id).as_deref(),
-            Some("a")
-        );
+        showing.set_server(None);
+        assert_eq!(left(grace), ["a", "b"]);
+        assert!(left(Duration::ZERO).is_empty());
     }
 
     #[test]
