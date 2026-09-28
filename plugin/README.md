@@ -137,7 +137,8 @@ tunnelled forms are refused too.
 **The request is made to the exact address that passed the check.** Each wake-up is a TLS connection
 to that address, with the certificate verified against the endpoint's hostname — so a name that
 changes its answer between the check and the connection (DNS rebinding) cannot move the request.
-Redirects are never followed, and at most 64 wake-ups are in flight at once across the server.
+Redirects are never followed, and at most 64 wake-ups are in flight at once across the server; the
+rest wait their turn (oldest first, up to 4096) rather than being dropped.
 
 A refused registration is told only that it was refused, never why, so the check cannot be used to
 map which hostnames exist on this server's network.

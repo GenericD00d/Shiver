@@ -110,4 +110,5 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   server's page.
 - **The plugin's push delivery is pinned.** The endpoint is resolved once, every address is
   checked, and the request is sent over TLS on port 443 to that vetted address with the hostname as
-  SNI, so DNS rebinding cannot redirect it. Deliveries in flight are capped server-wide.
+  SNI, so DNS rebinding cannot redirect it. Deliveries in flight are capped server-wide, and the
+  queue waiting behind them is bounded.

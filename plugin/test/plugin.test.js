@@ -286,6 +286,52 @@ test('deliveries in flight are capped server-wide', async () => {
   assert.equal(sends, 1);
 });
 
+test('wake-ups past the cap wait for a free slot, oldest first', async () => {
+  const sent = [];
+  const pending = [];
+  const { push } = await pushFor(subscribed(), {
+    send: ({ url }) => (sent.push(url.href), new Promise((resolve) => pending.push(() => resolve(200)))),
+    maxInFlight: 1
+  });
+
+  await push.onMessage({ userId: 7, channelId: 4 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(sent, ['https://relay.example/one']);
+
+  pending.shift()();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(sent, ['https://relay.example/one', 'https://relay.example/two']);
+});
+
+test('queued wake-ups are bounded and skip endpoints unregistered meanwhile', async () => {
+  const sent = [];
+  const pending = [];
+  const ctx = fakeCtx({
+    1: { pushEndpoints: ['https://relay.example/one'] },
+    2: { pushEndpoints: ['https://relay.example/two'] },
+    3: { pushEndpoints: ['https://relay.example/three'] },
+    4: { pushEndpoints: ['https://relay.example/four'] }
+  });
+  const { push } = await pushFor(ctx, {
+    send: ({ url }) => (sent.push(url.href), new Promise((resolve) => pending.push(() => resolve(200)))),
+    maxInFlight: 1,
+    maxQueued: 2
+  });
+
+  await push.onMessage({ userId: 7, channelId: 4 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await push.unregister(2);
+
+  while (pending.length) {
+    pending.shift()();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  assert.deepEqual(sent, ['https://relay.example/one', 'https://relay.example/three']);
+});
+
 test('clearing an endpoint forgets only that one, however it is written', async () => {
   const ctx = fakeCtx({ 1: { pushEndpoints: ['https://relay.example/one', 'https://relay.example/two'], status: 'hi' } });
   const { push } = await pushFor(ctx);
