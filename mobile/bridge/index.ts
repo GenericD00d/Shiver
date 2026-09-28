@@ -6,7 +6,15 @@
  */
 
 import { defineHook, isTopFrame, onDomSettled, touched } from '../../shared/web/bridge/dom';
-import { installAttachmentCards, installRoleColors, installSoundVolume, installStatusButton, installVoiceColors } from '../../shared/web/bridge/features';
+import {
+  closeSidePanel,
+  installAttachmentCards,
+  installRoleColors,
+  installSidePanels,
+  installSoundVolume,
+  installStatusButton,
+  installVoiceColors
+} from '../../shared/web/bridge/features';
 import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, waitForPlugin } from '../../shared/web/bridge/plugin';
 import { CHANNEL_ITEM, installMuteStyles, paintMuted } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme } from '../../shared/web/bridge/theme';
@@ -39,6 +47,7 @@ function install(shiver: ShiverConfig) {
   installSoundVolume(shiver.soundVolume);
   installAttachmentCards(shiver.minimiseAttachments);
   installVoiceColors();
+  installSidePanels();
   installRoleColors();
   installReactionNames();
   installImageZoom();
@@ -88,7 +97,7 @@ function install(shiver: ShiverConfig) {
   // arriving at a server is what moves its shared unread floor
   if (shiver.readFloor) void storeReadFloor(shiver.readFloor);
 
-  defineHook('__SHIVER_BACK__', () => closeChannelMenu() || goHome());
+  defineHook('__SHIVER_BACK__', () => closeChannelMenu() || closeSidePanel() || goHome());
   installHomeSwipe();
 
   if (shiver.openDmUser) openConversation(shiver.openDmUser);

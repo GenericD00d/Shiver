@@ -8,8 +8,10 @@ import {
   MEMBER_ITEM,
   MENTION_CHIP,
   MESSAGE_WRAPPER,
+  NARROW,
   REPLY_AUTHOR,
   SETTINGS_TRIGGER,
+  SIDE_PANEL,
   type SharkordRole,
   type SharkordUser,
   watchStore
@@ -173,6 +175,26 @@ ${selector}:hover { background-color: ${hoverBg} !important; color: ${hoverColor
       'rgb(59 130 246)'
     )
   ].join('\n');
+}
+
+/**
+ * Sharkord hides its voice-channel chat and thread panels on a narrow page, so opening one there
+ * did nothing; it covers the page instead (its own × closes it), under Sharkord's dialogs and menus.
+ */
+export function installSidePanels() {
+  ensureStyle('shiver-side-panels').textContent = `@media ${NARROW} {
+${SIDE_PANEL} { display: flex !important; position: fixed !important; inset: 0 !important; width: auto !important; border: 0 !important; z-index: 45; }
+}`;
+}
+
+/** Closes the side panel covering a narrow page, the topmost if two are; true when there was one. */
+export function closeSidePanel() {
+  const panel = window.matchMedia(NARROW).matches ? [...document.querySelectorAll(SIDE_PANEL)].pop() : undefined;
+  const close = panel?.querySelector('button svg.lucide-x')?.closest('button');
+
+  close?.click();
+
+  return !!close;
 }
 
 /**

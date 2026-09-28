@@ -7,7 +7,14 @@
  */
 
 import { defineHook, ensureStyle, installExternalLinks, onDomSettled, openMenuOnScreen, addedMenu, touched, whenDocumentReady } from '../../shared/web/bridge/dom';
-import { installAttachmentCards, installRoleColors, installSoundVolume, installStatusButton, installVoiceColors } from '../../shared/web/bridge/features';
+import {
+  installAttachmentCards,
+  installRoleColors,
+  installSidePanels,
+  installSoundVolume,
+  installStatusButton,
+  installVoiceColors
+} from '../../shared/web/bridge/features';
 import { pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
 import {
   addMuteItem,
@@ -20,9 +27,11 @@ import {
   DM_TOGGLE,
   installMuteStyles,
   markAllChannelsRead,
+  NARROW,
   paintMuted,
   rowName,
   SERVER_VIEW,
+  SIDE_PANEL,
   SIDEBAR,
   sharkordStore,
   type SharkordChannel,
@@ -239,6 +248,7 @@ function install(shiver: ShiverConfig) {
     installAttachmentCards(shiver.minimiseAttachments);
     installAttachmentFocus();
     installVoiceColors();
+    installSidePanels();
     installVoiceLock(shiver.voiceLocked, () => state);
 
     if (shiver.conversation) showConversation(shiver.conversation);
@@ -364,12 +374,14 @@ function silenceMessagePing() {
 
 /**
  * Keeps Sharkord's controls clear of Shiver's bell, a 48px webview (`BELL_SIZE` in `webviews.rs`)
- * over the top-right corner: pads the top bar (the only `h-12 w-full` element with `lg:grid`) and
- * moves a right-hand sheet's close button out from under it.
+ * over the top-right corner: pads the top bar (the only `h-12 w-full` element with `lg:grid`) and a
+ * side panel's header while it covers a narrow page, and moves a right-hand sheet's close button
+ * out from under it.
  */
 function reserveTopBarSpace() {
   ensureStyle('shiver-topbar-reserve').textContent = `
 .h-12.w-full[class~="lg:grid"] { padding-right: 48px !important; }
+@media ${NARROW} { ${SIDE_PANEL} .h-12.border-b { padding-right: 48px !important; } }
 [data-slot="sheet-content"][class~="right-0"] > button[class~="top-4"][class~="right-4"] { right: 64px !important; }
 `;
 }
