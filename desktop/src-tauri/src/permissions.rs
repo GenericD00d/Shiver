@@ -24,12 +24,13 @@ use crate::{
 pub use webview2::gate;
 
 /// Lets only the page on screen start a download, and only from its own origin. On Windows `gate`
-/// does this through WebView2 itself: Tauri's hook would also take over the download there and hide
+/// refuses a hidden page's downloads through WebView2 itself, which names the page each download
+/// comes from, so no origin is needed there; Tauri's hook would also take the download over and hide
 /// WebView2's own download UI.
 ///
-/// The origin matters because WebKitGTK raises a download on the page's web context, not the page:
-/// pages without a profile directory of their own would share one, and the first page's hook would
-/// answer for every download in it.
+/// Here the origin matters because WebKitGTK raises a download on the page's web context, not the
+/// page: pages without a profile directory of their own would share one, and the first page's hook
+/// would answer for every download in it.
 #[cfg(not(windows))]
 pub fn gate_downloads(
     builder: tauri::webview::WebviewBuilder<tauri::Wry>,
