@@ -49,17 +49,13 @@ impl Posted {
 /// Tells the system about a notification that just reached the feed, if the window is not in
 /// front: a toast (when the user wants them) and, for a DM, a request for attention.
 pub fn announce(app: &AppHandle, notification: &Notification) {
+    if webviews::is_in_front(app) {
+        return;
+    }
+
     let Ok(window) = webviews::main_window(app) else {
         return;
     };
-
-    let in_front = window.is_visible().unwrap_or(true)
-        && !window.is_minimized().unwrap_or(false)
-        && window.is_focused().unwrap_or(false);
-
-    if in_front {
-        return;
-    }
 
     if notification.is_dm {
         let _ = window.request_user_attention(Some(UserAttentionType::Informational));

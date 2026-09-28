@@ -24,7 +24,7 @@ import {
   type Settings,
   type VoiceStatus
 } from './types';
-import { byPosition } from '../../shared/web/rail';
+import { byPosition, railOrder } from '../../shared/web/rail';
 
 /**
  * Which Shiver surface owns the content area. Anything other than `server` means the active server's
@@ -329,6 +329,23 @@ export const App = () => {
     },
     []
   );
+
+  // Ctrl+1…9 and Ctrl+Alt+Up/Down, which the core registers only while Shiver is in front
+  useCoreEvent<{ server?: number; step?: number }>(EVENTS.shortcut, ({ server, step }) => {
+    const order = railOrder(registry.servers, registry.folders);
+    const current = order.findIndex((entry) => entry.id === activeId);
+    let target: ServerEntry | undefined;
+
+    if (typeof server === 'number') {
+      target = order[server - 1];
+    } else if (typeof step === 'number' && order.length > 0) {
+      const from = current === -1 ? (step > 0 ? -1 : 0) : current;
+
+      target = order[(from + step + order.length) % order.length];
+    }
+
+    if (target) void openServer(target.id);
+  });
 
   const handleAdded = useCallback(
     async (id: string) => {

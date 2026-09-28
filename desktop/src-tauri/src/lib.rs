@@ -198,6 +198,7 @@ pub fn run() {
             let mute_hotkey = app.state::<Store>().registry().settings.mute_hotkey.clone();
 
             hotkey::apply(handle, mute_hotkey.as_deref());
+            hotkey::watch_front(handle);
 
             webviews::create_main_window(handle)?;
             tray::start(handle);

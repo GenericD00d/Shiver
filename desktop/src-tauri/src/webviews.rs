@@ -294,6 +294,29 @@ pub fn create_main_window(app: &AppHandle) -> Result<Window> {
     Ok(window)
 }
 
+/// Whether Shiver's window is the one the user is using: shown, not minimised, and in front. Not
+/// `is_focused` alone, which on Windows reads false while the keyboard is in one of its webviews.
+pub fn is_in_front(app: &AppHandle) -> bool {
+    let Ok(window) = main_window(app) else {
+        return false;
+    };
+
+    if !window.is_visible().unwrap_or(false) || window.is_minimized().unwrap_or(true) {
+        return false;
+    }
+
+    #[cfg(windows)]
+    {
+        // SAFETY: takes no arguments and only reads which window is in front
+        let front = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+
+        window.hwnd().is_ok_and(|hwnd| hwnd.0 == front.0)
+    }
+
+    #[cfg(not(windows))]
+    window.is_focused().unwrap_or(false)
+}
+
 /// Records whether the window is out of sight (minimised, or hidden to the tray) and tells the
 /// pages when that changes.
 pub fn set_window_hidden(app: &AppHandle, hidden: bool) {

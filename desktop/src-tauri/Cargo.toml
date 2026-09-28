@@ -39,8 +39,8 @@ thiserror.workspace = true
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
-# WebView2 profile access, only for resetting camera/microphone permissions
+# WebView2 profile access, only for resetting camera/microphone permissions; and which window is in front
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
 windows-core = "0.61"
-windows = { version = "0.61", features = ["Win32_System_Com"] }
+windows = { version = "0.61", features = ["Win32_System_Com", "Win32_UI_WindowsAndMessaging"] }

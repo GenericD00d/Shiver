@@ -32,6 +32,11 @@ const SECTIONS = [
 
 type SectionId = (typeof SECTIONS)[number]['id'];
 
+/** How the rail shortcuts read on this system (`CommandOrControl` in hotkey.rs). */
+const IS_MAC = navigator.userAgent.includes('Mac');
+const SHORTCUT_KEY = IS_MAC ? '⌘' : 'Ctrl';
+const ALT_KEY = IS_MAC ? '⌥' : 'Alt';
+
 /** Only on Windows does Shiver ask before a server uses the camera and microphone. */
 const ASKS_FOR_MEDIA = navigator.userAgent.includes('Windows');
 
@@ -412,6 +417,11 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
 
           {section === 'servers' ? (
             <>
+              <p className="hint">
+                {SHORTCUT_KEY}+1 to {SHORTCUT_KEY}+9 open the rail's servers in order, and{' '}
+                {SHORTCUT_KEY}+{ALT_KEY}+↑ or ↓ the one above or below, while Shiver is in front.
+              </p>
+
               <label className="checkbox">
                 <input
                   type="checkbox"
