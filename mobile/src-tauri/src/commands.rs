@@ -438,7 +438,7 @@ pub async fn select_server(
     dm_user: Option<String>,
 ) -> Result<()> {
     let entry = entry_of(&store, &id)?;
-    let token = app.state::<Inbox>().token(&id);
+    let token = inbox::session_for(&app, &id).await;
 
     app.state::<Showing>().set_pending_dm_user(dm_user);
 

@@ -12,7 +12,7 @@ the core through `window.__SHIVER_*__` hooks that the core polls or calls.
 ```
 icon.png                   1024px master icon, the input to `tauri icon` for both apps
 Cargo.toml                 workspace (rust 1.77.2): shared/*, desktop/src-tauri, mobile/src-tauri, mobile/plugins/*
-shared/shiver-core/        Rust: origin rules, registry store, rail, http, login, probe, rate limit
+shared/shiver-core/        Rust: origin rules, registry store, rail, http, login, session freshness, probe, rate limit
 shared/sharkord-client/    Rust: read-only Sharkord tRPC-over-WebSocket client, watch loop, add-server check
 shared/web/                TS for both frontends (relative imports; no .tsx: react won't resolve here)
 shared/web/bridge/         TS for both bridges
@@ -70,6 +70,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `rail` | `RailServer` trait + `rail_server!(Type)` macro; `registry!(Registry, Server)` (that plus `server`, `server_mut`, `muted_for`, `set_muted_for`, `next_position`, `rail`); `RailRef {kind,id}`; `next_position`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder`, `reorder_servers`, `prune_folders` |
 | `http` | `client()` (pooled, no redirects), `bytes_within_limit`, `MAX_BODY` |
 | `login` | `sign_in` (`POST /login` → token) |
+| `jwt` | reads `exp` only: `freshness`→`Freshness` {Fresh, Due (use it, renew in the background), Expired}, `outlasts`; `Renewals` (`begin`/`succeeded`: one background renewal per entry per 5 min) |
 | `text` | `presentable` (server words made safe to show), `clamp` (bounded, invisible marks dropped) |
 | `probe` | `ServerInfo`, `fetch_info` (`GET /info`, name and description cleaned and bounded), `fetch_icon` (data URI) |
 | `limit` | `Openings`: `take(key, n)` (5/s, 10/10s per key), `grant`, `forget` |
@@ -99,9 +100,8 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `drain` | polls pages' `__SHIVER_DRAIN__` (on screen, connecting or in a call every 0.75 s, the rest every ~2 s; an unchanged page answers null); events `shiver://feed|dm-failed|server-ready|voice|signed-out|status|open-message` (`VOICE_EVENT`, `OPEN_MESSAGE_EVENT` also sent by commands); `Readiness`, `ServerStatus`, `Broadcast`, `spawn`, `notify_feed_changed` |
 | `watch` | core sockets to servers without an open page (`sharkord_client::watch`): `sync`, `restart`, `forget`, `Missed`, `ReadStates`, `Plugins`, `Reported`, `Watcher`, `channel_read`, `mark_read`, `publish_floor` |
 | `feed` | `Feed` (notifications + DMs): `push`, `push_update`, `set_dms`, `mark_*`, `clear`, `forget_entry`, `unread_*`, `summary`; `FeedSummary` (the feed event's payload), `Notification`, `DmEntry`, `DmChannel`, `DrainResult`, `RawNotification`, `QueuedMute` |
-| `session` | `Recovery` + `recover`: re-sign-in when a page's seeded session is refused |
+| `session` | `token` (the session for a page or socket: a due one renewed in the background, only a missing or expired one waited on), `token_for_new_page` (none when the page exists: rail clicks never touch the keychain); `Recovery` + `recover`: re-sign-in when a page's seeded session is refused |
 | `secrets` | `Secret` (Session/Password) in the OS keychain, read as `SecretString` (zeroised); `*_off_thread` helpers |
-| `jwt` | `needs_refresh`, `is_live` (reads `exp` only) |
 | `voice` | `VoiceState` (one call across servers, started only by the page on screen), `VoiceStatus`, `VoiceSnapshot` |
 | `hotkey` | global mic-mute shortcut `apply` |
 | `badge` / `badges` | taskbar badge `refresh`; `channel_viewed`, `is_on_screen` |
@@ -122,7 +122,7 @@ Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and
 | `model` | `ServerEntry` (+`push_token`, `retired_push_endpoints`), `Settings`, `Registry` (`registry!` helpers, `entry_for_push_token`, `ensure_push_tokens`) |
 | `store` | as desktop |
 | `icons` | logos as files (`icons/<entry id>`, a `data:` uri each): `save` (none deletes), `load`, `restore` (prune the gone, fetch the missing) |
-| `inbox` | core sockets for servers not on screen + secret storage: `Inbox` (tokens, problems, plugins, dms, unread, signed_out, baselines), `sync` (each server left goes unwatched for `WATCH_GRACE`), `restart`, `restore`, `remember_session`, `remember_password`, `forget_password`, `forget_everywhere`, `harvest_token`, `replace_mutes`, `watch_mutes`, `collect_dms`, `DmEntry`, `INBOX_EVENT` |
+| `inbox` | core sockets for servers not on screen + secret storage: `Inbox` (tokens, problems, plugins, dms, unread, signed_out, baselines), `sync` (each server left goes unwatched for `WATCH_GRACE`), `restart`, `restore`, `session_for` (renews a due session in the background, an expired one first), `remember_session`, `remember_password`, `forget_password`, `forget_everywhere`, `harvest_token` (never over a session that outlasts it), `replace_mutes`, `watch_mutes`, `collect_dms`, `DmEntry`, `INBOX_EVENT` |
 | `webview` | the single webview (`main_window`): `Showing` (home, current server and whether it loaded, a stray page from history, pending DM user, when each server was left; `at_home`, `just_left`), `show_server` (drops any still), `take_still` (the still `MainActivity` took of the page left, once), `show_failed` (back to Shiver's page with `#failed=<id>`), `go_home`, `emit_home` (events only while Shiver's page is up), `without_seed`, `install_bridge`/`PageContext` (that entry's own config only), `read_mutes` (the page's mutes and outside links), navigation guard (`is_allowed`, `navigation_allowed`; allows only, since Android also asks it for frames and cancelled navigations), arrival on load (`is_home`, `landed_home`), `background_color`, `document_start` (bundle wrapped with the per-launch seed secret; `seed_key_for` derives each origin's key), `Openings` |
 | `push` | UnifiedPush per chosen server: `Push`, `start`, `register_wanted`, `set_wanted` (turning off retires the endpoint; the page clears it with the plugin), `unregister`, `migrate_tokens`, `PUSH_EVENT` |
 | `update` | notify-only: `start` (announces `shiver://update`), `check_for_update`, `update_available`, `skip_update`, `open_releases`, `open_repository` |

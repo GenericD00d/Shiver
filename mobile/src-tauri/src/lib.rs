@@ -87,6 +87,7 @@ pub fn run() {
             app.manage(Showing::default());
             app.manage(sharkord::CheckedSessions::default());
             app.manage(Inbox::default());
+            app.manage(shiver_core::jwt::Renewals::default());
             app.manage(push::Push::default());
             app.manage(update::Available::default());
 

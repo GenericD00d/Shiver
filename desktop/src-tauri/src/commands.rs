@@ -14,10 +14,10 @@ use crate::{
     drain::{self, Readiness},
     error::{Core, Result},
     feed::{DmEntry, Feed, FeedSummary, Notification},
-    hotkey, jwt,
+    hotkey,
     model::{normalize_origin, Folder, Registry, ServerEntry, Settings},
     secrets::{self, Secret},
-    session::Recovery,
+    session::{self, Recovery},
     store::{RegistryStore, Store},
     voice::{VoiceState, VoiceStatus},
     webviews,
@@ -56,48 +56,6 @@ fn voice_locked_for(app: &AppHandle, entry_id: &str) -> bool {
 }
 
 /* ── sessions ── */
-
-/// A session token for this entry, signing in again when the stored one is due for renewal.
-///
-/// Never fails: with no usable session the server's own login page is the fallback. A token that
-/// is due for renewal but still valid is used when renewal is impossible (no password) or fails.
-pub(crate) async fn ensure_session(entry: &ServerEntry) -> Option<String> {
-    let stored = secrets::read_off_thread(Secret::Session, &entry.id).await;
-
-    if let Some(token) = stored.as_deref() {
-        if !jwt::needs_refresh(token) {
-            return Some(token.to_string());
-        }
-    }
-
-    let still_live = stored
-        .as_deref()
-        .filter(|token| jwt::is_live(token))
-        .map(|token| token.to_string());
-
-    let (Some(identity), Some(password)) = (
-        entry.identity.as_deref(),
-        secrets::read_off_thread(Secret::Password, &entry.id).await,
-    ) else {
-        return still_live;
-    };
-
-    match login::sign_in(&entry.origin, identity, &password).await {
-        Ok(token) => {
-            let _ = secrets::store_off_thread(Secret::Session, &entry.id, &token).await;
-
-            Some(token)
-        }
-        Err(error) => {
-            eprintln!(
-                "[shiver] could not refresh the session for {}: {error}",
-                entry.origin
-            );
-
-            still_live
-        }
-    }
-}
 
 /// Stores a fresh session (and the password, or forgets it). On failure nothing is left behind.
 async fn store_credentials(
@@ -565,7 +523,7 @@ fn plugin_menu_label(status: Option<&Option<String>>) -> String {
 #[tauri::command]
 pub async fn select_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
     let (entry, settings, muted) = page_inputs(&store, &id)?;
-    let token = ensure_session(&entry).await;
+    let token = session::token_for_new_page(&app, &entry).await;
 
     webviews::show_server(
         &app,
@@ -591,7 +549,7 @@ pub async fn select_server(app: AppHandle, store: State<'_, Store>, id: String) 
 pub async fn prepare_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<bool> {
     if app.get_webview(&webviews::webview_label(&id)).is_none() {
         let (entry, settings, muted) = page_inputs(&store, &id)?;
-        let token = ensure_session(&entry).await;
+        let token = session::token(&app, &entry).await;
 
         webviews::preload_server(
             &app,
@@ -628,10 +586,7 @@ pub async fn open_dm(
     name: String,
 ) -> Result<()> {
     let (entry, settings, muted) = page_inputs(&store, &entry_id)?;
-    let token = match app.get_webview(&webviews::webview_label(&entry_id)) {
-        Some(_) => None,
-        None => ensure_session(&entry).await,
-    };
+    let token = session::token_for_new_page(&app, &entry).await;
 
     webviews::show_conversation(
         &app,

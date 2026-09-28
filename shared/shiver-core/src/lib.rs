@@ -1,9 +1,10 @@
-//! What both Shiver clients share: origin rules, the registry store, the rail, http, sign-in and
-//! probing.
+//! What both Shiver clients share: origin rules, the registry store, the rail, http, sign-in, session
+//! freshness and probing.
 
 pub mod error;
 pub mod hash;
 pub mod http;
+pub mod jwt;
 pub mod limit;
 pub mod links;
 pub mod login;

@@ -5,7 +5,6 @@ mod drain;
 mod error;
 mod feed;
 mod hotkey;
-mod jwt;
 mod model;
 mod permissions;
 mod secrets;
@@ -168,6 +167,7 @@ pub fn run() {
             app.manage(VoiceState::default());
             app.manage(Readiness::default());
             app.manage(Recovery::default());
+            app.manage(shiver_core::jwt::Renewals::default());
             app.manage(drain::Broadcast::default());
             app.manage(webviews::Openings::default());
             app.manage(update::Available::default());

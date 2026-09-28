@@ -21,11 +21,12 @@ use shiver_core::LockExt;
 use tauri::{async_runtime::JoinHandle, AppHandle, Manager, Runtime};
 
 use crate::{
-    commands, drain,
+    drain,
     drain::Readiness,
     feed::{DmChannel, Feed, RawNotification},
     model::ServerEntry,
     secrets::{self, Secret},
+    session,
     store::{RegistryStore, Store},
     webviews,
 };
@@ -240,7 +241,7 @@ struct Watch {
 impl sharkord::Watcher for Watch {
     async fn target(&mut self) -> Option<sharkord::Target> {
         // asked each attempt, which is what renews an expiring session
-        let Some(token) = commands::ensure_session(&self.entry).await else {
+        let Some(token) = session::token(&self.app, &self.entry).await else {
             eprintln!(
                 "[shiver] no session for {}; not watched until signed in",
                 self.entry.origin
@@ -273,7 +274,7 @@ impl sharkord::Watcher for Watch {
     }
 
     async fn refused(&mut self, refusals: u32) -> bool {
-        // dropped so `ensure_session` signs in afresh
+        // dropped so `session::token` signs in afresh
         let _ = secrets::forget_off_thread(Secret::Session, &self.entry.id).await;
 
         if refusals >= MAX_REFUSALS {

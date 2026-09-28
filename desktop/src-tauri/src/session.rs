@@ -1,8 +1,12 @@
-//! Signing back in when a page reports that its seeded session was refused.
+//! Session tokens for new pages and sockets, and signing back in when a page reports that its
+//! seeded session was refused.
 //!
-//! Attempts are capped and spaced, and the count resets only when a page actually reports it is
-//! signed in again — so a page that keeps claiming "signed out" (a hostile one, or a Sharkord change
-//! Shiver does not understand) cannot make Shiver re-send the password forever.
+//! A token due for renewal is used as it is and renewed in the background, so opening a page only
+//! waits on a sign-in when there is no usable session at all.
+//!
+//! Recovery attempts are capped and spaced, and the count resets only when a page actually reports
+//! it is signed in again — so a page that keeps claiming "signed out" (a hostile one, or a Sharkord
+//! change Shiver does not understand) cannot make Shiver re-send the password forever.
 
 use std::{
     collections::HashMap,
@@ -10,7 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use shiver_core::LockExt;
+use shiver_core::{
+    jwt::{self, Freshness, Renewals},
+    LockExt,
+};
 use tauri::{AppHandle, Manager};
 
 use crate::{
@@ -27,6 +34,82 @@ const MAX_ATTEMPTS: u32 = 3;
 
 /// Minimum spacing between attempts.
 const RETRY_AFTER: Duration = Duration::from_secs(20);
+
+/// A session token for this entry.
+///
+/// Never fails: with no usable session the server's own login page is the fallback. A token due for
+/// renewal is returned as it is and renewed in the background; only a missing or expired one waits
+/// on a sign-in.
+pub async fn token(app: &AppHandle, entry: &ServerEntry) -> Option<String> {
+    let stored = secrets::read_off_thread(Secret::Session, &entry.id)
+        .await
+        .map(|token| token.to_string());
+
+    match stored.as_deref().map(jwt::freshness) {
+        Some(Freshness::Fresh) => stored,
+        Some(Freshness::Due) => {
+            renew_in_background(app, entry);
+
+            stored
+        }
+        Some(Freshness::Expired) | None => renew(entry).await,
+    }
+}
+
+/// A session to seed a new page with: `None` when the entry's page already exists, since it has
+/// its own (and a rail click should not touch the keychain).
+pub async fn token_for_new_page(app: &AppHandle, entry: &ServerEntry) -> Option<String> {
+    match app.get_webview(&webviews::webview_label(&entry.id)) {
+        Some(_) => None,
+        None => token(app, entry).await,
+    }
+}
+
+fn renew_in_background(app: &AppHandle, entry: &ServerEntry) {
+    if entry.identity.is_none() || !app.state::<Renewals>().begin(&entry.id) {
+        return;
+    }
+
+    let (app, entry) = (app.clone(), entry.clone());
+
+    tauri::async_runtime::spawn(async move {
+        if renew(&entry).await.is_some() {
+            app.state::<Renewals>().succeeded(&entry.id);
+        }
+    });
+}
+
+/// Signs in with the stored password and keeps the new session.
+async fn renew(entry: &ServerEntry) -> Option<String> {
+    let (Some(identity), Some(password)) = (
+        entry.identity.as_deref(),
+        secrets::read_off_thread(Secret::Password, &entry.id).await,
+    ) else {
+        return None;
+    };
+
+    match shiver_core::login::sign_in(&entry.origin, identity, &password).await {
+        Ok(token) => {
+            if let Err(error) = secrets::store_off_thread(Secret::Session, &entry.id, &token).await
+            {
+                eprintln!(
+                    "[shiver] could not keep the new session for {}: {error}",
+                    entry.origin
+                );
+            }
+
+            Some(token)
+        }
+        Err(error) => {
+            eprintln!(
+                "[shiver] could not renew the session for {}: {error}",
+                entry.origin
+            );
+
+            None
+        }
+    }
+}
 
 #[derive(Default)]
 struct Attempt {
@@ -135,33 +218,9 @@ pub fn recover(app: &AppHandle, entry_id: &str) -> bool {
 }
 
 async fn sign_in_again(app: &AppHandle, entry: &ServerEntry) -> bool {
-    let (Some(identity), Some(password)) = (
-        entry.identity.as_deref(),
-        secrets::read_off_thread(Secret::Password, &entry.id).await,
-    ) else {
+    let Some(token) = renew(entry).await else {
         return false;
     };
-
-    let token = match shiver_core::login::sign_in(&entry.origin, identity, &password).await {
-        Ok(token) => token,
-        Err(error) => {
-            eprintln!(
-                "[shiver] signing back in to {} failed: {error}",
-                entry.origin
-            );
-
-            return false;
-        }
-    };
-
-    if let Err(error) = secrets::store_off_thread(Secret::Session, &entry.id, &token).await {
-        eprintln!(
-            "[shiver] could not keep the new session for {}: {error}",
-            entry.origin
-        );
-
-        return false;
-    }
 
     rebuild_pages(app, entry, &token);
 

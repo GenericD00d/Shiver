@@ -11,7 +11,11 @@ use std::{
     time::Duration,
 };
 
-use shiver_core::{text::clamp, LockExt};
+use shiver_core::{
+    jwt::{self, Freshness, Renewals},
+    text::clamp,
+    LockExt,
+};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_shiver_secrets::SecretsExt;
 
@@ -325,7 +329,7 @@ fn sign_in_missing(app: &AppHandle) {
     let handle = app.clone();
 
     tauri::async_runtime::spawn(async move {
-        let missing: Vec<(String, String)> = {
+        let missing: Vec<String> = {
             let inbox = handle.state::<Inbox>();
             let store = handle.state::<Store>();
             let registry = store.registry();
@@ -337,21 +341,27 @@ fn sign_in_missing(app: &AppHandle) {
                 .filter(|server| {
                     inbox.token(&server.id).is_none() && inbox.has_password(&server.id)
                 })
-                .map(|server| (server.id.clone(), server.origin.clone()))
+                .map(|server| server.id.clone())
                 .collect()
         };
 
-        for (entry_id, origin) in missing {
-            sign_in_again(&handle, &entry_id, &origin).await;
+        let mut signed_in = false;
+
+        for entry_id in missing {
+            signed_in |= renew(&handle, &entry_id).await.is_some();
+        }
+
+        if signed_in {
+            sync(&handle);
         }
     });
 }
 
-/// Keeps a session (in memory, and in the store when `persist`) and connects with it. A token past
-/// `MAX_TOKEN` is not kept.
-fn record_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) {
+/// Keeps a session (in memory, and in the store when `persist`); returns whether it was new. A
+/// token past `MAX_TOKEN` is not kept.
+fn keep_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) -> bool {
     if token.len() > MAX_TOKEN {
-        return;
+        return false;
     }
 
     if app
@@ -362,14 +372,21 @@ fn record_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) {
     }
 
     if !app.state::<Inbox>().remember_token(entry_id, token) {
-        return;
+        return false;
     }
 
     if persist {
         store_off_thread(app, entry_id.to_string(), Some(token.to_string()));
     }
 
-    sync(app);
+    true
+}
+
+/// Keeps a session and connects with it.
+fn record_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) {
+    if keep_session(app, entry_id, token, persist) {
+        sync(app);
+    }
 }
 
 pub fn remember_session(app: &AppHandle, entry_id: &str, token: &str) {
@@ -520,7 +537,8 @@ struct Watch {
 
 impl sharkord::Watcher for Watch {
     async fn target(&mut self) -> Option<sharkord::Target> {
-        let token = self.app.state::<Inbox>().token(&self.entry_id);
+        // asked each attempt, which is what renews an expiring session
+        let token = session_for(&self.app, &self.entry_id).await;
         let server = self
             .app
             .state::<Store>()
@@ -566,17 +584,8 @@ impl sharkord::Watcher for Watch {
     }
 
     async fn refused(&mut self, refusals: u32) -> bool {
-        let origin = self
-            .app
-            .state::<Store>()
-            .registry()
-            .server(&self.entry_id)
-            .map(|server| server.origin.clone());
-
-        if let Some(origin) = origin {
-            if refusals < MAX_REFUSALS && sign_in_again(&self.app, &self.entry_id, &origin).await {
-                return true;
-            }
+        if refusals < MAX_REFUSALS && renew(&self.app, &self.entry_id).await.is_some() {
+            return true;
         }
 
         forget_session(&self.app, &self.entry_id);
@@ -692,47 +701,82 @@ fn publish(app: &AppHandle) {
     webview::emit_home(app, INBOX_EVENT, app.state::<Inbox>().unread());
 }
 
-/// Signs a server in again from its stored password. A refused password is forgotten.
-async fn sign_in_again(app: &AppHandle, entry_id: &str, origin: &str) -> bool {
-    let Some(identity) = app
+/* ── sessions ── */
+
+/// The session to open this entry with. One due for renewal is used as it is and renewed in the
+/// background; a missing or expired one is renewed first, and an expired one is still used when
+/// that fails (the server's refusal then takes its usual course).
+pub async fn session_for(app: &AppHandle, entry_id: &str) -> Option<String> {
+    let token = app.state::<Inbox>().token(entry_id);
+
+    match token.as_deref().map(jwt::freshness) {
+        Some(Freshness::Fresh) => token,
+        Some(Freshness::Due) => {
+            renew_in_background(app, entry_id);
+
+            token
+        }
+        Some(Freshness::Expired) | None => renew(app, entry_id).await.or(token),
+    }
+}
+
+fn renew_in_background(app: &AppHandle, entry_id: &str) {
+    if !app.state::<Inbox>().has_password(entry_id) || !app.state::<Renewals>().begin(entry_id) {
+        return;
+    }
+
+    let (app, entry_id) = (app.clone(), entry_id.to_string());
+
+    tauri::async_runtime::spawn(async move {
+        if renew(&app, &entry_id).await.is_some() {
+            app.state::<Renewals>().succeeded(&entry_id);
+        }
+    });
+}
+
+/// Signs a server in again from its stored password and keeps the session, without connecting
+/// with it (the caller does). A refused password is forgotten.
+async fn renew(app: &AppHandle, entry_id: &str) -> Option<String> {
+    let (identity, origin) = app
         .state::<Store>()
         .registry()
         .server(entry_id)
-        .and_then(|server| server.identity.clone())
-    else {
-        return false;
-    };
+        .and_then(|server| Some((server.identity.clone()?, server.origin.clone())))?;
+
+    if !app.state::<Inbox>().has_password(entry_id) {
+        return None;
+    }
 
     let handle = app.clone();
     let key = password_store_key(entry_id);
     let password =
         match tokio::task::spawn_blocking(move || handle.shiver_secrets().get(&key)).await {
             Ok(Ok(Some(password))) => zeroize::Zeroizing::new(password),
-            Ok(Ok(None)) => return false,
+            Ok(Ok(None)) => return None,
             Ok(Err(error)) => {
                 eprintln!("[shiver] could not read the stored password for {origin}: {error}");
 
-                return false;
+                return None;
             }
-            Err(_) => return false,
+            Err(_) => return None,
         };
 
-    match shiver_core::login::sign_in(origin, &identity, &password).await {
+    match shiver_core::login::sign_in(&origin, &identity, &password).await {
         Ok(session) => {
-            remember_session(app, entry_id, &session);
+            keep_session(app, entry_id, &session, true);
 
-            true
+            Some(session)
         }
         Err(error @ shiver_core::Error::Refused(_)) => {
             eprintln!("[shiver] {origin} refused Shiver's stored password: {error}");
             forget_password(app, entry_id);
 
-            false
+            None
         }
         Err(error) => {
             eprintln!("[shiver] could not reach {origin} to sign in again: {error}");
 
-            false
+            None
         }
     }
 }
@@ -763,6 +807,15 @@ pub fn harvest_token(app: &AppHandle, entry_id: String) {
         else {
             return;
         };
+
+        // a page seeded before a background renewal still holds the older session
+        if handle
+            .state::<Inbox>()
+            .token(&entry_id)
+            .is_some_and(|held| jwt::outlasts(&held, &token))
+        {
+            return;
+        }
 
         // off this thread: storing calls into the JVM, which deadlocks from an eval callback
         let (handle, id) = (handle.clone(), entry_id.clone());
