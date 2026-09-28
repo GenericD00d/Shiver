@@ -23,7 +23,7 @@ use tauri::{async_runtime::JoinHandle, AppHandle, Manager, Runtime};
 use crate::{
     drain,
     drain::Readiness,
-    feed::{DmChannel, Feed, RawNotification},
+    feed::{DmChannel, Feed, RawNotification, Route},
     model::ServerEntry,
     secrets::{self, Secret},
     session,
@@ -302,12 +302,7 @@ fn on_joined(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
 
     // counted only on the first join of the run; a reconnect re-reads messages already in the feed
     if !app.state::<ReadStates>().knows(entry_id) {
-        count_missed(
-            app,
-            entry_id,
-            &joined.read_states,
-            joined.shared_floor.clone(),
-        );
+        count_missed(app, entry_id, joined);
     }
 
     app.state::<Plugins>()
@@ -428,33 +423,26 @@ pub fn publish_floor(app: &AppHandle, entry_id: &str) {
     }
 }
 
-/// On the first join of a run: the missed count against the floor (the plugin's shared floor wins
-/// over the local one). With no floor at all, this join becomes the floor and nothing is counted, so
-/// a newly added server's backlog is not announced as unread.
-fn count_missed<R: Runtime>(
-    app: &AppHandle<R>,
-    entry_id: &str,
-    read_states: &HashMap<i64, u32>,
-    shared: Option<HashMap<i64, u32>>,
-) {
+/// On the first join of a run: the missed count against the floor (`sharkord::choose_floor`, which
+/// is also kept as this device's floor when it changed). With no floor at all this join becomes
+/// it, and nothing is counted.
+fn count_missed<R: Runtime>(app: &AppHandle<R>, entry_id: &str, joined: &sharkord::Joined) {
     let store = app.state::<Store>();
     let local = store.registry().baselines.get(entry_id).cloned();
-
-    let Some(baseline) = shared.or(local) else {
-        let states = read_states.clone();
-        let _ = store.update(|registry| {
-            registry.baselines.insert(entry_id.to_string(), states);
-
-            Ok(())
-        });
-
-        return;
-    };
+    let (floor, changed) = sharkord::choose_floor(joined, local.as_ref());
 
     app.state::<Missed>().set(
         entry_id,
-        sharkord::unread_total(read_states, &baseline, &muted_set(app, entry_id)) as usize,
+        sharkord::unread_total(&joined.read_states, &floor, &muted_set(app, entry_id)) as usize,
     );
+
+    if changed {
+        let _ = store.update(|registry| {
+            registry.baselines.insert(entry_id.to_string(), floor);
+
+            Ok(())
+        });
+    }
 }
 
 /// Hands the join's conversation list to the inbox.
@@ -523,9 +511,9 @@ fn announce(
     let muted = muted_set(app, entry_id).contains(&message.channel_id)
         || !notify.allows(is_dm, message.mentions_me(joined));
 
-    if let Some(notification) = app
-        .state::<Feed>()
-        .push(entry_id, &server_name, None, raw, muted)
+    if let Some(notification) =
+        app.state::<Feed>()
+            .push(entry_id, &server_name, None, (raw, Route::Socket), muted)
     {
         crate::notify::announce(app, &notification);
         drain::notify_feed_changed(app);
@@ -559,7 +547,7 @@ fn report_too_large(app: &AppHandle, entry_id: &str, size: usize) {
         entry_id,
         &name,
         None,
-        RawNotification {
+        (RawNotification {
             channel_id: None,
             channel_name: None,
             author: "Shiver".into(),
@@ -569,7 +557,7 @@ fn report_too_large(app: &AppHandle, entry_id: &str, size: usize) {
             ),
             icon_url: None,
             is_dm: false,
-        },
+        }, Route::Socket),
         false,
     );
 

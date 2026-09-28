@@ -533,6 +533,23 @@ pub fn set_unread(read_states: &mut HashMap<i64, u32>, channel_id: i64, count: u
     }
 }
 
+/// The floor a join's unread is counted above: the one the user shares across devices (through the
+/// companion plugin), else this device's own, else this join itself, so a newly added server's
+/// backlog is not unread. Also says whether it differs from `local`, so the caller keeps it.
+pub fn choose_floor(
+    joined: &Joined,
+    local: Option<&HashMap<i64, u32>>,
+) -> (HashMap<i64, u32>, bool) {
+    let floor = joined
+        .shared_floor
+        .clone()
+        .or_else(|| local.cloned())
+        .unwrap_or_else(|| joined.read_states.clone());
+    let changed = local != Some(&floor);
+
+    (floor, changed)
+}
+
 /// Unread above the baseline, per channel, skipping muted channels. A channel below its baseline
 /// (read elsewhere) contributes nothing rather than hiding news in another channel.
 pub fn unread_total(
@@ -1143,6 +1160,25 @@ mod tests {
             }))
         );
         assert_eq!(parse_message(&serde_json::json!({ "content": "hi" })), None);
+    }
+
+    #[test]
+    fn the_shared_floor_wins_then_the_local_one_then_the_join() {
+        let counts = |pairs: &[(i64, u32)]| pairs.iter().copied().collect::<HashMap<_, _>>();
+        let mut joined = Joined {
+            read_states: counts(&[(1, 9)]),
+            ..Joined::default()
+        };
+        let local = counts(&[(1, 4)]);
+
+        assert_eq!(choose_floor(&joined, None), (counts(&[(1, 9)]), true));
+        assert_eq!(choose_floor(&joined, Some(&local)), (local.clone(), false));
+
+        joined.shared_floor = Some(counts(&[(1, 6)]));
+        assert_eq!(
+            choose_floor(&joined, Some(&local)),
+            (counts(&[(1, 6)]), true)
+        );
     }
 
     /// Sharkord's own `hasMention` cases.

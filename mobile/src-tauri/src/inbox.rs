@@ -656,12 +656,7 @@ fn on_joined(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
             .plugins
             .insert(entry_id.to_string(), joined.plugin_version.clone());
 
-        let floor = joined
-            .shared_floor
-            .clone()
-            .or_else(|| state.baselines.get(entry_id).cloned())
-            .unwrap_or_else(|| joined.read_states.clone());
-        let changed = state.baselines.get(entry_id) != Some(&floor);
+        let (floor, changed) = sharkord::choose_floor(joined, state.baselines.get(entry_id));
 
         state.baselines.insert(entry_id.to_string(), floor.clone());
         changed.then_some(floor)

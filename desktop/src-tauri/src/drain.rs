@@ -18,7 +18,7 @@ use shiver_core::LockExt;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
-    feed::{DrainResult, Feed},
+    feed::{DrainResult, Feed, Route},
     session,
     store::{RegistryStore, Store},
     voice::VoiceState,
@@ -292,8 +292,13 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
             .is_some_and(|channel_id| muted.contains(&channel_id))
             || !notify.allows(raw.is_dm, true);
 
-        if let Some(notification) = feed.push(entry_id, &server_name, Some(&origin), raw, is_muted)
-        {
+        if let Some(notification) = feed.push(
+            entry_id,
+            &server_name,
+            Some(&origin),
+            (raw, Route::Page),
+            is_muted,
+        ) {
             crate::notify::announce(app, &notification);
             changed = true;
         }
