@@ -431,7 +431,7 @@ fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
         .iter()
         .filter_map(|address| Url::parse(address).ok())
     {
-        crate::ask_to_open(app, server.as_deref().unwrap_or("A server"), &url);
+        crate::ask_to_open(app, entry_id, server.as_deref().unwrap_or("A server"), &url);
     }
 
     if let Some(channels) = state.muted {

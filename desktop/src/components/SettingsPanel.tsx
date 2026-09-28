@@ -342,7 +342,7 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
                   <button
                     type="button"
                     className="ghost"
-                    disabled={settings.trustedLinkSites.length === 0}
+                    disabled={settings.trustedLinks.length === 0}
                     onClick={handleForgetLinks}
                   >
                     {linksForgotten ?? 'Always ask again'}
@@ -350,8 +350,8 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
                 </div>
                 <small className="hint">
                   Shiver asks before opening a link a server's page wants opened, since a page can
-                  claim a click that never happened. Sites set to open without asking:{' '}
-                  {settings.trustedLinkSites.length}.
+                  claim a click that never happened. A site set to open without asking does so only
+                  from the server it was set on. Set so far: {settings.trustedLinks.length}.
                 </small>
               </label>
             </>

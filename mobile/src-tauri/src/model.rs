@@ -63,9 +63,10 @@ pub struct Settings {
     pub push_servers: Vec<String>,
     #[serde(default)]
     pub skipped_update: Option<String>,
-    /// sites whose links from server pages open without asking (`shiver_core::links`)
+    /// sites whose links open without asking, each from one server's pages (`shiver_core::links`);
+    /// replaces `trustedLinkSites` (trusted from every server), which is dropped
     #[serde(default)]
-    pub trusted_link_sites: Vec<String>,
+    pub trusted_links: Vec<shiver_core::links::TrustedLink>,
 }
 
 impl Default for Settings {
@@ -79,7 +80,7 @@ impl Default for Settings {
             last_server_id: None,
             push_servers: Vec::new(),
             skipped_update: None,
-            trusted_link_sites: Vec::new(),
+            trusted_links: Vec::new(),
         }
     }
 }

@@ -310,44 +310,45 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
 }
 
 /// Opens a link the server's page asked for, once the user agrees in a native dialog (the page
-/// cannot draw over it), or at once for a site they chose to trust. One question at a time; links
-/// asked for meanwhile are dropped. Android may hand an https link to another app.
-pub fn ask_to_open(app: &AppHandle, server: &str, url: &Url) {
+/// cannot draw over it), or at once for a site they chose to trust from this server. One question
+/// at a time; links asked for meanwhile are dropped. Android may hand an https link to another app.
+pub fn ask_to_open(app: &AppHandle, entry_id: &str, server: &str, url: &Url) {
+    use shiver_core::links::{self, Answer, Decision};
     use std::sync::atomic::{AtomicBool, Ordering};
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 
     static ASKING: AtomicBool = AtomicBool::new(false);
 
     let url = webview::without_seed(url);
-
-    let Some(site) = shiver_core::links::site(&url) else {
-        return;
+    let decision = links::decide(
+        &app.state::<Store>().registry().settings.trusted_links,
+        entry_id,
+        server,
+        &url,
+    );
+    let (site, question, always) = match decision {
+        Decision::Refuse => return,
+        Decision::Open => return open_externally(app, &url),
+        Decision::Ask {
+            site,
+            question,
+            always,
+        } => (site, question, always),
     };
-
-    if app
-        .state::<Store>()
-        .registry()
-        .settings
-        .trusted_link_sites
-        .contains(&site)
-    {
-        return open_externally(app, &url);
-    }
 
     if ASKING.swap(true, Ordering::AcqRel) {
         return eprintln!("[shiver] {server} asked to open a link while another waited; dropped");
     }
 
-    let always = format!("Always for {site}");
-    let app = app.clone();
+    let (app, entry_id) = (app.clone(), entry_id.to_string());
 
     app.dialog()
-        .message(shiver_core::links::question(server, &site, &url))
+        .message(question)
         .title("Open link?")
         .buttons(MessageDialogButtons::YesNoCancelCustom(
-            "Open".into(),
-            always.clone(),
-            "Cancel".into(),
+            links::OPEN.into(),
+            always,
+            links::CANCEL.into(),
         ))
         .show_with_result(move |answer| {
             ASKING.store(false, Ordering::Release);
@@ -356,14 +357,16 @@ pub fn ask_to_open(app: &AppHandle, server: &str, url: &Url) {
                 return;
             };
 
-            if choice == always {
-                let _ = app.state::<Store>().update(|registry| {
-                    shiver_core::links::trust(&mut registry.settings.trusted_link_sites, site);
+            match Answer::from_choice(&choice, &site) {
+                Answer::Cancel => return,
+                Answer::Open => {}
+                Answer::Always => {
+                    let _ = app.state::<Store>().update(|registry| {
+                        links::trust(&mut registry.settings.trusted_links, &entry_id, site);
 
-                    Ok(())
-                });
-            } else if choice != "Open" {
-                return;
+                        Ok(())
+                    });
+                }
             }
 
             open_externally(&app, &url);

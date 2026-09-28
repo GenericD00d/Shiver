@@ -44,7 +44,7 @@ const EMPTY: Registry = {
     soundVolume: 100,
     minimiseAttachments: true,
     lastServerId: null,
-    trustedLinkSites: [],
+    trustedLinks: [],
     pushServers: []
   }
 };
@@ -510,7 +510,7 @@ export const App = () => {
 
               <h2 className="section">Links</h2>
 
-              <TrustedLinks count={registry.settings.trustedLinkSites.length} />
+              <TrustedLinks count={registry.settings.trustedLinks.length} />
             </>
           ) : null}
         </main>

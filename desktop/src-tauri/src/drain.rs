@@ -272,7 +272,7 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
             .iter()
             .filter_map(|address| url::Url::parse(address).ok())
         {
-            webviews::ask_to_open(app, &server_name, url);
+            webviews::ask_to_open(app, entry_id, &server_name, url);
         }
     }
 

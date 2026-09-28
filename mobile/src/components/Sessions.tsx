@@ -24,7 +24,8 @@ export const TrustedLinks = ({ count }: { count: number }) => {
     <>
       <p className="hint">
         Shiver asks before opening a link a server's page wants opened, since a page can claim a tap
-        that never happened. Sites set to open without asking: {count}.
+        that never happened. A site set to open without asking does so only from the server it was
+        set on. Set so far: {count}.
       </p>
 
       {note ? <p className="hint">{note}</p> : null}

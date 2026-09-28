@@ -76,7 +76,7 @@ scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys,
 | `text` | `presentable` (server words made safe to show), `clamp` (bounded, invisible marks dropped) |
 | `probe` | `ServerInfo`, `fetch_info` (`GET /info`, name and description cleaned and bounded), `fetch_icon` (data URI) |
 | `limit` | `Openings`: `take(key, n)` (5/s, 10/10s per key), `grant`, `forget` |
-| `links` | links a page asks to open: `site` (http(s) only, none for a link carrying credentials), `question` (names the site first), `trust` (the bounded list of sites that open without asking) |
+| `links` | links a page asks to open: `decide`→`Decision` {Refuse, Open, Ask{site, question, always}}, `Answer::from_choice` (the dialog's buttons: `OPEN`, `always`, `CANCEL`), `site` (http(s) only, none for a link carrying credentials), `question` (names the site first); `TrustedLink` {entry_id, site}: `is_trusted`, `trust` (bounded, per server), `forget_entry` |
 | `hash` | `java_string` (Java `String.hashCode`) |
 
 ## shared/sharkord-client (`sharkord_client`)
@@ -139,7 +139,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 
 | file | exports |
 |---|---|
-| `types.ts` | `Folder`, `MutedChannel`, `ServerInfo`, `ServerCheck` (re-exported by each app's `types.ts`) |
+| `types.ts` | `Folder`, `MutedChannel`, `ServerInfo`, `ServerCheck`, `TrustedLink` (re-exported by each app's `types.ts`) |
 | `settings.ts` | `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `DEFAULT_RAIL_COLOR`, `MAX_SOUND_VOLUME` |
 | `rail.ts` | `initials`, `byPosition`, `membersOf` |
 | `colors.ts` | `automaticTextColor`, `lift` |

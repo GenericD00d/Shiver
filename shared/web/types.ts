@@ -5,6 +5,12 @@ export type MutedChannel = {
   channelId: number;
 };
 
+/** A site whose links open without asking, when this rail entry's pages ask (`links::TrustedLink`). */
+export type TrustedLink = {
+  entryId: string;
+  site: string;
+};
+
 export type Folder = {
   id: string;
   name: string;

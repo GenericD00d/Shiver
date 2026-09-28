@@ -154,6 +154,7 @@ pub async fn remove_server(app: AppHandle, store: State<'_, Store>, id: String) 
     store.update(|registry| {
         registry.servers.retain(|server| server.id != id);
         registry.muted.retain(|muted| muted.entry_id != id);
+        shiver_core::links::forget_entry(&mut registry.settings.trusted_links, &id);
         registry
             .settings
             .push_servers
@@ -456,7 +457,7 @@ pub async fn select_server(
 #[tauri::command]
 pub async fn forget_trusted_links(store: State<'_, Store>) -> Result<()> {
     store.update(|registry| {
-        registry.settings.trusted_link_sites.clear();
+        registry.settings.trusted_links.clear();
 
         Ok(())
     })
@@ -479,7 +480,7 @@ pub async fn update_settings(
             last_server_id: registry.settings.last_server_id.take(),
             skipped_update: registry.settings.skipped_update.take(),
             push_servers: std::mem::take(&mut registry.settings.push_servers),
-            trusted_link_sites: std::mem::take(&mut registry.settings.trusted_link_sites),
+            trusted_links: std::mem::take(&mut registry.settings.trusted_links),
             ..settings.sanitised()
         };
 

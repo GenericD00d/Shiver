@@ -1,8 +1,8 @@
-import type { Folder, MutedChannel, ServerCheck, ServerInfo } from '../../shared/web/types';
+import type { Folder, MutedChannel, ServerCheck, ServerInfo, TrustedLink } from '../../shared/web/types';
 
 export { DEFAULT_ACCENT_COLOR, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME } from '../../shared/web/settings';
 
-export type { Folder, MutedChannel, ServerCheck, ServerInfo };
+export type { Folder, MutedChannel, ServerCheck, ServerInfo, TrustedLink };
 
 export type ServerEntry = {
   /** Shiver takes messages of any size from this server, because the user said it may */
@@ -73,8 +73,8 @@ export type Settings = {
   /** shrink the file card under a picture down to its icon; see `minimise_attachments` in model.rs */
   minimiseAttachments: boolean;
   lastServerId: string | null;
-  /** sites whose links from server pages open without asking */
-  trustedLinkSites: string[];
+  /** sites whose links open without asking, each from one server's pages */
+  trustedLinks: TrustedLink[];
   /** entries allowed to wake the phone while Shiver is closed; kept here because settings are saved whole */
   pushServers: string[];
 };
