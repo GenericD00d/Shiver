@@ -705,6 +705,8 @@ const STORE_FILE = 'user-settings.json';
 const PRIME_CONCURRENCY = 16;
 /** Writes a minute per user through the actions without a limit of their own. */
 const WRITE_LIMIT = 30;
+/** Reads a minute per user; a client asks for each once per page load. */
+const READ_LIMIT = 60;
 
 /**
  * Carries mutes from the pre-0.0.25 settings file into the host's storage, without overwriting a
@@ -808,12 +810,18 @@ const onLoad = async (ctx) => {
 
     return run(user, payload);
   };
+  const mayRead = createLimiter(READ_LIMIT, 60_000);
+  const rationed = (run) => (user, payload) => {
+    if (!mayRead(user)) throw new Error('Too many requests; try again in a minute');
+
+    return run(user, payload);
+  };
 
   const actions = {
     setStatus: ['Set your own status line', (user, payload) => statuses.set(user, payload?.status)],
-    getStatuses: ['Everyone who has a status set', () => statuses.all()],
-    getOwnStatus: ['Your own status line', (user) => statuses.own(user)],
-    getMutedChannels: ['Your muted channels', (user) => settings.getMutedChannels(user)],
+    getStatuses: ['Everyone who has a status set', rationed(() => statuses.all())],
+    getOwnStatus: ['Your own status line', rationed((user) => statuses.own(user))],
+    getMutedChannels: ['Your muted channels', rationed((user) => settings.getMutedChannels(user))],
     setMutedChannels: [
       'Replace your muted channels',
       limited((user, payload) => settings.setMutedChannels(user, payload?.mutedChannels))

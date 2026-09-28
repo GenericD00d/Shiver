@@ -427,6 +427,28 @@ test('writes through the actions are rate limited per user', async () => {
   await onUnload(ctx, { quiet: true });
 });
 
+test('reads through the actions are rate limited per user', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'shiver-plugin-'));
+  const actions = new Map();
+  const ctx = {
+    ...fakeCtx({ 1: { mutedChannels: [4] } }),
+    dataPath: dir,
+    path: dir,
+    ui: { enable: () => {} },
+    actions: { register: ({ name, executes }) => actions.set(name, executes) },
+    hooks: { onBeforeFileSave: () => () => {} },
+    events: { on: () => () => {} }
+  };
+
+  await onLoad(ctx);
+
+  for (let index = 0; index < 59; index += 1) await actions.get('getStatuses')({ userId: 1 });
+  assert.deepEqual(await actions.get('getMutedChannels')({ userId: 1 }), { mutedChannels: [4] });
+  await assert.rejects(actions.get('getOwnStatus')({ userId: 1 }), /Too many/);
+  assert.deepEqual(await actions.get('getMutedChannels')({ userId: 2 }), { mutedChannels: [] });
+  await onUnload(ctx, { quiet: true });
+});
+
 /* ── migration ── */
 
 test('the old settings file is kept when a user could not be carried over', async () => {

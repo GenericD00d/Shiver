@@ -182,7 +182,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
   - push: `createPush`, `endpointsFrom`, `normaliseEndpoint`, `deliver` (UnifiedPush delivery); SSRF
     vetting: `isPrivateAddress`, `vetEndpoint`, `REFUSED`
   - loading: `onLoad` registers actions `setStatus`, `getStatuses`, `getOwnStatus`, `getMutedChannels`,
-    `setMutedChannels`, `setReadFloor`, `setPushEndpoint`, `clearPushEndpoint` (writes rate limited per
-    user); `onUnload`, `adoptOldStore`, `primeFromUserRows`.
+    `setMutedChannels`, `setReadFloor`, `setPushEndpoint`, `clearPushEndpoint` (reads and writes rate
+    limited per user); `onUnload`, `adoptOldStore`, `primeFromUserRows`.
 - `client/index.js`: client half: announces itself as `__SHIVER_PLUGIN__` (`{version}`), relays the bridge's calls to
   server actions (`callPlugin`), plus custom-status UI. Tests: `plugin/test/plugin.test.js`.

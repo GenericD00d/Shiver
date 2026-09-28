@@ -18,6 +18,7 @@ use shiver_core::{
 };
 use tauri::{AppHandle, Manager};
 use tauri_plugin_shiver_secrets::SecretsExt;
+use zeroize::Zeroizing;
 
 use crate::{
     sharkord,
@@ -108,7 +109,8 @@ struct Announcement {
 
 #[derive(Default)]
 struct State {
-    tokens: HashMap<String, String>,
+    /// wiped when replaced or dropped; copies handed out are short-lived
+    tokens: HashMap<String, Zeroizing<String>>,
     unread: HashMap<String, u32>,
     running: HashMap<String, tauri::async_runtime::JoinHandle<()>>,
     /// the one pending `sync` for when the next server's `WATCH_GRACE` runs out
@@ -139,14 +141,13 @@ impl Inbox {
         self.with(|state| {
             state
                 .tokens
-                .insert(entry_id.to_string(), token.to_string())
-                .as_deref()
-                != Some(token)
+                .insert(entry_id.to_string(), Zeroizing::new(token.to_string()))
+                .map_or(true, |previous| previous.as_str() != token)
         })
     }
 
     pub fn token(&self, entry_id: &str) -> Option<String> {
-        self.with(|state| state.tokens.get(entry_id).cloned())
+        self.with(|state| state.tokens.get(entry_id).map(|token| token.to_string()))
     }
 
     /// Drops the session and everything derived from it, stopping the connection.
@@ -237,14 +238,18 @@ fn entry_of(key: &str) -> &str {
         .unwrap_or(key)
 }
 
-/// Queues a write (`Some`) or removal (`None`) for the one store-writer thread, which keeps writes
-/// in order and off the UI thread (each is a blocking call into the JVM).
-fn store_off_thread(app: &AppHandle, key: String, value: Option<String>) {
-    static WRITER: std::sync::OnceLock<std::sync::mpsc::Sender<(String, Option<String>)>> =
+/// A write (`Some`) or removal (`None`) of one store key. Values are sessions and passwords (and
+/// floors), so they are wiped once written.
+type StoreWrite = (String, Option<Zeroizing<String>>);
+
+/// Queues a write or removal for the one store-writer thread, which keeps writes in order and off
+/// the UI thread (each is a blocking call into the JVM).
+fn store_off_thread(app: &AppHandle, key: String, value: Option<Zeroizing<String>>) {
+    static WRITER: std::sync::OnceLock<std::sync::mpsc::Sender<StoreWrite>> =
         std::sync::OnceLock::new();
 
     let sender = WRITER.get_or_init(|| {
-        let (sender, receiver) = std::sync::mpsc::channel::<(String, Option<String>)>();
+        let (sender, receiver) = std::sync::mpsc::channel::<StoreWrite>();
         let handle = app.clone();
 
         std::thread::Builder::new()
@@ -301,7 +306,11 @@ pub fn restore(app: &AppHandle) {
                 continue;
             }
 
-            let Ok(Some(value)) = app.shiver_secrets().get(&key) else {
+            let Ok(Some(value)) = app
+                .shiver_secrets()
+                .get(&key)
+                .map(|value| value.map(Zeroizing::new))
+            else {
                 continue;
             };
 
@@ -378,7 +387,11 @@ fn keep_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) -> 
     }
 
     if persist {
-        store_off_thread(app, entry_id.to_string(), Some(token.to_string()));
+        store_off_thread(
+            app,
+            entry_id.to_string(),
+            Some(Zeroizing::new(token.to_string())),
+        );
     }
 
     true
@@ -403,7 +416,7 @@ pub fn remember_password(app: &AppHandle, entry_id: &str, password: &str) {
     store_off_thread(
         app,
         password_store_key(entry_id),
-        Some(password.to_string()),
+        Some(Zeroizing::new(password.to_string())),
     );
 }
 
@@ -656,7 +669,11 @@ fn on_joined(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
 
     if let Some(floor) = floor {
         if let Ok(encoded) = serde_json::to_string(&floor) {
-            store_off_thread(app, baseline_store_key(entry_id), Some(encoded));
+            store_off_thread(
+                app,
+                baseline_store_key(entry_id),
+                Some(Zeroizing::new(encoded)),
+            );
         }
     }
 
@@ -790,7 +807,7 @@ async fn renew(app: &AppHandle, entry_id: &str) -> Option<String> {
     let key = password_store_key(entry_id);
     let password =
         match tokio::task::spawn_blocking(move || handle.shiver_secrets().get(&key)).await {
-            Ok(Ok(Some(password))) => zeroize::Zeroizing::new(password),
+            Ok(Ok(Some(password))) => Zeroizing::new(password),
             Ok(Ok(None)) => return None,
             Ok(Err(error)) => {
                 eprintln!("[shiver] could not read the stored password for {origin}: {error}");
