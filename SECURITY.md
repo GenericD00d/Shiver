@@ -79,6 +79,14 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
 - **macOS is not covered yet.** wry grants every page the camera and microphone there, so a macOS
   build must not ship until Shiver answers those requests itself. It needs macOS 14, the first to
   give each server its own data store.
+- **Plugins that would reach into server pages run without their scripts.** The dialog and
+  notification plugins inject page scripts that replace `alert`, `confirm` and `Notification` in
+  every webview; Shiver uses both from Rust only, so neither script is installed.
+- **The rail's shortcuts are global only while Shiver is in front.** Ctrl+1…9 and Ctrl+Alt+Up/Down
+  are registered as system-wide shortcuts (the keyboard is usually inside a server's webview) for as
+  long as Shiver's window is the one in front, and taken back as soon as it is not, so they never
+  take those keys from another application. Whether Shiver is in front is read from the system
+  (the foreground window, on Windows), never from a page.
 - **A hidden page cannot download.** On desktop only the page on screen may start a download
   (through WebView2 itself on Windows, Tauri's download hook elsewhere), so a server in the
   background cannot drop files in your Downloads folder.
