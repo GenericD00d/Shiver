@@ -25,17 +25,20 @@ import {
   CONNECT_FORM,
   DM_ITEM,
   DM_TOGGLE,
+  type DmChannel,
+  findDmChannelIdByUserName,
   installMuteStyles,
   markAllChannelsRead,
   NARROW,
+  notificationTarget,
   paintMuted,
+  readDms,
   rowName,
   SERVER_VIEW,
   SIDE_PANEL,
   SIDEBAR,
   sharkordStore,
   type SharkordChannel,
-  type SharkordFile,
   type SharkordState,
   watchStore
 } from '../../shared/web/bridge/sharkord';
@@ -69,8 +72,6 @@ type QueuedNotification = {
 };
 
 type QueuedMute = { channelId: number; muted: boolean };
-
-type DmChannel = { channelId: number; name: string; iconUrl: string | null; lastMessageAt: number | null };
 
 /** The voice session on this server: channel from the store, mute flags read off Sharkord's controls. */
 type VoiceSnapshot = {
@@ -222,13 +223,7 @@ function install(shiver: ShiverConfig) {
   defineHook('__SHIVER_SET_HIDDEN__', setWindowHidden);
 
   installNotificationWrapper((title, options) => {
-    const channelName = parseChannelName(title);
-    const author = parseAuthor(title);
-    const isDm = title.includes('(DM)');
-    // matched by name: `selectedChannelId` is exactly the channel a notification is not for
-    const channelId = isDm
-      ? findDmChannelIdByUserName(state, author)
-      : ((state.channels ?? []).find((channel) => !channel.isDm && channel.name === channelName)?.id ?? null);
+    const { channelId, channelName, author, isDm } = notificationTarget(title, state);
 
     if (channelId !== null) {
       lastSeen.set(channelId, Date.now());
@@ -412,29 +407,6 @@ function installNotificationWrapper(handle: (title: string, options?: Notificati
   }
 }
 
-/** Sharkord titles read `Author in #channel` or `Author (DM)`. */
-const parseAuthor = (title: string) => (title.split(/ in #| \(DM\)/)[0] ?? title).trim();
-const parseChannelName = (title: string) => title.match(/ in #(.+)$/)?.[1] ?? null;
-
-/** The other participant of a DM channel, named `DM - <userA>:<userB>`. */
-function dmPartnerId(channel: SharkordChannel, ownUserId: number | undefined) {
-  const match = channel.name.match(/^DM - (\d+):(\d+)$/);
-
-  if (!match) return null;
-
-  const [a, b] = [Number(match[1]), Number(match[2])];
-
-  return ownUserId !== undefined && a === ownUserId ? b : a;
-}
-
-function findDmChannelIdByUserName(state: SharkordState, name: string) {
-  const user = (state.users ?? []).find((candidate) => candidate.name === name);
-
-  if (!user) return null;
-
-  return (state.channels ?? []).find((channel) => channel.isDm && dmPartnerId(channel, state.ownUserId) === user.id)?.id ?? null;
-}
-
 /**
  * Retries the channel of queued DM notifications captured before the store had users and DM
  * channels; a notification without a channel could never be cleared by reading.
@@ -471,46 +443,6 @@ function openDmChannelId(state: SharkordState) {
   }
 
   return name ? findDmChannelIdByUserName(state, name) : null;
-}
-
-function fileUrl(origin: string, file: SharkordFile | null | undefined) {
-  if (!file) return null;
-
-  try {
-    const url = new URL(`/public/${file.name.split('/').map(encodeURIComponent).join('/')}`, origin);
-
-    if (file._accessToken) {
-      url.searchParams.set('accessToken', file._accessToken);
-
-      if (file._accessTokenExpiresAt) url.searchParams.set('expires', String(file._accessTokenExpiresAt));
-    }
-
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-/**
- * This server's DMs, newest first. A DM whose partner is not in the store yet is skipped rather
- * than listed under its raw channel name.
- */
-function readDms(origin: string, state: SharkordState, lastSeen: Map<number, number>): DmChannel[] {
-  const users = new Map((state.users ?? []).map((user) => [user.id, user]));
-  const list: DmChannel[] = [];
-
-  for (const channel of state.channels ?? []) {
-    if (!channel.isDm) continue;
-
-    const partner = users.get(dmPartnerId(channel, state.ownUserId) ?? -1);
-
-    if (partner) {
-      list.push({ channelId: channel.id, name: partner.name, iconUrl: fileUrl(origin, partner.avatar), lastMessageAt: lastSeen.get(channel.id) ?? null });
-    }
-  }
-
-  // a stable order, so the inbox does not reorder under the pointer
-  return list.sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0) || a.name.localeCompare(b.name));
 }
 
 /** whether the page left Sharkord's channels to show a conversation, so leaving goes back to them */

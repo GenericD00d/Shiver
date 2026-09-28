@@ -25,14 +25,16 @@ mobile/bridge/             mobile bridge (inside server pages; knows only that s
 mobile/plugins/            tauri-plugin-shiver-push (UnifiedPush), tauri-plugin-shiver-secrets (Keystore)
 plugin/                    Sharkord companion plugin (server/ + client/, plain JS, node tests)
 scripts/check-version.py   checks the workspace and tauri.conf.json versions agree
-.github/workflows/checks.yml  CI
+scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys, classes and conventions the bridges
+                           match (`SHARKORD_REF`, the commit last checked against; `--latest` for its default branch)
+.github/workflows/checks.yml  CI; sharkord.yml: the Sharkord check against its latest, weekly
 ```
 
 ## Checks (run before pushing)
 
 `cargo fmt --all --check` · `cargo clippy --workspace --all-targets -- -D warnings` ·
 `cargo test --workspace` · `bunx tsc --noEmit` and `bun audit` in `desktop` and `mobile` · `bun test shared/web` ·
-`node --test test/*.test.js` in `plugin` · `python3 scripts/check-version.py` ·
+`node --test test/*.test.js` in `plugin` · `python3 scripts/check-version.py` · `python3 scripts/check-sharkord.py` ·
 `bun run build:bridge` in each app (bridges must build before the Rust crates compile).
 
 ## Conventions
@@ -144,7 +146,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 | `theme.ts` | `applyTheme` (`--shiver-*` vars on Shiver's own pages) |
 | `session.ts` | `installSessionShim`, `takeSeedFromLocation`, `AUTO_LOGIN*` (session kept off disk) |
 | `bridge/dom.ts` | `ensureStyle`, `defineHook`, `onDomSettled` (hands callbacks what changed), `touched`, `isTopFrame`, `whenDocumentReady`, `openMenuOnScreen`, `addedMenu`, `installExternalLinks` |
-| `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `addMuteItem`, `addMenuItem`, `closeDialog` (Sharkord's topmost open dialog, as Escape), `IMAGE_VIEWER`, `RECONNECTING_OVERLAY`, `SIDE_PANEL`, `NARROW`, `SHIVER_PLUGIN_ID` |
+| `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, pure store reads (`notificationTarget`/`NotificationTarget`: a notification's author and channel from its title, `dmPartnerId`, `findDmChannelIdByUserName`, `readDms`/`DmChannel`, `fileUrl`; tested in `sharkord.test.ts`), `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `addMuteItem`, `addMenuItem`, `closeDialog` (Sharkord's topmost open dialog, as Escape), `IMAGE_VIEWER`, `RECONNECTING_OVERLAY`, `SIDE_PANEL`, `NARROW`, `SHIVER_PLUGIN_ID` |
 | `bridge/plugin.ts` | `callPlugin`, `waitForPlugin`, `syncMutesWithPlugin`, `pushMutesToPlugin`, `storeReadFloor` |
 | `bridge/features.ts` | `installSoundVolume`, `installAttachmentCards`, `installVoiceColors`, `installRoleColors`, `installStatusButton`, `installSidePanels` (Sharkord's voice chat and thread panels cover a narrow page instead of staying hidden), `closeSidePanel` |
 | `bridge/theme.ts` | `ShiverTheme`, `applyPageTheme` |
@@ -156,7 +158,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
   `ServerRail`, `AddServerPanel`, `SignInPanel`, `SettingsPanel`, `HotkeyField`, `DirectMessagesPanel`,
   `NotificationList` (`relativeTime`), `RenameFolderPanel`, `RemoveServerPanel`, `ConnectingPanel`, `WelcomePanel`,
   `VoiceTile`, `UpdateNotice`, `icons`.
-- **desktop/bridge/index.ts**: one file: session seeding, DM reading, conversation mode (`showConversation`; an open dialog such as
+- **desktop/bridge/index.ts**: one file: session seeding, DM list (`openDmChannelId`, `resolveDmChannels`), conversation mode (`showConversation`; an open dialog such as
   Sharkord's settings is closed first, as for a clicked notification's channel), voice read/control/lock,
   channel menu mute, notification capture, drain queue.
 - **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits on the rail after `#home`, over a still of the page left; `__SHIVER_BACK__` reopens it), `api.ts`, `types.ts`, `components/`:

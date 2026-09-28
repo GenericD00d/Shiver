@@ -113,6 +113,112 @@ export function watchStore(onChange: (state: SharkordState) => void) {
   }, 500);
 }
 
+/* ── reading the store ── */
+
+/** One of this server's DMs, as Shiver lists it. */
+export type DmChannel = { channelId: number; name: string; iconUrl: string | null; lastMessageAt: number | null };
+
+/** The other participant of a DM channel, which the server names `DM - <userA>:<userB>`. */
+export function dmPartnerId(channel: SharkordChannel, ownUserId: number | undefined) {
+  const match = channel.name.match(/^DM - (\d+):(\d+)$/);
+
+  if (!match) return null;
+
+  const [a, b] = [Number(match[1]), Number(match[2])];
+
+  return ownUserId !== undefined && a === ownUserId ? b : a;
+}
+
+export function findDmChannelIdByUserName(state: SharkordState, name: string) {
+  const user = (state.users ?? []).find((candidate) => candidate.name === name);
+
+  if (!user) return null;
+
+  return (state.channels ?? []).find((channel) => channel.isDm && dmPartnerId(channel, state.ownUserId) === user.id)?.id ?? null;
+}
+
+export type NotificationTarget = { channelId: number | null; channelName: string | null; author: string; isDm: boolean };
+
+const DM_TITLE = ' (DM)';
+const IN_CHANNEL = ' in #';
+
+/**
+ * Who a notification is from and which channel it is for, from its title alone: Sharkord titles
+ * them `Author (DM)` or `Author in #channel`. A name may itself contain ` in #`, so the split taken
+ * is the one naming a channel that exists. Matched by name: `selectedChannelId` is exactly the
+ * channel a notification is not for.
+ */
+export function notificationTarget(title: string, state: SharkordState): NotificationTarget {
+  if (title.endsWith(DM_TITLE)) {
+    const author = title.slice(0, -DM_TITLE.length).trim();
+
+    return { channelId: findDmChannelIdByUserName(state, author), channelName: null, author, isDm: true };
+  }
+
+  const channels = (state.channels ?? []).filter((channel) => !channel.isDm);
+  let first: NotificationTarget | null = null;
+
+  for (let at = title.indexOf(IN_CHANNEL); at !== -1; at = title.indexOf(IN_CHANNEL, at + 1)) {
+    const author = title.slice(0, at).trim();
+    const channelName = title.slice(at + IN_CHANNEL.length);
+    const channel = channels.find((candidate) => candidate.name === channelName);
+
+    if (channel) return { channelId: channel.id, channelName, author, isDm: false };
+
+    first ??= { channelId: null, channelName, author, isDm: false };
+  }
+
+  return first ?? { channelId: null, channelName: null, author: title.trim(), isDm: false };
+}
+
+/**
+ * A public url for one of the server's files, carrying its access token when it has one. A name
+ * with an empty or dot segment is refused, since the url would leave `/public/`.
+ */
+export function fileUrl(origin: string, file: SharkordFile | null | undefined) {
+  const segments = file?.name.split('/');
+
+  if (!file || !segments || segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
+
+  try {
+    const url = new URL(`/public/${segments.map(encodeURIComponent).join('/')}`, origin);
+
+    if (file._accessToken) {
+      url.searchParams.set('accessToken', file._accessToken);
+
+      if (file._accessTokenExpiresAt) url.searchParams.set('expires', String(file._accessTokenExpiresAt));
+    }
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * This server's DMs, newest first (by `lastSeen`, per channel), then by name, so the list does not
+ * reorder under the pointer. A DM whose partner is not in the store yet is skipped rather than
+ * listed under its raw channel name.
+ */
+export function readDms(origin: string, state: SharkordState, lastSeen: ReadonlyMap<number, number>): DmChannel[] {
+  const users = new Map((state.users ?? []).map((user) => [user.id, user]));
+  const list: DmChannel[] = [];
+
+  for (const channel of state.channels ?? []) {
+    if (!channel.isDm) continue;
+
+    const partner = users.get(dmPartnerId(channel, state.ownUserId) ?? -1);
+
+    if (partner) {
+      list.push({ channelId: channel.id, name: partner.name, iconUrl: fileUrl(origin, partner.avatar), lastMessageAt: lastSeen.get(channel.id) ?? null });
+    }
+  }
+
+  return list.sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0) || a.name.localeCompare(b.name));
+}
+
+/* ── reading the page ── */
+
 /**
  * The channel name a sidebar row shows. Not `textContent`, which includes the unread pill
  * ("general3"): the name's own span, else the text minus the trailing count.
