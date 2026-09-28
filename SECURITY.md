@@ -59,7 +59,9 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   downloads must still carry a valid signature.
 - **https is required everywhere**, with no exemption for localhost or a private address.
 - **Server pages cannot call Shiver.** Tauri refuses commands from remote origins, and desktop also
-  refuses any command not sent by Shiver's own webviews. Android reports a new page's origin late,
+  refuses any command not sent by Shiver's own webviews, which navigate only within Shiver's exact
+  origin (no other port on `tauri.localhost`) and refuse anything dropped on them, so nothing else can
+  load under their names. Android reports a new page's origin late,
   so it refuses every command while a server is on screen or being opened, or while a page Shiver
   did not open (a step back through history) is loading on its way home.
 - **Camera and microphone go only where you said yes.** On Android and Windows they go only to the
@@ -68,11 +70,18 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   one exception is the microphone for the page holding your call, which may have it again while
   hidden (a call can ask anew), and only once you said yes. A stream a page started on screen keeps
   running when you switch away, as a call must. WebKitGTK on Linux refuses.
+- **Which server holds your call is each page's own word.** Shiver keeps one call across servers
+  from what each page reports about itself, so a server on screen can claim a call it is not in.
+  Every other server then refuses to join voice, and the mute shortcut acts on the claimant, until
+  you leave that call from the rail; the page cannot claim it again without being on screen. On
+  Windows the claim also lets that page ask for the microphone again while hidden, if you said yes
+  for it — no more than a page you allowed could do by keeping its stream open from the screen.
 - **macOS is not covered yet.** wry grants every page the camera and microphone there, so a macOS
   build must not ship until Shiver answers those requests itself. It needs macOS 14, the first to
   give each server its own data store.
-- **A hidden page cannot download.** On Windows only the page on screen may start a download, so a
-  server in the background cannot drop files in your Downloads folder.
+- **A hidden page cannot download.** On desktop only the page on screen may start a download
+  (through WebView2 itself on Windows, Tauri's download hook elsewhere), so a server in the
+  background cannot drop files in your Downloads folder.
 - **A page cannot open the browser by itself.** Its own navigations off its origin and its new
   windows are refused. A link it hands over (the bridge queues what the user clicks, but a hostile
   page can queue anything, since the bridge shares its script world) is rationed per server, taken

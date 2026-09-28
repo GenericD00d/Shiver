@@ -9,7 +9,9 @@
 //! the server, removes it or forgets every yes here. WebView2 is told to remember nothing, since an
 //! answer it remembers can be given without asking, past this gate.
 //!
-//! Elsewhere the platform answers: macOS allows every request, WebKitGTK refuses them.
+//! Elsewhere the platform answers camera and microphone requests: macOS allows every one, WebKitGTK
+//! refuses them. Downloads are gated there through Tauri's download hook instead (`gate_downloads`),
+//! since WebKitGTK would otherwise save whatever any page asks for into the Downloads folder.
 
 use tauri::{AppHandle, Manager};
 
@@ -20,6 +22,45 @@ use crate::{
 
 #[cfg(windows)]
 pub use webview2::gate;
+
+/// Lets only the page on screen start a download, and only from its own origin. On Windows `gate`
+/// does this through WebView2 itself: Tauri's hook would also take over the download there and hide
+/// WebView2's own download UI.
+///
+/// The origin matters because WebKitGTK raises a download on the page's web context, not the page:
+/// pages without a profile directory of their own would share one, and the first page's hook would
+/// answer for every download in it.
+#[cfg(not(windows))]
+pub fn gate_downloads(
+    builder: tauri::webview::WebviewBuilder<tauri::Wry>,
+    entry: &crate::model::ServerEntry,
+) -> tauri::webview::WebviewBuilder<tauri::Wry> {
+    let (entry_id, origin) = (entry.id.clone(), entry.origin.clone());
+
+    builder.on_download(move |webview, event| match event {
+        tauri::webview::DownloadEvent::Requested { url, .. } => {
+            is_from(&origin, &url)
+                && webview
+                    .state::<crate::webviews::ActiveServer>()
+                    .is_on_screen(&entry_id)
+        }
+        _ => true,
+    })
+}
+
+/// Whether a download comes from `origin` itself (a `blob:` the page made counts as its own).
+#[cfg(not(windows))]
+fn is_from(origin: &str, url: &url::Url) -> bool {
+    url.origin().ascii_serialization() == origin
+}
+
+#[cfg(windows)]
+pub fn gate_downloads(
+    builder: tauri::webview::WebviewBuilder<tauri::Wry>,
+    _entry: &crate::model::ServerEntry,
+) -> tauri::webview::WebviewBuilder<tauri::Wry> {
+    builder
+}
 
 /// Forgets every server's yes. Returns how many servers had one.
 pub fn forget_consents(app: &AppHandle) -> Result<usize> {
@@ -467,6 +508,42 @@ mod webview2 {
             Err(_) => Err(Error::Webview(
                 "The webview did not answer in time".to_string(),
             )),
+        }
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_download_counts_only_from_the_pages_own_origin() {
+        let from = |origin: &str, url: &str| is_from(origin, &url::Url::parse(url).unwrap());
+
+        assert!(from(
+            "https://chat.example.com",
+            "https://chat.example.com/public/a.png"
+        ));
+        assert!(from(
+            "https://chat.example.com",
+            "https://chat.example.com:443/a"
+        ));
+        assert!(from(
+            "https://chat.example.com:8443",
+            "https://chat.example.com:8443/a"
+        ));
+        assert!(from(
+            "https://chat.example.com",
+            "blob:https://chat.example.com/0e1c"
+        ));
+
+        for other in [
+            "https://other.example.com/a",
+            "https://chat.example.com:8443/a",
+            "http://chat.example.com/a",
+            "data:text/plain,planted",
+        ] {
+            assert!(!from("https://chat.example.com", other), "{other}");
         }
     }
 }

@@ -123,8 +123,10 @@ pub struct DrainResult {
     /// the plugin's reconciled mute list, once per connect
     #[serde(default)]
     pub synced_mutes: Option<Vec<i64>>,
+    /// the conversation Shiver asked the page to open could not be (who it was with is the core's own
+    /// record, never the page's word)
     #[serde(default)]
-    pub open_dm_failed: Option<String>,
+    pub open_dm_failed: bool,
     /// links the page wants opened in the browser
     #[serde(default)]
     pub open: Vec<String>,

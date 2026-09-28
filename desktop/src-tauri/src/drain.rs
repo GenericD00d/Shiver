@@ -321,7 +321,17 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
         changed |= stored && next != muted;
     }
 
-    if let Some(name) = result.open_dm_failed {
+    // Only from the page Shiver asked to show a conversation, and named by what Shiver asked for: a
+    // page can call its own hook with any text, and this lands in Shiver's DM panel.
+    let failed_with = result
+        .open_dm_failed
+        .then(|| {
+            app.state::<webviews::ActiveServer>()
+                .conversation_with(entry_id)
+        })
+        .flatten();
+
+    if let Some(name) = failed_with {
         let _ = app.emit_to(
             SHELL_WEBVIEW,
             DM_FAILED_EVENT,

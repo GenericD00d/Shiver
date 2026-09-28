@@ -85,8 +85,8 @@ declare global {
       mutes: QueuedMute[];
       /** the plugin's reconciled mute list, sent once */
       syncedMutes: number[] | null;
-      /** a conversation Shiver asked for and could not open */
-      openDmFailed: string | null;
+      /** the conversation Shiver asked for could not be opened (the core knows which it asked for) */
+      openDmFailed: boolean;
       /** the page has something to show, so Shiver's loading view can go */
       ready: boolean;
       /** the client refused the session and is asking for credentials */
@@ -146,7 +146,7 @@ function install(shiver: ShiverConfig) {
   let dms: DmChannel[] | null = null;
   let dmsSignature = '';
   let syncedMutes: number[] | null = null;
-  let openDmFailure: string | null = null;
+  let openDmFailed = false;
   const queue: QueuedNotification[] = [];
   const openQueue: string[] = [];
   const muteQueue: QueuedMute[] = [];
@@ -156,8 +156,8 @@ function install(shiver: ShiverConfig) {
 
   installExternalLinks((href) => openQueue.push(href));
 
-  reportOpenDmFailure = (name) => {
-    openDmFailure = name;
+  reportOpenDmFailure = () => {
+    openDmFailed = true;
   };
 
   defineHook('__SHIVER_SET_MUTED__', (next) => {
@@ -181,7 +181,7 @@ function install(shiver: ShiverConfig) {
       dms,
       syncedMutes,
       open: openQueue.splice(0),
-      openDmFailed: openDmFailure,
+      openDmFailed,
       ready: isClientReady(state),
       signedOut: isSignedOut(),
       fullscreen: isFullscreen(),
@@ -192,7 +192,7 @@ function install(shiver: ShiverConfig) {
 
     dms = null;
     syncedMutes = null;
-    openDmFailure = null;
+    openDmFailed = false;
 
     const { notifications, mutes, open, ready, signedOut, fullscreen, voice, viewingChannelId } = drained;
     const now = JSON.stringify([ready, signedOut, fullscreen, voice, viewingChannelId]);
@@ -529,7 +529,7 @@ function showConversation(name: string | null) {
 
 let openDmTimer: number | null = null;
 /** set by `install`, so a failed open reaches the next drain */
-let reportOpenDmFailure: (name: string) => void = () => undefined;
+let reportOpenDmFailure: () => void = () => undefined;
 
 /**
  * Opens the DM with `name` by clicking Sharkord's own controls: the DM toggle (pressed at most
@@ -572,7 +572,7 @@ function openDirectMessage(name: string) {
 
     if (Date.now() <= deadline) return false;
 
-    reportOpenDmFailure(name);
+    reportOpenDmFailure();
 
     return true;
   };

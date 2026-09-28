@@ -23,6 +23,17 @@ const views: Record<string, () => React.ReactElement> = {
 
 const View = views[label] ?? App;
 
+// A link or file dropped where nothing takes it would navigate this webview to it. Only the rail's
+// own reorder targets take drops (they cancel the events themselves, before these run).
+window.addEventListener('dragover', (event) => {
+  if (event.defaultPrevented) return;
+
+  event.preventDefault();
+
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';
+});
+window.addEventListener('drop', (event) => event.preventDefault());
+
 if (label === 'overlay') {
   // only the bell floats over a server page; the popup is an opaque panel
   document.documentElement.classList.add('overlay-root');
