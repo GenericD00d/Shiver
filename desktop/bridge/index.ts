@@ -25,21 +25,27 @@ import {
   CONNECT_FORM,
   DM_ITEM,
   DM_TOGGLE,
+  type DmChannel,
+  findDmChannelIdByUserName,
   installMuteStyles,
   markAllChannelsRead,
   NARROW,
+  notificationFlags,
+  notificationTarget,
+  notifyAllows,
   paintMuted,
+  readDms,
   rowName,
   SERVER_VIEW,
   SIDE_PANEL,
   SIDEBAR,
   sharkordStore,
   type SharkordChannel,
-  type SharkordFile,
   type SharkordState,
   watchStore
 } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme, type ShiverTheme } from '../../shared/web/bridge/theme';
+import type { NotifyLevel } from '../../shared/web/types';
 import { AUTO_LOGIN, AUTO_LOGIN_TOKEN, installSessionShim } from '../../shared/web/session';
 
 type ShiverConfig = {
@@ -57,6 +63,8 @@ type ShiverConfig = {
   minimiseAttachments: boolean;
   /** percentage of Sharkord's own sound level */
   soundVolume: number;
+  /** which of this server's messages notify */
+  notify: NotifyLevel;
 };
 
 type QueuedNotification = {
@@ -69,8 +77,6 @@ type QueuedNotification = {
 };
 
 type QueuedMute = { channelId: number; muted: boolean };
-
-type DmChannel = { channelId: number; name: string; iconUrl: string | null; lastMessageAt: number | null };
 
 /** The voice session on this server: channel from the store, mute flags read off Sharkord's controls. */
 type VoiceSnapshot = {
@@ -119,6 +125,8 @@ declare global {
     __SHIVER_SET_VOICE_LOCK__?: (locked: boolean) => void;
     __SHIVER_VOICE__?: (action: VoiceAction) => void;
     __SHIVER_MARK_ALL_READ__?: () => void;
+    /** the user changed which of this server's messages notify */
+    __SHIVER_SET_NOTIFY__?: (level: NotifyLevel) => void;
   }
 }
 
@@ -143,7 +151,7 @@ const isFullscreen = () => !!nativeFullscreenElement && nativeApply(nativeFullsc
 
 function install(shiver: ShiverConfig) {
   seedSession(shiver.token);
-  seedDefaults();
+  seedDefaults(shiver.notify);
 
   // prototype patches, which must be in place before the page's scripts; the volume first, since
   // the ping filter captures the patched `connect`
@@ -156,6 +164,9 @@ function install(shiver: ShiverConfig) {
   let dmsSignature = '';
   let syncedMutes: number[] | null = null;
   let openDmFailed = false;
+  let notify = shiver.notify;
+  /** set when the level changes on a loaded page, whose Sharkord read its switches at load */
+  let notifyChangedLive = false;
   const queue: QueuedNotification[] = [];
   const openQueue: string[] = [];
   const muteQueue: QueuedMute[] = [];
@@ -180,6 +191,13 @@ function install(shiver: ShiverConfig) {
   });
   defineHook('__SHIVER_VOICE__', runVoiceAction);
   defineHook('__SHIVER_MARK_ALL_READ__', markAllChannelsRead);
+  defineHook('__SHIVER_SET_NOTIFY__', (level) => {
+    if (level !== 'all' && level !== 'mentions' && level !== 'dms') return;
+
+    notify = level;
+    notifyChangedLive = true;
+    applyNotifyLevel(level, true);
+  });
 
   let reported = '';
 
@@ -222,13 +240,7 @@ function install(shiver: ShiverConfig) {
   defineHook('__SHIVER_SET_HIDDEN__', setWindowHidden);
 
   installNotificationWrapper((title, options) => {
-    const channelName = parseChannelName(title);
-    const author = parseAuthor(title);
-    const isDm = title.includes('(DM)');
-    // matched by name: `selectedChannelId` is exactly the channel a notification is not for
-    const channelId = isDm
-      ? findDmChannelIdByUserName(state, author)
-      : ((state.channels ?? []).find((channel) => !channel.isDm && channel.name === channelName)?.id ?? null);
+    const { channelId, channelName, author, isDm } = notificationTarget(title, state);
 
     if (channelId !== null) {
       lastSeen.set(channelId, Date.now());
@@ -236,6 +248,11 @@ function install(shiver: ShiverConfig) {
 
       if (muted.has(channelId)) return;
     }
+
+    // Sharkord applied the level it loaded with exactly; one changed since is guessed from the text
+    const mentionsMe = !notifyChangedLive || mentionsName(options?.body ?? '', ownName(state));
+
+    if (!notifyAllows(notify, isDm, mentionsMe)) return;
 
     queue.push({ channelId, channelName, author, body: options?.body ?? '', iconUrl: options?.icon ?? null, isDm });
   });
@@ -312,27 +329,50 @@ function seedSession(token: string | null) {
 }
 
 /**
- * Sharkord settings Shiver depends on, written only when absent so the user's own choices stand:
- * browser notifications on (Shiver's feed is built from them; mention-only off, since Shiver
- * filters with its own mutes) and rejoining the last channel on connect.
+ * Sharkord settings Shiver depends on: rejoining the last channel on connect, and its notification
+ * switches (see `applyNotifyLevel`).
  */
-function seedDefaults() {
-  const defaults: Record<string, string> = {
-    'sharkord-browser-notifications': 'true',
-    'sharkord-browser-notifications-for-dms': 'true',
-    'sharkord-browser-notifications-for-replies': 'true',
-    'sharkord-browser-notifications-for-mentions': 'false',
-    'sharkord-auto-join-last-channel': 'true'
-  };
+function seedDefaults(level: NotifyLevel) {
+  writeStorage({ 'sharkord-auto-join-last-channel': 'true' }, false);
+  applyNotifyLevel(level, false);
+}
+
+/** The level Shiver last wrote Sharkord's switches for, in the server's own storage. */
+const NOTIFY_MARK = 'shiver-notify-level';
+
+/**
+ * Sharkord's notification switches for a level (Shiver's feed is built from its notifications). At
+ * "all" they are written only when unset, so choices made in Sharkord's own settings stand, unless
+ * Shiver wrote them for another level; any other level is Shiver's to keep, so it is written every
+ * load. `force` writes them regardless (a change the user just made).
+ */
+function applyNotifyLevel(level: NotifyLevel, force: boolean) {
+  let mark: string | null = null;
 
   try {
-    for (const [key, value] of Object.entries(defaults)) {
-      if (localStorage.getItem(key) === null) localStorage.setItem(key, value);
+    mark = localStorage.getItem(NOTIFY_MARK);
+  } catch {
+    // storage blocked
+  }
+
+  writeStorage(notificationFlags(level), force || level !== 'all' || (mark !== null && mark !== level));
+  writeStorage({ [NOTIFY_MARK]: level }, true);
+}
+
+function writeStorage(values: Record<string, string>, overwrite: boolean) {
+  try {
+    for (const [key, value] of Object.entries(values)) {
+      if (overwrite || localStorage.getItem(key) === null) localStorage.setItem(key, value);
     }
   } catch {
     // storage blocked
   }
 }
+
+const ownName = (state: SharkordState) => (state.users ?? []).find((user) => user.id === state.ownUserId)?.name ?? '';
+
+/** Whether a notification's text mentions `name` (`@name`, as Sharkord writes a mention in text). */
+const mentionsName = (text: string, name: string) => name !== '' && text.includes(`@${name}`);
 
 /** Sharkord's incoming-message tone: a single 600 Hz sine (`sfxMessageReceived`). */
 const MESSAGE_PING_HZ = 600;
@@ -412,29 +452,6 @@ function installNotificationWrapper(handle: (title: string, options?: Notificati
   }
 }
 
-/** Sharkord titles read `Author in #channel` or `Author (DM)`. */
-const parseAuthor = (title: string) => (title.split(/ in #| \(DM\)/)[0] ?? title).trim();
-const parseChannelName = (title: string) => title.match(/ in #(.+)$/)?.[1] ?? null;
-
-/** The other participant of a DM channel, named `DM - <userA>:<userB>`. */
-function dmPartnerId(channel: SharkordChannel, ownUserId: number | undefined) {
-  const match = channel.name.match(/^DM - (\d+):(\d+)$/);
-
-  if (!match) return null;
-
-  const [a, b] = [Number(match[1]), Number(match[2])];
-
-  return ownUserId !== undefined && a === ownUserId ? b : a;
-}
-
-function findDmChannelIdByUserName(state: SharkordState, name: string) {
-  const user = (state.users ?? []).find((candidate) => candidate.name === name);
-
-  if (!user) return null;
-
-  return (state.channels ?? []).find((channel) => channel.isDm && dmPartnerId(channel, state.ownUserId) === user.id)?.id ?? null;
-}
-
 /**
  * Retries the channel of queued DM notifications captured before the store had users and DM
  * channels; a notification without a channel could never be cleared by reading.
@@ -471,46 +488,6 @@ function openDmChannelId(state: SharkordState) {
   }
 
   return name ? findDmChannelIdByUserName(state, name) : null;
-}
-
-function fileUrl(origin: string, file: SharkordFile | null | undefined) {
-  if (!file) return null;
-
-  try {
-    const url = new URL(`/public/${file.name.split('/').map(encodeURIComponent).join('/')}`, origin);
-
-    if (file._accessToken) {
-      url.searchParams.set('accessToken', file._accessToken);
-
-      if (file._accessTokenExpiresAt) url.searchParams.set('expires', String(file._accessTokenExpiresAt));
-    }
-
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-/**
- * This server's DMs, newest first. A DM whose partner is not in the store yet is skipped rather
- * than listed under its raw channel name.
- */
-function readDms(origin: string, state: SharkordState, lastSeen: Map<number, number>): DmChannel[] {
-  const users = new Map((state.users ?? []).map((user) => [user.id, user]));
-  const list: DmChannel[] = [];
-
-  for (const channel of state.channels ?? []) {
-    if (!channel.isDm) continue;
-
-    const partner = users.get(dmPartnerId(channel, state.ownUserId) ?? -1);
-
-    if (partner) {
-      list.push({ channelId: channel.id, name: partner.name, iconUrl: fileUrl(origin, partner.avatar), lastMessageAt: lastSeen.get(channel.id) ?? null });
-    }
-  }
-
-  // a stable order, so the inbox does not reorder under the pointer
-  return list.sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0) || a.name.localeCompare(b.name));
 }
 
 /** whether the page left Sharkord's channels to show a conversation, so leaving goes back to them */

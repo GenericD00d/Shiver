@@ -29,6 +29,8 @@ pub fn refresh<R: tauri::Runtime>(app: &AppHandle<R>) {
         return;
     };
 
+    crate::tray::show_unread(app, unread);
+
     if SHOWN.swap(shown, Ordering::Relaxed) == shown {
         return;
     }

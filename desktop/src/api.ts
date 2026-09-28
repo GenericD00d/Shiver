@@ -5,6 +5,7 @@ import type {
   FeedSummary,
   Folder,
   Notification,
+  NotifyLevel,
   Registry,
   ServerCheck,
   ServerEntry,
@@ -135,6 +136,8 @@ export const api = {
   /** Lets one server past the message-size limit (offered only once it has hit it), or puts it back. */
   setAcceptAnySize: (id: string, accept: boolean) =>
     invoke<void>('set_accept_any_size', { id, accept }),
+  /** which of a server's messages notify */
+  setNotifyLevel: (id: string, level: NotifyLevel) => invoke<void>('set_notify_level', { id, level }),
   /** makes every server ask again for the camera and microphone; resolves with how many had a yes */
   resetMediaPermissions: () => invoke<number>('reset_media_permissions'),
   appVersion: () => invoke<string>('app_version'),

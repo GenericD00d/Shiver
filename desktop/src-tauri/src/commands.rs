@@ -4,7 +4,7 @@
 //! than the UI thread. Passwords arrive as `Zeroizing<String>` so Shiver's copies are wiped.
 
 use tauri::{
-    menu::{ContextMenu, MenuBuilder, MenuItemBuilder},
+    menu::{CheckMenuItemBuilder, ContextMenu, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
     AppHandle, Emitter, Manager, State,
 };
 use uuid::Uuid;
@@ -14,17 +14,17 @@ use crate::{
     drain::{self, Readiness},
     error::{Core, Result},
     feed::{DmEntry, Feed, FeedSummary, Notification},
-    hotkey, jwt,
-    model::{normalize_origin, Folder, Registry, ServerEntry, Settings},
+    hotkey,
+    model::{normalize_origin, Folder, RegistryView, ServerEntry, Settings},
     secrets::{self, Secret},
-    session::Recovery,
+    session::{self, Recovery},
     store::{RegistryStore, Store},
     voice::{VoiceState, VoiceStatus},
     webviews,
 };
 
 use sharkord_client::{CheckedSessions, ServerCheck};
-use shiver_core::{login, probe};
+use shiver_core::{login, model::NotifyLevel, probe};
 
 /// Tells Shiver's own webviews the settings changed.
 const SETTINGS_EVENT: &str = "shiver://settings";
@@ -57,48 +57,6 @@ fn voice_locked_for(app: &AppHandle, entry_id: &str) -> bool {
 
 /* ── sessions ── */
 
-/// A session token for this entry, signing in again when the stored one is due for renewal.
-///
-/// Never fails: with no usable session the server's own login page is the fallback. A token that
-/// is due for renewal but still valid is used when renewal is impossible (no password) or fails.
-pub(crate) async fn ensure_session(entry: &ServerEntry) -> Option<String> {
-    let stored = secrets::read_off_thread(Secret::Session, &entry.id).await;
-
-    if let Some(token) = stored.as_deref() {
-        if !jwt::needs_refresh(token) {
-            return Some(token.to_string());
-        }
-    }
-
-    let still_live = stored
-        .as_deref()
-        .filter(|token| jwt::is_live(token))
-        .map(|token| token.to_string());
-
-    let (Some(identity), Some(password)) = (
-        entry.identity.as_deref(),
-        secrets::read_off_thread(Secret::Password, &entry.id).await,
-    ) else {
-        return still_live;
-    };
-
-    match login::sign_in(&entry.origin, identity, &password).await {
-        Ok(token) => {
-            let _ = secrets::store_off_thread(Secret::Session, &entry.id, &token).await;
-
-            Some(token)
-        }
-        Err(error) => {
-            eprintln!(
-                "[shiver] could not refresh the session for {}: {error}",
-                entry.origin
-            );
-
-            still_live
-        }
-    }
-}
-
 /// Stores a fresh session (and the password, or forgets it). On failure nothing is left behind.
 async fn store_credentials(
     id: &str,
@@ -127,8 +85,8 @@ async fn store_credentials(
 /* ── adding, checking and removing servers ── */
 
 #[tauri::command]
-pub fn list_registry(store: State<'_, Store>) -> Registry {
-    Registry::clone(&store.registry())
+pub fn list_registry(store: State<'_, Store>) -> RegistryView {
+    store.registry().view()
 }
 
 /// See [`sharkord_client::check_server`].
@@ -214,6 +172,7 @@ pub async fn add_server(
             accept_any_size: false,
             profile: None,
             media_allowed: false,
+            notify: NotifyLevel::default(),
         };
 
         registry.servers.push(entry.clone());
@@ -251,10 +210,12 @@ pub async fn remove_server(
     app.state::<Readiness>().forget_entry(&id);
     app.state::<Recovery>().forget_entry(&id);
     app.state::<webviews::Openings>().forget(&id);
+    app.state::<crate::notify::Posted>().forget_entry(&id);
 
     store.update(|registry| {
         registry.servers.retain(|server| server.id != id);
         registry.muted.retain(|muted| muted.entry_id != id);
+        shiver_core::links::forget_entry(&mut registry.settings.trusted_links, &id);
         registry.baselines.remove(&id);
         registry.rail().prune_folders();
 
@@ -387,6 +348,38 @@ pub async fn set_accept_any_size(
     Ok(())
 }
 
+/// Sets which of a server's messages notify. Its page, if loaded and out of sight, is closed so it
+/// comes back with Sharkord's own notification settings to match; the page on screen, or one
+/// holding the call (closing it would end the call), follows at once as best it can, and exactly
+/// from its next load.
+#[tauri::command]
+pub async fn set_notify_level(
+    app: AppHandle,
+    store: State<'_, Store>,
+    id: String,
+    level: NotifyLevel,
+) -> Result<()> {
+    store.update(|registry| {
+        registry.server_mut(&id).ok_or(Core::UnknownServer)?.notify = level;
+
+        Ok(())
+    })?;
+
+    if app.get_webview(&webviews::webview_label(&id)).is_some() {
+        let in_call = app.state::<VoiceState>().holder().as_deref() == Some(id.as_str());
+
+        if in_call || app.state::<webviews::ActiveServer>().is_on_screen(&id) {
+            webviews::push_notify_level(&app, &id, level);
+        } else {
+            webviews::close_server(&app, &id)?;
+            app.state::<Readiness>().forget_entry(&id);
+            crate::watch::sync(&app);
+        }
+    }
+
+    Ok(())
+}
+
 /* ── the rail ── */
 
 /// Applies a drag of top-level servers only.
@@ -511,8 +504,28 @@ pub async fn show_server_menu(app: AppHandle, store: State<'_, Store>, id: Strin
     .enabled(false)
     .build(&app)?;
 
+    // which of its messages notify; one action per level, since the menu knows which is set
+    let level = |action: &str, label: &str, value: NotifyLevel| {
+        CheckMenuItemBuilder::with_id(format!("{action}:{id}"), label)
+            .checked(entry.notify == value)
+            .build(&app)
+    };
+    let notify = SubmenuBuilder::new(&app, "Notify me about")
+        .item(&level("notify-all", "All messages", NotifyLevel::All)?)
+        .item(&level(
+            "notify-mentions",
+            "Mentions and direct messages",
+            NotifyLevel::Mentions,
+        )?)
+        .item(&level(
+            "notify-dms",
+            "Direct messages only",
+            NotifyLevel::Dms,
+        )?)
+        .build()?;
+
     let mut builder =
-        MenuBuilder::new(&app).items(&[&open, &mark_read, &refresh, &forget, &plugin]);
+        MenuBuilder::new(&app).items(&[&open, &mark_read, &refresh, &notify, &forget, &plugin]);
 
     // the size limit is only offered where it matters: a server that tripped it, or one raised
     let sizes = if entry.accept_any_size {
@@ -565,7 +578,7 @@ fn plugin_menu_label(status: Option<&Option<String>>) -> String {
 #[tauri::command]
 pub async fn select_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
     let (entry, settings, muted) = page_inputs(&store, &id)?;
-    let token = ensure_session(&entry).await;
+    let token = session::token_for_new_page(&app, &entry).await;
 
     webviews::show_server(
         &app,
@@ -591,7 +604,7 @@ pub async fn select_server(app: AppHandle, store: State<'_, Store>, id: String) 
 pub async fn prepare_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<bool> {
     if app.get_webview(&webviews::webview_label(&id)).is_none() {
         let (entry, settings, muted) = page_inputs(&store, &id)?;
-        let token = ensure_session(&entry).await;
+        let token = session::token(&app, &entry).await;
 
         webviews::preload_server(
             &app,
@@ -628,10 +641,7 @@ pub async fn open_dm(
     name: String,
 ) -> Result<()> {
     let (entry, settings, muted) = page_inputs(&store, &entry_id)?;
-    let token = match app.get_webview(&webviews::webview_label(&entry_id)) {
-        Some(_) => None,
-        None => ensure_session(&entry).await,
-    };
+    let token = session::token_for_new_page(&app, &entry).await;
 
     webviews::show_conversation(
         &app,
@@ -715,7 +725,7 @@ pub async fn voice_control(app: AppHandle, action: String) -> Result<()> {
 #[tauri::command]
 pub async fn forget_trusted_links(store: State<'_, Store>) -> Result<()> {
     store.update(|registry| {
-        registry.settings.trusted_link_sites.clear();
+        registry.settings.trusted_links.clear();
 
         Ok(())
     })
@@ -738,17 +748,23 @@ pub async fn update_settings(
     store: State<'_, Store>,
     settings: Settings,
 ) -> Result<()> {
+    let before = store.registry().settings.start_at_login;
     let saved = store.update(|registry| {
         registry.settings = Settings {
             last_server_id: registry.settings.last_server_id.take(),
             skipped_update: registry.settings.skipped_update.take(),
-            trusted_link_sites: std::mem::take(&mut registry.settings.trusted_link_sites),
+            trusted_links: std::mem::take(&mut registry.settings.trusted_links),
             ..settings.sanitised()
         };
 
         Ok(registry.settings.clone())
     })?;
 
+    if saved.start_at_login != before {
+        crate::tray::set_start_at_login(&app, saved.start_at_login);
+    }
+
+    crate::tray::apply(&app, saved.close_to_tray);
     hotkey::apply(&app, saved.mute_hotkey.as_deref());
     webviews::trim_pages(&app);
     webviews::push_theme(&app, &saved);
@@ -843,6 +859,7 @@ pub async fn set_channel_muted(
     })?;
 
     webviews::push_muted(&app, &entry_id, &remaining);
+    crate::watch::mutes_changed(&app, &entry_id);
 
     Ok(())
 }

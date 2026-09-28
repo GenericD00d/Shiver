@@ -24,9 +24,18 @@ const MAX_CHANNEL_NAME: usize = 100;
 const MAX_URL: usize = 2048;
 const MAX_DMS: usize = 500;
 
-/// Two identical notifications from one server this close together are one message arriving by two
-/// routes (socket and page). Short, so someone repeating themselves later still gets two lines.
+/// Two identical notifications from one server this close together, by different routes, are one
+/// message seen twice (as a page hands over to a socket, or back). By the same route they are two.
 const DUPLICATE_WINDOW_MS: u64 = 30 * 1000;
+
+/// How a notification reached the feed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    /// a server's page (the bridge's queue)
+    Page,
+    /// the core's own socket to the server, or the core itself
+    Socket,
+}
 
 /// Milliseconds from a page, where numbers are doubles (possibly in exponent form).
 fn optional_millis<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
@@ -76,6 +85,8 @@ pub struct Notification {
     /// set on Shiver's own "new version" entry, which the popup draws with a button
     #[serde(default)]
     pub update: Option<String>,
+    #[serde(skip)]
+    pub route: Route,
 }
 
 /// What the bell needs: the unread count, and the newest entry (it pings for one newer than the last
@@ -213,20 +224,21 @@ impl FeedState {
 }
 
 impl Feed {
-    /// Adds one notification. Returns false when it was muted or a duplicate.
+    /// Adds one notification and returns it; nothing when it was muted or a duplicate.
     ///
-    /// A duplicate (same server, author and body within `DUPLICATE_WINDOW_MS`) is merged, keeping
-    /// whichever copy knows its channel, since only that one can be cleared by reading the channel.
+    /// A duplicate (same server, author and body within `DUPLICATE_WINDOW_MS`, by the other route)
+    /// is merged, keeping whichever copy knows its channel, since only that one can be cleared by
+    /// reading the channel.
     pub fn push(
         &self,
         entry_id: &str,
         server_name: &str,
         origin: Option<&str>,
-        raw: RawNotification,
+        (raw, route): (RawNotification, Route),
         muted: bool,
-    ) -> bool {
+    ) -> Option<Notification> {
         if muted {
-            return false;
+            return None;
         }
 
         let author = clamp(raw.author, MAX_AUTHOR);
@@ -240,6 +252,7 @@ impl Feed {
                 && entry.entry_id == entry_id
                 && entry.author == author
                 && entry.body == body
+                && entry.route != route
                 && now.saturating_sub(entry.at) < DUPLICATE_WINDOW_MS
         }) {
             if existing.channel_id.is_none() {
@@ -247,12 +260,11 @@ impl Feed {
                 existing.channel_name = channel_name;
             }
 
-            return false;
+            return None;
         }
 
         let id = state.next_id();
-
-        state.insert(Notification {
+        let notification = Notification {
             id,
             entry_id: entry_id.to_string(),
             server_name: server_name.to_string(),
@@ -265,9 +277,12 @@ impl Feed {
             at: now,
             read: false,
             update: None,
-        });
+            route,
+        };
 
-        true
+        state.insert(notification.clone());
+
+        Some(notification)
     }
 
     pub fn forget_updates(&self) {
@@ -298,6 +313,7 @@ impl Feed {
             at: now_ms(),
             read: false,
             update: Some(clamp(version.to_string(), MAX_AUTHOR)),
+            route: Route::Socket,
         });
     }
 
@@ -438,23 +454,74 @@ mod tests {
     fn a_message_announced_twice_is_one_entry_and_keeps_its_channel() {
         let feed = Feed::default();
 
-        assert!(feed.push("a", "s", None, raw(None, "Smiddy", "hello"), false));
-        assert!(!feed.push("a", "s", None, raw(Some(7), "Smiddy", "hello"), false));
-        assert!(feed.push("a", "s", None, raw(Some(7), "Smiddy", "another"), false));
-        assert!(feed.push("b", "s", None, raw(Some(7), "Smiddy", "hello"), false));
+        assert!(feed
+            .push(
+                "a",
+                "s",
+                None,
+                (raw(None, "Smiddy", "hello"), Route::Page),
+                false
+            )
+            .is_some());
+        assert!(feed
+            .push(
+                "a",
+                "s",
+                None,
+                (raw(Some(7), "Smiddy", "hello"), Route::Socket),
+                false
+            )
+            .is_none());
+        assert!(feed
+            .push(
+                "a",
+                "s",
+                None,
+                (raw(Some(7), "Smiddy", "another"), Route::Page),
+                false
+            )
+            .is_some());
+        assert!(feed
+            .push(
+                "b",
+                "s",
+                None,
+                (raw(Some(7), "Smiddy", "hello"), Route::Page),
+                false
+            )
+            .is_some());
 
         assert!(feed.mark_channel_read("a", 7));
         assert_eq!(feed.unread_count(), 1);
     }
 
     #[test]
+    fn a_message_repeated_by_the_same_route_is_two_entries() {
+        let feed = Feed::default();
+
+        for _ in 0..2 {
+            assert!(feed
+                .push(
+                    "a",
+                    "s",
+                    None,
+                    (raw(Some(7), "Smiddy", "ok"), Route::Page),
+                    false
+                )
+                .is_some());
+        }
+
+        assert_eq!(feed.unread_count(), 2);
+    }
+
+    #[test]
     fn reading_is_scoped_to_the_channel_or_server() {
         let feed = Feed::default();
 
-        feed.push("a", "s", None, raw(Some(1), "x", "1"), false);
-        feed.push("a", "s", None, raw(Some(2), "x", "2"), false);
-        feed.push("a", "s", None, raw(None, "x", "3"), false);
-        feed.push("b", "s", None, raw(Some(1), "x", "4"), false);
+        feed.push("a", "s", None, (raw(Some(1), "x", "1"), Route::Page), false);
+        feed.push("a", "s", None, (raw(Some(2), "x", "2"), Route::Page), false);
+        feed.push("a", "s", None, (raw(None, "x", "3"), Route::Page), false);
+        feed.push("b", "s", None, (raw(Some(1), "x", "4"), Route::Page), false);
 
         assert!(feed.mark_channel_read("a", 2));
         assert!(!feed.mark_channel_read("a", 2));
@@ -471,7 +538,9 @@ mod tests {
     fn a_muted_channel_never_reaches_the_feed() {
         let feed = Feed::default();
 
-        assert!(!feed.push("a", "s", None, raw(Some(1), "x", "y"), true));
+        assert!(feed
+            .push("a", "s", None, (raw(Some(1), "x", "y"), Route::Page), true)
+            .is_none());
         assert!(feed.notifications().is_empty());
     }
 
@@ -479,14 +548,20 @@ mod tests {
     fn one_server_cannot_evict_another() {
         let feed = Feed::default();
 
-        feed.push("quiet", "s", None, raw(None, "x", "keep me"), false);
+        feed.push(
+            "quiet",
+            "s",
+            None,
+            (raw(None, "x", "keep me"), Route::Page),
+            false,
+        );
 
         for index in 0..1000 {
             feed.push(
                 "noisy",
                 "s",
                 None,
-                raw(None, "x", &index.to_string()),
+                (raw(None, "x", &index.to_string()), Route::Page),
                 false,
             );
         }
@@ -503,7 +578,7 @@ mod tests {
             "a",
             "s",
             None,
-            raw(None, &"é".repeat(500), &"x".repeat(5000)),
+            (raw(None, &"é".repeat(500), &"x".repeat(5000)), Route::Page),
             false,
         );
 

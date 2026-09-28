@@ -5,12 +5,13 @@ mod drain;
 mod error;
 mod feed;
 mod hotkey;
-mod jwt;
 mod model;
+mod notify;
 mod permissions;
 mod secrets;
 mod session;
 mod store;
+mod tray;
 mod update;
 mod voice;
 mod watch;
@@ -84,7 +85,8 @@ fn only_shiver_chrome(
 
 /// A plugin set up for Rust alone. tauri-plugin-dialog's page script replaces `alert` and `confirm`
 /// in every webview, server pages included, with calls no page may make, so there `alert` did
-/// nothing and `confirm` answered yes at once. Shiver only asks from Rust.
+/// nothing and `confirm` answered yes at once; tauri-plugin-notification's replaces
+/// `Notification`, which the bridge needs for itself. Shiver only uses either from Rust.
 struct RustOnly<P>(P);
 
 impl<R: tauri::Runtime, P: tauri::plugin::Plugin<R>> tauri::plugin::Plugin<R> for RustOnly<P> {
@@ -104,8 +106,17 @@ impl<R: tauri::Runtime, P: tauri::plugin::Plugin<R>> tauri::plugin::Plugin<R> fo
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // first, so a second launch hands over before anything else starts
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show(app)
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![tray::AT_LOGIN_ARG]),
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(RustOnly(tauri_plugin_dialog::init()))
+        .plugin(RustOnly(tauri_plugin_notification::init()))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(only_shiver_chrome(tauri::generate_handler![
@@ -142,6 +153,7 @@ pub fn run() {
             commands::feed_summary,
             commands::unread_counts,
             commands::set_accept_any_size,
+            commands::set_notify_level,
             commands::mark_server_read,
             commands::mark_notifications_read,
             commands::clear_notifications,
@@ -168,6 +180,7 @@ pub fn run() {
             app.manage(VoiceState::default());
             app.manage(Readiness::default());
             app.manage(Recovery::default());
+            app.manage(shiver_core::jwt::Renewals::default());
             app.manage(drain::Broadcast::default());
             app.manage(webviews::Openings::default());
             app.manage(update::Available::default());
@@ -176,6 +189,7 @@ pub fn run() {
             app.manage(watch::Plugins::default());
             app.manage(watch::Reported::default());
             app.manage(watch::ReadStates::default());
+            app.manage(notify::Posted::default());
 
             // folders left thin by an older Shiver, which never dissolved them
             let _ = app
@@ -185,8 +199,10 @@ pub fn run() {
             let mute_hotkey = app.state::<Store>().registry().settings.mute_hotkey.clone();
 
             hotkey::apply(handle, mute_hotkey.as_deref());
+            hotkey::watch_front(handle);
 
             webviews::create_main_window(handle)?;
+            tray::start(handle);
             webviews::prune_profiles(handle);
             drain::spawn(handle);
             crate::watch::sync(handle);
@@ -209,6 +225,13 @@ pub fn run() {
                 serde_json::json!({ "action": action, "entryId": entry_id }),
             );
         })
-        .run(tauri::generate_context!())
-        .unwrap_or_else(|error| report_failed_start(error));
+        .build(tauri::generate_context!())
+        .unwrap_or_else(|error| report_failed_start(error))
+        .run(|_app, _event| {
+            // the dock icon brings back a window closed to the tray
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                tray::show(_app);
+            }
+        });
 }

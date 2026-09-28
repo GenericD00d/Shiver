@@ -282,7 +282,8 @@ export const createStatuses = (ctx, rows, { now = () => Date.now() } = {}) => {
  *
  * Endpoints are user-supplied URLs this server fetches, so they are vetted (https on 443, every
  * resolved address public) and the request is made over TLS to the exact address that was vetted,
- * which closes DNS rebinding. Redirects are never followed, and deliveries in flight are capped.
+ * which closes DNS rebinding. Redirects are never followed, and deliveries in flight are capped:
+ * the rest wait their turn in a bounded queue, oldest first, each endpoint at most once.
  */
 
 
@@ -293,6 +294,8 @@ const DEBOUNCE_MS = 10_000;
 const PUSH_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 16 * 1024;
 const MAX_IN_FLIGHT = 64;
+/** Wake-ups waiting for a delivery slot, past which new ones are dropped. */
+const MAX_QUEUED = 4096;
 /** Registrations per user per minute; each costs a DNS lookup. */
 const REGISTER_LIMIT = 10;
 
@@ -509,13 +512,21 @@ export const deliver = ({ url, address }, { connect = tlsConnect, timeoutMs = PU
 export const createPush = (
   ctx,
   rows,
-  { lookup = dnsLookup, send = deliver, now = () => Date.now(), maxInFlight = MAX_IN_FLIGHT } = {}
+  {
+    lookup = dnsLookup,
+    send = deliver,
+    now = () => Date.now(),
+    maxInFlight = MAX_IN_FLIGHT,
+    maxQueued = MAX_QUEUED
+  } = {}
 ) => {
   /** userId -> { endpoints, muted: Set } */
   const subscribers = new Map();
   const lastPushAt = new Map();
   const mayRegister = createLimiter(REGISTER_LIMIT, 60_000, now);
   let inFlight = 0;
+  /** `userId endpoint` -> { userId, endpoint }, oldest first */
+  const queued = new Map();
 
   const remember = (userId, row) => {
     const endpoints = endpointsFrom(row?.pushEndpoints);
@@ -542,10 +553,6 @@ export const createPush = (
 
   /** Re-vets and posts one wake-up; drops the endpoint if the relay says it is gone (404/410). */
   const wake = async (userId, endpoint) => {
-    if (inFlight >= maxInFlight) return;
-
-    inFlight += 1;
-
     try {
       const vetted = await vetEndpoint(endpoint, lookup);
 
@@ -558,9 +565,35 @@ export const createPush = (
       }
     } catch (error) {
       ctx.logger.debug(`Could not wake user ${userId}: ${error?.message}`);
-    } finally {
-      inFlight -= 1;
     }
+  };
+
+  /** Starts queued wake-ups while there are free slots, skipping endpoints unregistered meanwhile. */
+  const pump = () => {
+    for (const [key, { userId, endpoint }] of queued) {
+      if (inFlight >= maxInFlight) return;
+
+      queued.delete(key);
+
+      if (!subscribers.get(userId)?.endpoints.includes(endpoint)) continue;
+
+      inFlight += 1;
+      void wake(userId, endpoint).finally(() => {
+        inFlight -= 1;
+        pump();
+      });
+    }
+  };
+
+  const enqueue = (userId, endpoint) => {
+    const key = `${userId} ${endpoint}`;
+
+    if (queued.has(key)) return;
+
+    if (queued.size >= maxQueued) return ctx.logger.debug(`Push queue full; not waking user ${userId}`);
+
+    queued.set(key, { userId, endpoint });
+    pump();
   };
 
   /**
@@ -602,16 +635,24 @@ export const createPush = (
 
     try {
       for (const { userId, endpoints } of await recipients(message)) {
-        for (const endpoint of endpoints) void wake(userId, endpoint);
+        for (const endpoint of endpoints) enqueue(userId, endpoint);
       }
     } catch (error) {
       ctx.logger.debug(`Could not work out who to wake: ${error?.message}`);
     }
   };
 
-  /** Vets and stores an endpoint for the caller (newest first, capped). Rate limited. */
+  /**
+   * Vets and stores an endpoint for the caller (newest first, capped). Rate limited. The phone
+   * registers again on every start, so its newest endpoint registered again costs no lookup or
+   * write (it is vetted again before every delivery anyway).
+   */
   const register = async (userId, endpoint) => {
     if (!mayRegister(userId)) throw new Error('Too many push registrations; try again in a minute');
+
+    const held = subscribers.get(userId)?.endpoints;
+
+    if (held?.[0] !== undefined && held[0] === normaliseEndpoint(endpoint)) return [...held];
 
     const vetted = await vetEndpoint(endpoint, lookup);
 
@@ -664,6 +705,8 @@ const STORE_FILE = 'user-settings.json';
 const PRIME_CONCURRENCY = 16;
 /** Writes a minute per user through the actions without a limit of their own. */
 const WRITE_LIMIT = 30;
+/** Reads a minute per user; a client asks for each once per page load. */
+const READ_LIMIT = 60;
 
 /**
  * Carries mutes from the pre-0.0.25 settings file into the host's storage, without overwriting a
@@ -767,12 +810,18 @@ const onLoad = async (ctx) => {
 
     return run(user, payload);
   };
+  const mayRead = createLimiter(READ_LIMIT, 60_000);
+  const rationed = (run) => (user, payload) => {
+    if (!mayRead(user)) throw new Error('Too many requests; try again in a minute');
+
+    return run(user, payload);
+  };
 
   const actions = {
     setStatus: ['Set your own status line', (user, payload) => statuses.set(user, payload?.status)],
-    getStatuses: ['Everyone who has a status set', () => statuses.all()],
-    getOwnStatus: ['Your own status line', (user) => statuses.own(user)],
-    getMutedChannels: ['Your muted channels', (user) => settings.getMutedChannels(user)],
+    getStatuses: ['Everyone who has a status set', rationed(() => statuses.all())],
+    getOwnStatus: ['Your own status line', rationed((user) => statuses.own(user))],
+    getMutedChannels: ['Your muted channels', rationed((user) => settings.getMutedChannels(user))],
     setMutedChannels: [
       'Replace your muted channels',
       limited((user, payload) => settings.setMutedChannels(user, payload?.mutedChannels))

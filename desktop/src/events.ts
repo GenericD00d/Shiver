@@ -13,7 +13,9 @@ export const EVENTS = {
   voice: 'shiver://voice',
   status: 'shiver://status',
   signedOut: 'shiver://signed-out',
-  update: 'shiver://update'
+  update: 'shiver://update',
+  /** a rail shortcut: `{ server: n }` (1-based) or `{ step: ±1 }` */
+  shortcut: 'shiver://shortcut'
 } as const;
 
 /** Calls the latest `handler` with each payload of `event` for as long as the component is mounted. */

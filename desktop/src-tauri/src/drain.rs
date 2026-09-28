@@ -3,8 +3,8 @@
 //! A Sharkord page has no Tauri IPC, so the core evaluates `__SHIVER_DRAIN__` in it and applies
 //! what it returns: every `POLL_INTERVAL` for the page on screen, one still connecting and the one
 //! holding the call, every `BACKGROUND_EVERY`th for the rest. A page answers with nothing when
-//! nothing changed, except the one on screen (its channel counts as read) and a signed-out one
-//! (recovery retries on its reports). A page answers only about itself, and everything it says is
+//! nothing changed, except the one being read (on screen in a window that is not minimised: its
+//! channel counts as read) and a signed-out one (recovery retries on its reports). A page answers only about itself, and everything it says is
 //! treated as a claim: bounded, and never trusted beyond its own entry.
 
 use std::{
@@ -18,7 +18,7 @@ use shiver_core::LockExt;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
-    feed::{DrainResult, Feed},
+    feed::{DrainResult, Feed, Route},
     session,
     store::{RegistryStore, Store},
     voice::VoiceState,
@@ -152,8 +152,14 @@ fn poll_once(app: &AppHandle, background_turn: bool) {
             || in_call.as_ref() == Some(entry_id)
             || !app.state::<Readiness>().is_ready(entry_id);
 
+        // a full answer each time only while it is being read, so a minimised page answers null
         if urgent || background_turn {
-            drain_webview(app, &webview, entry_id.clone(), on_screen);
+            drain_webview(
+                app,
+                &webview,
+                entry_id.clone(),
+                crate::badges::is_being_read(app, entry_id),
+            );
         }
     }
 
@@ -232,7 +238,7 @@ fn drain_webview(app: &AppHandle, webview: &tauri::Webview, entry_id: String, fu
 }
 
 fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
-    let (server_name, account_label, muted, has_identity, origin) = {
+    let (server_name, account_label, muted, has_identity, origin, notify) = {
         let store = app.state::<Store>();
         let registry = store.registry();
 
@@ -246,6 +252,7 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
             registry.muted_for(entry_id),
             entry.identity.is_some(),
             entry.origin.clone(),
+            entry.notify,
         )
     };
 
@@ -266,7 +273,7 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
             .iter()
             .filter_map(|address| url::Url::parse(address).ok())
         {
-            webviews::ask_to_open(app, &server_name, url);
+            webviews::ask_to_open(app, entry_id, &server_name, url);
         }
     }
 
@@ -278,11 +285,23 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
         .into_iter()
         .take(MAX_NOTIFICATIONS_PER_DRAIN)
     {
+        // the page applies the level itself (Sharkord knows what mentions the user); the core
+        // holds it to "DMs only" at least, which a title is enough to tell
         let is_muted = raw
             .channel_id
-            .is_some_and(|channel_id| muted.contains(&channel_id));
+            .is_some_and(|channel_id| muted.contains(&channel_id))
+            || !notify.allows(raw.is_dm, true);
 
-        changed |= feed.push(entry_id, &server_name, Some(&origin), raw, is_muted);
+        if let Some(notification) = feed.push(
+            entry_id,
+            &server_name,
+            Some(&origin),
+            (raw, Route::Page),
+            is_muted,
+        ) {
+            crate::notify::announce(app, &notification);
+            changed = true;
+        }
     }
 
     if let Some(dms) = result.dms {
@@ -316,6 +335,7 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
 
         if stored && !result.mutes.is_empty() {
             webviews::push_muted(app, entry_id, &next);
+            crate::watch::mutes_changed(app, entry_id);
         }
 
         changed |= stored && next != muted;
@@ -407,8 +427,9 @@ fn apply_page_state(
         let _ = app.emit_to(SHELL_WEBVIEW, VOICE_EVENT, ());
     }
 
+    // not while minimised: what arrives in the channel on screen then is news to the user
     if let Some(channel_id) = result.viewing_channel_id {
-        if crate::badges::is_on_screen(app, entry_id) {
+        if crate::badges::is_being_read(app, entry_id) {
             crate::badges::channel_viewed(app, entry_id, channel_id);
         }
     }

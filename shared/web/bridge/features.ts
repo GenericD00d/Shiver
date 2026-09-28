@@ -269,7 +269,16 @@ export function installRoleColors() {
     }
   };
 
+  let inputs: unknown[] = [];
+
   watchStore((state) => {
+    // the store hands back the same arrays until they change, and it changes with every message
+    const read = [state.users, state.roles, state.ownUserId];
+
+    if (read.every((input, index) => input === inputs[index])) return;
+
+    inputs = read;
+
     const users = state.users ?? [];
     const next = new Map<string, string>();
 

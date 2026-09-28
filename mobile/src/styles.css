@@ -85,16 +85,16 @@ body {
   gap: 8px;
 }
 
-/* Only a row with something to say wraps. Wrapping every row would push `Remove` onto a second line
-   for all of them: with wrap on, flex breaks the line rather than shrinking the name button, which
-   is the opposite of what a row with nothing wrong wants. */
-.servers li.has-problem {
+/* Every row wraps, for the lines under it (the notification level, and a problem if there is one).
+   The name button's basis is 0, so wrapping never pushes `Remove` onto a second line: flex would
+   otherwise break the line rather than shrink a long name. */
+.servers li {
   flex-wrap: wrap;
 }
 
 /* the whole row is the tap target: thumbs are not mice */
 .server {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -572,6 +572,32 @@ button {
 
 /* A server Shiver cannot watch. Red, because unlike everything else on this row it is not a state
    the user chose — it means that server's messages are not reaching this phone at all. */
+.server-notify {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 4px;
+  color: var(--shiver-text-dim);
+  font-size: 13px;
+}
+
+.server-notify span {
+  white-space: nowrap;
+}
+
+.server-notify select {
+  min-height: 36px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 8px;
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+  font: inherit;
+}
+
 .server-problem {
   /* the whole width, under everything else on the row */
   flex-basis: 100%;

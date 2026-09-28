@@ -14,7 +14,7 @@ use std::{
 
 use serde_json::json;
 pub use shiver_core::limit::Openings;
-use shiver_core::LockExt;
+use shiver_core::{model::NotifyLevel, LockExt};
 use tauri::{
     webview::WebviewBuilder, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview,
     WebviewUrl, Window, WindowEvent,
@@ -77,6 +77,8 @@ struct Screen {
     recent: Vec<String>,
     /// the entry whose page is fullscreen
     fullscreen: Option<String>,
+    /// the window is minimised or hidden to the tray, so nothing in it is being read
+    window_hidden: bool,
 }
 
 impl Screen {
@@ -115,6 +117,21 @@ impl ActiveServer {
 
         (screen.showing_server && screen.current.as_deref() == Some(entry_id))
             || screen.conversation.as_deref() == Some(entry_id)
+    }
+
+    /// On screen and the window in sight: what the page shows counts as read.
+    pub fn is_being_read(&self, entry_id: &str) -> bool {
+        self.is_on_screen(entry_id) && !self.screen.locked().window_hidden
+    }
+
+    /// Records whether the window is out of sight; returns whether that changed.
+    pub fn set_window_hidden(&self, hidden: bool) -> bool {
+        let mut screen = self.screen.locked();
+        let changed = screen.window_hidden != hidden;
+
+        screen.window_hidden = hidden;
+
+        changed
     }
 
     /// Who Shiver asked this entry's page to open a conversation with, while it shows it. A page's
@@ -260,12 +277,52 @@ pub fn create_main_window(app: &AppHandle) -> Result<Window> {
 
             // minimising arrives as a resize on Windows; pages cannot see it themselves
             if let Ok(window) = main_window(&handle) {
-                push_visibility(&handle, window.is_minimized().unwrap_or(false));
+                let hidden =
+                    window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true);
+
+                set_window_hidden(&handle, hidden);
+            }
+        }
+
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            if crate::tray::hide_instead_of_closing(&handle) {
+                api.prevent_close();
             }
         }
     });
 
     Ok(window)
+}
+
+/// Whether Shiver's window is the one the user is using: shown, not minimised, and in front. Not
+/// `is_focused` alone, which on Windows reads false while the keyboard is in one of its webviews.
+pub fn is_in_front(app: &AppHandle) -> bool {
+    let Ok(window) = main_window(app) else {
+        return false;
+    };
+
+    if !window.is_visible().unwrap_or(false) || window.is_minimized().unwrap_or(true) {
+        return false;
+    }
+
+    #[cfg(windows)]
+    {
+        // SAFETY: takes no arguments and only reads which window is in front
+        let front = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+
+        window.hwnd().is_ok_and(|hwnd| hwnd.0 == front.0)
+    }
+
+    #[cfg(not(windows))]
+    window.is_focused().unwrap_or(false)
+}
+
+/// Records whether the window is out of sight (minimised, or hidden to the tray) and tells the
+/// pages when that changes.
+pub fn set_window_hidden(app: &AppHandle, hidden: bool) {
+    if app.state::<ActiveServer>().set_window_hidden(hidden) {
+        push_visibility(app, hidden);
+    }
 }
 
 /// Re-places every webview for the current window size. One failure does not stop the rest.
@@ -880,48 +937,44 @@ fn build_page_webview(
 }
 
 /// Opens a link a server's page asked for, once the user agrees in a native dialog (the page
-/// cannot draw over it), or at once for a site they chose to trust. One question at a time; links
-/// asked for meanwhile are dropped.
-pub fn ask_to_open(app: &AppHandle, server: &str, url: Url) {
+/// cannot draw over it), or at once for a site they chose to trust from this server. One question
+/// at a time; links asked for meanwhile are dropped.
+pub fn ask_to_open(app: &AppHandle, entry_id: &str, server: &str, url: Url) {
+    use shiver_core::links::{self, Answer, Decision};
     use std::sync::atomic::{AtomicBool, Ordering};
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 
     static ASKING: AtomicBool = AtomicBool::new(false);
 
-    let Some(site) = shiver_core::links::site(&url) else {
-        return;
+    let decision = links::decide(
+        &app.state::<Store>().registry().settings.trusted_links,
+        entry_id,
+        server,
+        &url,
+    );
+    let (site, question, always) = match decision {
+        Decision::Refuse => return,
+        Decision::Open => return open_in_browser(app, &url),
+        Decision::Ask {
+            site,
+            question,
+            always,
+        } => (site, question, always),
     };
-
-    if app
-        .state::<Store>()
-        .registry()
-        .settings
-        .trusted_link_sites
-        .contains(&site)
-    {
-        return open_in_browser(app, &url);
-    }
 
     if ASKING.swap(true, Ordering::AcqRel) {
         return eprintln!("[shiver] {server} asked to open a link while another waited; dropped");
     }
 
-    let always = format!("Always for {site}");
-    let mut dialog = app
-        .dialog()
-        .message(shiver_core::links::question(server, &site, &url))
-        .title("Open link?")
-        .buttons(MessageDialogButtons::YesNoCancelCustom(
-            "Open".into(),
-            always.clone(),
-            "Cancel".into(),
-        ));
+    let mut dialog = app.dialog().message(question).title("Open link?").buttons(
+        MessageDialogButtons::YesNoCancelCustom(links::OPEN.into(), always, links::CANCEL.into()),
+    );
 
     if let Ok(window) = main_window(app) {
         dialog = dialog.parent(&window);
     }
 
-    let app = app.clone();
+    let (app, entry_id) = (app.clone(), entry_id.to_string());
 
     dialog.show_with_result(move |answer| {
         ASKING.store(false, Ordering::Release);
@@ -930,14 +983,16 @@ pub fn ask_to_open(app: &AppHandle, server: &str, url: Url) {
             return;
         };
 
-        if choice == always {
-            let _ = app.state::<Store>().update(|registry| {
-                shiver_core::links::trust(&mut registry.settings.trusted_link_sites, site);
+        match Answer::from_choice(&choice, &site) {
+            Answer::Cancel => return,
+            Answer::Open => {}
+            Answer::Always => {
+                let _ = app.state::<Store>().update(|registry| {
+                    links::trust(&mut registry.settings.trusted_links, &entry_id, site);
 
-                Ok(())
-            });
-        } else if choice != "Open" {
-            return;
+                    Ok(())
+                });
+            }
         }
 
         open_in_browser(&app, &url);
@@ -1011,6 +1066,18 @@ fn eval_in(app: &AppHandle, label: &str, script: &str) {
     }
 }
 
+/// Tells one page which of its notifications Shiver wants.
+pub fn push_notify_level(app: &AppHandle, entry_id: &str, level: NotifyLevel) {
+    eval_in(
+        app,
+        &webview_label(entry_id),
+        &format!(
+            "window.__SHIVER_SET_NOTIFY__ && window.__SHIVER_SET_NOTIFY__({})",
+            json!(level)
+        ),
+    );
+}
+
 /// Tells one page whether a call is running elsewhere (never where).
 pub fn push_voice_lock(app: &AppHandle, entry_id: &str, locked: bool) {
     eval_in(
@@ -1072,6 +1139,7 @@ fn bridge_script(
         "soundVolume": settings.sound_volume.min(crate::model::MAX_SOUND_VOLUME),
         "minimiseAttachments": settings.minimise_attachments,
         "voiceLocked": voice_locked,
+        "notify": entry.notify,
     });
 
     format!(
@@ -1114,6 +1182,7 @@ mod tests {
             accept_any_size: false,
             profile: profile.map(str::to_string),
             media_allowed: false,
+            notify: NotifyLevel::default(),
         }
     }
 

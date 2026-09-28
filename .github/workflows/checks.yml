@@ -51,6 +51,34 @@ jobs:
           key: shared
       - run: cargo test -p shiver-core -p sharkord-client
 
+  # The desktop crate on Linux, which compiles what Windows never does (Tauri's download hook, the
+  # WebKitGTK profiles). The packages are Tauri's own Linux prerequisites.
+  desktop-linux:
+    name: Desktop (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+        with:
+          key: desktop-linux
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Build the bridge
+        run: bun install --frozen-lockfile && bun run build:bridge
+        working-directory: desktop
+
+      - run: cargo clippy -p shiver --all-targets -- -D warnings
+      - run: cargo test -p shiver
+
   # A debug build of the Android app, which is the only thing that compiles its Kotlin, manifest
   # and resources. Debug signs with the generated debug key, so no secret is needed.
   android:
@@ -158,6 +186,11 @@ jobs:
 
       - name: Shared web tests
         run: bun test shared/web
+
+      # the test ids, storage keys and classes the bridges match, at the Sharkord commit they were
+      # last checked against (`sharkord.yml` checks Sharkord's latest weekly)
+      - name: Sharkord matches the bridges
+        run: python3 scripts/check-sharkord.py
 
       # plain ES modules with no build step
       - name: Companion plugin

@@ -24,7 +24,7 @@ import {
   type Settings,
   type VoiceStatus
 } from './types';
-import { byPosition } from '../../shared/web/rail';
+import { byPosition, railOrder } from '../../shared/web/rail';
 
 /**
  * Which Shiver surface owns the content area. Anything other than `server` means the active server's
@@ -57,10 +57,13 @@ const EMPTY_REGISTRY: Registry = {
     accentColor: DEFAULT_ACCENT_COLOR,
     textColor: null,
     notificationSounds: true,
+    desktopNotifications: true,
+    closeToTray: false,
+    startAtLogin: false,
     soundVolume: 100,
     minimiseAttachments: true,
     lastServerId: null,
-    trustedLinkSites: [],
+    trustedLinks: [],
     muteHotkey: null,
     pagesKept: DEFAULT_PAGES_KEPT
   }
@@ -327,6 +330,23 @@ export const App = () => {
     []
   );
 
+  // Ctrl+1…9 and Ctrl+Alt+Up/Down, which the core registers only while Shiver is in front
+  useCoreEvent<{ server?: number; step?: number }>(EVENTS.shortcut, ({ server, step }) => {
+    const order = railOrder(registry.servers, registry.folders);
+    const current = order.findIndex((entry) => entry.id === activeId);
+    let target: ServerEntry | undefined;
+
+    if (typeof server === 'number') {
+      target = order[server - 1];
+    } else if (typeof step === 'number' && order.length > 0) {
+      const from = current === -1 ? (step > 0 ? -1 : 0) : current;
+
+      target = order[(from + step + order.length) % order.length];
+    }
+
+    if (target) void openServer(target.id);
+  });
+
   const handleAdded = useCallback(
     async (id: string) => {
       await refresh();
@@ -479,6 +499,9 @@ export const App = () => {
       // two actions rather than a toggle: the menu knew which way the server is set
       anysize: (id) => api.setAcceptAnySize(id, true),
       normalsize: (id) => api.setAcceptAnySize(id, false),
+      'notify-all': (id) => api.setNotifyLevel(id, 'all').then(refresh),
+      'notify-mentions': (id) => api.setNotifyLevel(id, 'mentions').then(refresh),
+      'notify-dms': (id) => api.setNotifyLevel(id, 'dms').then(refresh),
       logout: (id) => api.logOutServer(id).then(refresh),
       refresh: (id) => api.refreshServerInfo(id).then(refresh),
       unfolder: (id) => api.setServerFolder(id, null).then(refresh),

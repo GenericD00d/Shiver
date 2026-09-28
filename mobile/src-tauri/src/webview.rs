@@ -89,6 +89,8 @@ struct ShowingState {
     pending_dm_user: Option<String>,
     /// when each server was last left
     left: HashMap<String, Instant>,
+    /// when Shiver went to the background (Android's `onPause`), while it is there
+    background_since: Option<Instant>,
 }
 
 /// Where Shiver's own pages live and which server the webview is on.
@@ -143,6 +145,34 @@ impl Showing {
 
     pub fn server(&self) -> Option<String> {
         self.0.locked().server.clone()
+    }
+
+    /// Records Shiver going to the background or coming back.
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    pub fn set_background(&self, background: bool) {
+        let mut state = self.0.locked();
+
+        state.background_since =
+            background.then(|| state.background_since.unwrap_or_else(Instant::now));
+    }
+
+    pub fn in_background(&self) -> bool {
+        self.0.locked().background_since.is_some()
+    }
+
+    /// The server whose own page keeps it up to date: the one in the webview, until Shiver has been
+    /// in the background for `grace` (a page nobody sees posts no notifications).
+    pub fn kept_by_page(&self, grace: Duration) -> Option<String> {
+        let state = self.0.locked();
+
+        if state
+            .background_since
+            .is_some_and(|since| since.elapsed() >= grace)
+        {
+            return None;
+        }
+
+        state.server.clone()
     }
 
     /// The servers left less than `grace` ago, with how much of it remains for each.
@@ -401,7 +431,7 @@ fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
         .iter()
         .filter_map(|address| Url::parse(address).ok())
     {
-        crate::ask_to_open(app, server.as_deref().unwrap_or("A server"), &url);
+        crate::ask_to_open(app, entry_id, server.as_deref().unwrap_or("A server"), &url);
     }
 
     if let Some(channels) = state.muted {

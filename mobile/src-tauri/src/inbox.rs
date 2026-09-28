@@ -11,9 +11,14 @@ use std::{
     time::Duration,
 };
 
-use shiver_core::{text::clamp, LockExt};
+use shiver_core::{
+    jwt::{self, Freshness, Renewals},
+    text::clamp,
+    LockExt,
+};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_shiver_secrets::SecretsExt;
+use zeroize::Zeroizing;
 
 use crate::{
     sharkord,
@@ -104,9 +109,12 @@ struct Announcement {
 
 #[derive(Default)]
 struct State {
-    tokens: HashMap<String, String>,
+    /// wiped when replaced or dropped; copies handed out are short-lived
+    tokens: HashMap<String, Zeroizing<String>>,
     unread: HashMap<String, u32>,
     running: HashMap<String, tauri::async_runtime::JoinHandle<()>>,
+    /// the one pending `sync` for when the next server's `WATCH_GRACE` runs out
+    grace_timer: Option<tauri::async_runtime::JoinHandle<()>>,
     announced: HashMap<String, Announcement>,
     /// entries with a notification post scheduled
     posting: HashSet<String>,
@@ -133,14 +141,13 @@ impl Inbox {
         self.with(|state| {
             state
                 .tokens
-                .insert(entry_id.to_string(), token.to_string())
-                .as_deref()
-                != Some(token)
+                .insert(entry_id.to_string(), Zeroizing::new(token.to_string()))
+                .map_or(true, |previous| previous.as_str() != token)
         })
     }
 
     pub fn token(&self, entry_id: &str) -> Option<String> {
-        self.with(|state| state.tokens.get(entry_id).cloned())
+        self.with(|state| state.tokens.get(entry_id).map(|token| token.to_string()))
     }
 
     /// Drops the session and everything derived from it, stopping the connection.
@@ -231,14 +238,18 @@ fn entry_of(key: &str) -> &str {
         .unwrap_or(key)
 }
 
-/// Queues a write (`Some`) or removal (`None`) for the one store-writer thread, which keeps writes
-/// in order and off the UI thread (each is a blocking call into the JVM).
-fn store_off_thread(app: &AppHandle, key: String, value: Option<String>) {
-    static WRITER: std::sync::OnceLock<std::sync::mpsc::Sender<(String, Option<String>)>> =
+/// A write (`Some`) or removal (`None`) of one store key. Values are sessions and passwords (and
+/// floors), so they are wiped once written.
+type StoreWrite = (String, Option<Zeroizing<String>>);
+
+/// Queues a write or removal for the one store-writer thread, which keeps writes in order and off
+/// the UI thread (each is a blocking call into the JVM).
+fn store_off_thread(app: &AppHandle, key: String, value: Option<Zeroizing<String>>) {
+    static WRITER: std::sync::OnceLock<std::sync::mpsc::Sender<StoreWrite>> =
         std::sync::OnceLock::new();
 
     let sender = WRITER.get_or_init(|| {
-        let (sender, receiver) = std::sync::mpsc::channel::<(String, Option<String>)>();
+        let (sender, receiver) = std::sync::mpsc::channel::<StoreWrite>();
         let handle = app.clone();
 
         std::thread::Builder::new()
@@ -295,7 +306,11 @@ pub fn restore(app: &AppHandle) {
                 continue;
             }
 
-            let Ok(Some(value)) = app.shiver_secrets().get(&key) else {
+            let Ok(Some(value)) = app
+                .shiver_secrets()
+                .get(&key)
+                .map(|value| value.map(Zeroizing::new))
+            else {
                 continue;
             };
 
@@ -325,7 +340,7 @@ fn sign_in_missing(app: &AppHandle) {
     let handle = app.clone();
 
     tauri::async_runtime::spawn(async move {
-        let missing: Vec<(String, String)> = {
+        let missing: Vec<String> = {
             let inbox = handle.state::<Inbox>();
             let store = handle.state::<Store>();
             let registry = store.registry();
@@ -337,21 +352,27 @@ fn sign_in_missing(app: &AppHandle) {
                 .filter(|server| {
                     inbox.token(&server.id).is_none() && inbox.has_password(&server.id)
                 })
-                .map(|server| (server.id.clone(), server.origin.clone()))
+                .map(|server| server.id.clone())
                 .collect()
         };
 
-        for (entry_id, origin) in missing {
-            sign_in_again(&handle, &entry_id, &origin).await;
+        let mut signed_in = false;
+
+        for entry_id in missing {
+            signed_in |= renew(&handle, &entry_id).await.is_some();
+        }
+
+        if signed_in {
+            sync(&handle);
         }
     });
 }
 
-/// Keeps a session (in memory, and in the store when `persist`) and connects with it. A token past
-/// `MAX_TOKEN` is not kept.
-fn record_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) {
+/// Keeps a session (in memory, and in the store when `persist`); returns whether it was new. A
+/// token past `MAX_TOKEN` is not kept.
+fn keep_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) -> bool {
     if token.len() > MAX_TOKEN {
-        return;
+        return false;
     }
 
     if app
@@ -362,14 +383,25 @@ fn record_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) {
     }
 
     if !app.state::<Inbox>().remember_token(entry_id, token) {
-        return;
+        return false;
     }
 
     if persist {
-        store_off_thread(app, entry_id.to_string(), Some(token.to_string()));
+        store_off_thread(
+            app,
+            entry_id.to_string(),
+            Some(Zeroizing::new(token.to_string())),
+        );
     }
 
-    sync(app);
+    true
+}
+
+/// Keeps a session and connects with it.
+fn record_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) {
+    if keep_session(app, entry_id, token, persist) {
+        sync(app);
+    }
 }
 
 pub fn remember_session(app: &AppHandle, entry_id: &str, token: &str) {
@@ -384,7 +416,7 @@ pub fn remember_password(app: &AppHandle, entry_id: &str, password: &str) {
     store_off_thread(
         app,
         password_store_key(entry_id),
-        Some(password.to_string()),
+        Some(Zeroizing::new(password.to_string())),
     );
 }
 
@@ -425,7 +457,8 @@ pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
 
 /// Starts a connection for every entry with a session, no connection and no problem that retrying
 /// cannot fix, stops those for entries that left the rail or are on screen (their page has its
-/// own), and settles the notification of the server on screen.
+/// own, until Shiver has been in the background for `WATCH_GRACE`), and settles the notification
+/// of the server on screen.
 pub fn sync(app: &AppHandle) {
     let registry_ids: HashSet<String> = app
         .state::<Store>()
@@ -434,7 +467,7 @@ pub fn sync(app: &AppHandle) {
         .iter()
         .map(|server| server.id.clone())
         .collect();
-    let showing = app.state::<webview::Showing>().server();
+    let showing = app.state::<webview::Showing>().kept_by_page(WATCH_GRACE);
     let just_left = app.state::<webview::Showing>().just_left(WATCH_GRACE);
     let watchable = |id: &String| {
         registry_ids.contains(id) && showing.as_ref() != Some(id) && !just_left.contains_key(id)
@@ -481,15 +514,44 @@ pub fn sync(app: &AppHandle) {
     }
 
     if let Some(rest) = just_left.into_values().min() {
-        let app = app.clone();
-
-        tauri::async_runtime::spawn(async move {
+        let handle = app.clone();
+        let timer = tauri::async_runtime::spawn(async move {
             tokio::time::sleep(rest).await;
-            sync(&app);
+            sync(&handle);
         });
+
+        // replaced rather than added to: sync runs often, and each would otherwise leave a timer
+        if let Some(earlier) = app
+            .state::<Inbox>()
+            .with(|state| state.grace_timer.replace(timer))
+        {
+            earlier.abort();
+        }
     }
 
     publish(app);
+}
+
+/// Shiver went to the background (`onPause`) or came back (`onResume`). A server left on screen is
+/// watched by the core after `WATCH_GRACE` in the background, so its messages still notify; coming
+/// back hands it to its page again.
+#[cfg_attr(not(mobile), allow(dead_code))]
+pub fn set_background(app: &AppHandle, background: bool) {
+    app.state::<webview::Showing>().set_background(background);
+
+    if !background {
+        return sync(app);
+    }
+
+    let app = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(WATCH_GRACE).await;
+
+        if app.state::<webview::Showing>().in_background() {
+            sync(&app);
+        }
+    });
 }
 
 /// Drops a server's connection and any problem with it, so the next attempt uses what changed.
@@ -520,7 +582,8 @@ struct Watch {
 
 impl sharkord::Watcher for Watch {
     async fn target(&mut self) -> Option<sharkord::Target> {
-        let token = self.app.state::<Inbox>().token(&self.entry_id);
+        // asked each attempt, which is what renews an expiring session
+        let token = session_for(&self.app, &self.entry_id).await;
         let server = self
             .app
             .state::<Store>()
@@ -566,17 +629,8 @@ impl sharkord::Watcher for Watch {
     }
 
     async fn refused(&mut self, refusals: u32) -> bool {
-        let origin = self
-            .app
-            .state::<Store>()
-            .registry()
-            .server(&self.entry_id)
-            .map(|server| server.origin.clone());
-
-        if let Some(origin) = origin {
-            if refusals < MAX_REFUSALS && sign_in_again(&self.app, &self.entry_id, &origin).await {
-                return true;
-            }
+        if refusals < MAX_REFUSALS && renew(&self.app, &self.entry_id).await.is_some() {
+            return true;
         }
 
         forget_session(&self.app, &self.entry_id);
@@ -602,12 +656,7 @@ fn on_joined(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
             .plugins
             .insert(entry_id.to_string(), joined.plugin_version.clone());
 
-        let floor = joined
-            .shared_floor
-            .clone()
-            .or_else(|| state.baselines.get(entry_id).cloned())
-            .unwrap_or_else(|| joined.read_states.clone());
-        let changed = state.baselines.get(entry_id) != Some(&floor);
+        let (floor, changed) = sharkord::choose_floor(joined, state.baselines.get(entry_id));
 
         state.baselines.insert(entry_id.to_string(), floor.clone());
         changed.then_some(floor)
@@ -615,7 +664,11 @@ fn on_joined(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
 
     if let Some(floor) = floor {
         if let Ok(encoded) = serde_json::to_string(&floor) {
-            store_off_thread(app, baseline_store_key(entry_id), Some(encoded));
+            store_off_thread(
+                app,
+                baseline_store_key(entry_id),
+                Some(Zeroizing::new(encoded)),
+            );
         }
     }
 
@@ -680,7 +733,14 @@ pub fn watch_mutes(app: &AppHandle) {
         loop {
             ticker.tick().await;
 
-            if let Some(entry_id) = handle.state::<webview::Showing>().server() {
+            let showing = handle.state::<webview::Showing>();
+
+            // nobody changes a mute in the background, and the poll would keep the page busy
+            if showing.in_background() {
+                continue;
+            }
+
+            if let Some(entry_id) = showing.server() {
                 webview::read_mutes(&handle, &entry_id);
             }
         }
@@ -692,47 +752,82 @@ fn publish(app: &AppHandle) {
     webview::emit_home(app, INBOX_EVENT, app.state::<Inbox>().unread());
 }
 
-/// Signs a server in again from its stored password. A refused password is forgotten.
-async fn sign_in_again(app: &AppHandle, entry_id: &str, origin: &str) -> bool {
-    let Some(identity) = app
+/* ── sessions ── */
+
+/// The session to open this entry with. One due for renewal is used as it is and renewed in the
+/// background; a missing or expired one is renewed first, and an expired one is still used when
+/// that fails (the server's refusal then takes its usual course).
+pub async fn session_for(app: &AppHandle, entry_id: &str) -> Option<String> {
+    let token = app.state::<Inbox>().token(entry_id);
+
+    match token.as_deref().map(jwt::freshness) {
+        Some(Freshness::Fresh) => token,
+        Some(Freshness::Due) => {
+            renew_in_background(app, entry_id);
+
+            token
+        }
+        Some(Freshness::Expired) | None => renew(app, entry_id).await.or(token),
+    }
+}
+
+fn renew_in_background(app: &AppHandle, entry_id: &str) {
+    if !app.state::<Inbox>().has_password(entry_id) || !app.state::<Renewals>().begin(entry_id) {
+        return;
+    }
+
+    let (app, entry_id) = (app.clone(), entry_id.to_string());
+
+    tauri::async_runtime::spawn(async move {
+        if renew(&app, &entry_id).await.is_some() {
+            app.state::<Renewals>().succeeded(&entry_id);
+        }
+    });
+}
+
+/// Signs a server in again from its stored password and keeps the session, without connecting
+/// with it (the caller does). A refused password is forgotten.
+async fn renew(app: &AppHandle, entry_id: &str) -> Option<String> {
+    let (identity, origin) = app
         .state::<Store>()
         .registry()
         .server(entry_id)
-        .and_then(|server| server.identity.clone())
-    else {
-        return false;
-    };
+        .and_then(|server| Some((server.identity.clone()?, server.origin.clone())))?;
+
+    if !app.state::<Inbox>().has_password(entry_id) {
+        return None;
+    }
 
     let handle = app.clone();
     let key = password_store_key(entry_id);
     let password =
         match tokio::task::spawn_blocking(move || handle.shiver_secrets().get(&key)).await {
-            Ok(Ok(Some(password))) => zeroize::Zeroizing::new(password),
-            Ok(Ok(None)) => return false,
+            Ok(Ok(Some(password))) => Zeroizing::new(password),
+            Ok(Ok(None)) => return None,
             Ok(Err(error)) => {
                 eprintln!("[shiver] could not read the stored password for {origin}: {error}");
 
-                return false;
+                return None;
             }
-            Err(_) => return false,
+            Err(_) => return None,
         };
 
-    match shiver_core::login::sign_in(origin, &identity, &password).await {
+    match shiver_core::login::sign_in(&origin, &identity, &password).await {
         Ok(session) => {
-            remember_session(app, entry_id, &session);
+            keep_session(app, entry_id, &session, true);
 
-            true
+            Some(session)
         }
         Err(error @ shiver_core::Error::Refused(_)) => {
             eprintln!("[shiver] {origin} refused Shiver's stored password: {error}");
             forget_password(app, entry_id);
 
-            false
+            None
         }
         Err(error) => {
             eprintln!("[shiver] could not reach {origin} to sign in again: {error}");
 
-            false
+            None
         }
     }
 }
@@ -764,6 +859,15 @@ pub fn harvest_token(app: &AppHandle, entry_id: String) {
             return;
         };
 
+        // a page seeded before a background renewal still holds the older session
+        if handle
+            .state::<Inbox>()
+            .token(&entry_id)
+            .is_some_and(|held| jwt::outlasts(&held, &token))
+        {
+            return;
+        }
+
         // off this thread: storing calls into the JVM, which deadlocks from an eval callback
         let (handle, id) = (handle.clone(), entry_id.clone());
 
@@ -792,7 +896,12 @@ fn announce(
     joined: &sharkord::Joined,
     message: &sharkord::NewMessage,
 ) {
-    if app.state::<webview::Showing>().server().as_deref() == Some(entry_id) {
+    if app
+        .state::<webview::Showing>()
+        .kept_by_page(WATCH_GRACE)
+        .as_deref()
+        == Some(entry_id)
+    {
         return;
     }
 
@@ -802,11 +911,24 @@ fn announce(
 
         (
             registry.muted_for(entry_id),
-            registry.server(entry_id).map(|server| server.name.clone()),
+            registry
+                .server(entry_id)
+                .map(|server| (server.name.clone(), server.notify)),
         )
     };
 
-    let (Some(server), Some(line)) = (server, notice(joined, &muted, message)) else {
+    let Some((server, notify)) = server else {
+        return;
+    };
+
+    if !notify.allows(
+        joined.dm_channels.contains(&message.channel_id),
+        message.mentions_me(joined),
+    ) {
+        return;
+    }
+
+    let Some(line) = notice(joined, &muted, message) else {
         return;
     };
 
@@ -858,21 +980,22 @@ fn notice(
 
     let author = clamp(message.author(joined), MAX_AUTHOR);
     let text = clamp(message.body().to_string(), MAX_BODY);
+    let channel = (!joined.dm_channels.contains(&message.channel_id)).then(|| {
+        clamp(
+            joined
+                .channel_names
+                .get(&message.channel_id)
+                .cloned()
+                .unwrap_or_else(|| "a channel".into()),
+            MAX_CHANNEL_NAME,
+        )
+    });
 
-    if joined.dm_channels.contains(&message.channel_id) {
-        return Some(format!("{author}: {text}"));
-    }
-
-    let channel = clamp(
-        joined
-            .channel_names
-            .get(&message.channel_id)
-            .cloned()
-            .unwrap_or_else(|| "a channel".into()),
-        MAX_CHANNEL_NAME,
-    );
-
-    Some(format!("{author} in #{channel}: {text}"))
+    Some(shiver_core::text::notice_line(
+        &author,
+        channel.as_deref(),
+        &text,
+    ))
 }
 
 fn post(app: &AppHandle, id: i32, title: String, announcement: &Announcement) {
@@ -973,6 +1096,7 @@ mod tests {
             user_id: Some(user_id),
             plugin_id: None,
             text: text.to_string(),
+            mentioned: Vec::new(),
         }
     }
 

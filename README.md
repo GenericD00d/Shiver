@@ -38,8 +38,9 @@ will serve you perfectly well.
 - **Seamless sign-in.** Shiver signs in for you and the server opens straight into the app rather
   than onto a login page. Sessions and passwords live in the OS keychain, or
   `EncryptedSharedPreferences` on Android — never in a file, never in plaintext. Keeping the password
-  is the default, because it is what lets Shiver sign itself back in when a session expires
-  (Sharkord's sessions last seven days and cannot be refreshed). The session is handed to a server's
+  is the default, because it is what lets Shiver sign itself in again before a session expires
+  (Sharkord's sessions last seven days and cannot be refreshed), in the background, so opening a
+  server never waits on it. The session is handed to a server's
   page from memory and never written to the webview's storage. **Forget my password** in a server's menu
   removes it.
 - **HTTPS only.** Shiver refuses to add a server, sign in to one, or open a socket over `http://`,
@@ -49,6 +50,8 @@ will serve you perfectly well.
   with the server it is on. It lives on Shiver's own screen rather than inside a server's page,
   which is what keeps one server from being handed the name of everyone you talk to on the others
 - **Per-channel mute** — dimmed in the channel list, no notification, no sound
+- **A notification level per server** — every message, only mentions and direct messages, or
+  only direct messages. Unread badges still count everything
 - **Your colours** applied to Shiver and to each server's client. On the defaults Shiver restyles
   nothing, so servers look exactly as they do in a browser
 - **A sound volume slider that goes to 250%**, for a notification tone that has to carry over a call
@@ -58,10 +61,14 @@ will serve you perfectly well.
 
 **Desktop**
 
-- **One unified notification inbox** behind the bell, across every server
+- **One unified notification inbox** behind the bell, across every server, and a system
+  notification for what arrives while Shiver is not in front (a direct message also flashes the
+  taskbar)
 - **Global voice controls** in the rail, reachable whichever server is on screen. One call at a
   time across all of them
-- **A system-wide shortcut** for muting your microphone
+- **A system-wide shortcut** for muting your microphone, and **Ctrl+1 to 9** and
+  **Ctrl+Alt+Up/Down** to move between servers while Shiver is in front
+- **Close to the tray** and **start at login**, both off until you turn them on
 
 **Android** (8.0 or newer: older versions no longer get WebView security updates)
 
@@ -86,7 +93,8 @@ your other servers.
 
 Needs [Rust](https://rustup.rs), [Bun](https://bun.sh), and a platform toolchain — Visual Studio
 Build Tools plus the WebView2 runtime on Windows, Xcode command line tools on macOS,
-`webkit2gtk-4.1` and friends on Linux. Android additionally needs JDK 17, the SDK and the NDK.
+`webkit2gtk-4.1`, `libayatana-appindicator3` (the tray) and friends on Linux (the CI's
+"Desktop (Linux)" job lists the packages). Android additionally needs JDK 17, the SDK and the NDK.
 
 ```bash
 cd desktop && bun install && bun run app        # run it

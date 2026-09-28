@@ -32,6 +32,11 @@ const SECTIONS = [
 
 type SectionId = (typeof SECTIONS)[number]['id'];
 
+/** How the rail shortcuts read on this system (`CommandOrControl` in hotkey.rs). */
+const IS_MAC = navigator.userAgent.includes('Mac');
+const SHORTCUT_KEY = IS_MAC ? '⌘' : 'Ctrl';
+const ALT_KEY = IS_MAC ? '⌥' : 'Alt';
+
 /** Only on Windows does Shiver ask before a server uses the camera and microphone. */
 const ASKS_FOR_MEDIA = navigator.userAgent.includes('Windows');
 
@@ -270,6 +275,22 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
               <label className="checkbox">
                 <input
                   type="checkbox"
+                  checked={draft.desktopNotifications}
+                  onChange={(event) => update('desktopNotifications', event.target.checked)}
+                />
+                <span>
+                  Show system notifications
+                  <small>
+                    While Shiver is not the window in front, what reaches the bell also shows as a
+                    notification from your system. A direct message flashes Shiver in the taskbar
+                    either way.
+                  </small>
+                </span>
+              </label>
+
+              <label className="checkbox">
+                <input
+                  type="checkbox"
                   checked={draft.notificationSounds}
                   onChange={(event) => update('notificationSounds', event.target.checked)}
                 />
@@ -342,7 +363,7 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
                   <button
                     type="button"
                     className="ghost"
-                    disabled={settings.trustedLinkSites.length === 0}
+                    disabled={settings.trustedLinks.length === 0}
                     onClick={handleForgetLinks}
                   >
                     {linksForgotten ?? 'Always ask again'}
@@ -350,8 +371,8 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
                 </div>
                 <small className="hint">
                   Shiver asks before opening a link a server's page wants opened, since a page can
-                  claim a click that never happened. Sites set to open without asking:{' '}
-                  {settings.trustedLinkSites.length}.
+                  claim a click that never happened. A site set to open without asking does so only
+                  from the server it was set on. Set so far: {settings.trustedLinks.length}.
                 </small>
               </label>
             </>
@@ -395,25 +416,59 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
           ) : null}
 
           {section === 'servers' ? (
-            <label className="field">
-              <span>Servers kept loaded</span>
-              <div className="field-row">
+            <>
+              <p className="hint">
+                {SHORTCUT_KEY}+1 to {SHORTCUT_KEY}+9 open the rail's servers in order, and{' '}
+                {SHORTCUT_KEY}+{ALT_KEY}+↑ or ↓ the one above or below, while Shiver is in front.
+              </p>
+
+              <label className="checkbox">
                 <input
-                  type="range"
-                  min={MIN_PAGES_KEPT}
-                  max={MAX_PAGES_KEPT}
-                  step={1}
-                  value={draft.pagesKept}
-                  onChange={(event) => update('pagesKept', Number(event.target.value))}
+                  type="checkbox"
+                  checked={draft.closeToTray}
+                  onChange={(event) => update('closeToTray', event.target.checked)}
                 />
-                <output className="volume-readout">{draft.pagesKept}</output>
-              </div>
-              <small className="hint">
-                How many servers keep a client running. A loaded one switches to instantly; the rest
-                start when you open them. This is memory rather than taste — roughly a browser tab
-                each. <strong>Notifications are unaffected.</strong>
-              </small>
-            </label>
+                <span>
+                  Close to the tray
+                  <small>
+                    Closing the window leaves Shiver running behind an icon in the tray, so servers
+                    stay connected and notifications keep coming. Quit from the icon's menu.
+                  </small>
+                </span>
+              </label>
+
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={draft.startAtLogin}
+                  onChange={(event) => update('startAtLogin', event.target.checked)}
+                />
+                <span>
+                  Start Shiver when you sign in
+                  <small>It starts minimised, or in the tray when it closes there.</small>
+                </span>
+              </label>
+
+              <label className="field">
+                <span>Servers kept loaded</span>
+                <div className="field-row">
+                  <input
+                    type="range"
+                    min={MIN_PAGES_KEPT}
+                    max={MAX_PAGES_KEPT}
+                    step={1}
+                    value={draft.pagesKept}
+                    onChange={(event) => update('pagesKept', Number(event.target.value))}
+                  />
+                  <output className="volume-readout">{draft.pagesKept}</output>
+                </div>
+                <small className="hint">
+                  How many servers keep a client running. A loaded one switches to instantly; the rest
+                  start when you open them. This is memory rather than taste — roughly a browser tab
+                  each. <strong>Notifications are unaffected.</strong>
+                </small>
+              </label>
+            </>
           ) : null}
         </div>
       </div>

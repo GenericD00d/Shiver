@@ -21,11 +21,12 @@ use shiver_core::LockExt;
 use tauri::{async_runtime::JoinHandle, AppHandle, Manager, Runtime};
 
 use crate::{
-    commands, drain,
+    drain,
     drain::Readiness,
-    feed::{DmChannel, Feed, RawNotification},
+    feed::{DmChannel, Feed, RawNotification, Route},
     model::ServerEntry,
     secrets::{self, Secret},
+    session,
     store::{RegistryStore, Store},
     webviews,
 };
@@ -240,7 +241,7 @@ struct Watch {
 impl sharkord::Watcher for Watch {
     async fn target(&mut self) -> Option<sharkord::Target> {
         // asked each attempt, which is what renews an expiring session
-        let Some(token) = commands::ensure_session(&self.entry).await else {
+        let Some(token) = session::token(&self.app, &self.entry).await else {
             eprintln!(
                 "[shiver] no session for {}; not watched until signed in",
                 self.entry.origin
@@ -273,7 +274,7 @@ impl sharkord::Watcher for Watch {
     }
 
     async fn refused(&mut self, refusals: u32) -> bool {
-        // dropped so `ensure_session` signs in afresh
+        // dropped so `session::token` signs in afresh
         let _ = secrets::forget_off_thread(Secret::Session, &self.entry.id).await;
 
         if refusals >= MAX_REFUSALS {
@@ -301,12 +302,7 @@ fn on_joined(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
 
     // counted only on the first join of the run; a reconnect re-reads messages already in the feed
     if !app.state::<ReadStates>().knows(entry_id) {
-        count_missed(
-            app,
-            entry_id,
-            &joined.read_states,
-            joined.shared_floor.clone(),
-        );
+        count_missed(app, entry_id, joined);
     }
 
     app.state::<Plugins>()
@@ -372,10 +368,20 @@ fn recount<R: Runtime>(app: &AppHandle<R>, entry_id: &str) -> bool {
 }
 
 /// A channel the user is looking at (or read elsewhere) is read: clear it and lower the badge.
+/// Called on every drain of the page being read, so nothing is recounted unless it was unread.
 pub fn channel_read<R: Runtime>(app: &AppHandle<R>, entry_id: &str, channel_id: i64) {
-    app.state::<ReadStates>()
-        .apply(entry_id, |states| states.remove(&channel_id));
+    let was_unread = app
+        .state::<ReadStates>()
+        .apply(entry_id, |states| states.remove(&channel_id))
+        .is_some();
 
+    if was_unread && recount(app, entry_id) {
+        drain::notify_feed_changed(app);
+    }
+}
+
+/// An entry's mutes changed: a newly muted channel no longer counts toward its badge.
+pub fn mutes_changed<R: Runtime>(app: &AppHandle<R>, entry_id: &str) {
     if recount(app, entry_id) {
         drain::notify_feed_changed(app);
     }
@@ -417,33 +423,26 @@ pub fn publish_floor(app: &AppHandle, entry_id: &str) {
     }
 }
 
-/// On the first join of a run: the missed count against the floor (the plugin's shared floor wins
-/// over the local one). With no floor at all, this join becomes the floor and nothing is counted, so
-/// a newly added server's backlog is not announced as unread.
-fn count_missed<R: Runtime>(
-    app: &AppHandle<R>,
-    entry_id: &str,
-    read_states: &HashMap<i64, u32>,
-    shared: Option<HashMap<i64, u32>>,
-) {
+/// On the first join of a run: the missed count against the floor (`sharkord::choose_floor`, which
+/// is also kept as this device's floor when it changed). With no floor at all this join becomes
+/// it, and nothing is counted.
+fn count_missed<R: Runtime>(app: &AppHandle<R>, entry_id: &str, joined: &sharkord::Joined) {
     let store = app.state::<Store>();
     let local = store.registry().baselines.get(entry_id).cloned();
-
-    let Some(baseline) = shared.or(local) else {
-        let states = read_states.clone();
-        let _ = store.update(|registry| {
-            registry.baselines.insert(entry_id.to_string(), states);
-
-            Ok(())
-        });
-
-        return;
-    };
+    let (floor, changed) = sharkord::choose_floor(joined, local.as_ref());
 
     app.state::<Missed>().set(
         entry_id,
-        sharkord::unread_total(read_states, &baseline, &muted_set(app, entry_id)) as usize,
+        sharkord::unread_total(&joined.read_states, &floor, &muted_set(app, entry_id)) as usize,
     );
+
+    if changed {
+        let _ = store.update(|registry| {
+            registry.baselines.insert(entry_id.to_string(), floor);
+
+            Ok(())
+        });
+    }
 }
 
 /// Hands the join's conversation list to the inbox.
@@ -490,30 +489,33 @@ fn announce(
         return;
     }
 
-    let Some(server_name) = app
+    let Some((server_name, notify)) = app
         .state::<Store>()
         .registry()
         .server(entry_id)
-        .map(|entry| entry.name.clone())
+        .map(|entry| (entry.name.clone(), entry.notify))
     else {
         return;
     };
 
+    let is_dm = joined.dm_channels.contains(&message.channel_id);
     let raw = RawNotification {
         channel_id: Some(message.channel_id),
         channel_name: joined.channel_names.get(&message.channel_id).cloned(),
         author: message.author(joined),
         body: message.body().to_string(),
         icon_url: None,
-        is_dm: joined.dm_channels.contains(&message.channel_id),
+        is_dm,
     };
 
-    let muted = muted_set(app, entry_id).contains(&message.channel_id);
+    let muted = muted_set(app, entry_id).contains(&message.channel_id)
+        || !notify.allows(is_dm, message.mentions_me(joined));
 
-    if app
-        .state::<Feed>()
-        .push(entry_id, &server_name, None, raw, muted)
+    if let Some(notification) =
+        app.state::<Feed>()
+            .push(entry_id, &server_name, None, (raw, Route::Socket), muted)
     {
+        crate::notify::announce(app, &notification);
         drain::notify_feed_changed(app);
     }
 }
@@ -541,11 +543,11 @@ fn report_too_large(app: &AppHandle, entry_id: &str, size: usize) {
 
     let size = sharkord::readable_size(size);
 
-    app.state::<Feed>().push(
+    let _ = app.state::<Feed>().push(
         entry_id,
         &name,
         None,
-        RawNotification {
+        (RawNotification {
             channel_id: None,
             channel_name: None,
             author: "Shiver".into(),
@@ -555,7 +557,7 @@ fn report_too_large(app: &AppHandle, entry_id: &str, size: usize) {
             ),
             icon_url: None,
             is_dm: false,
-        },
+        }, Route::Socket),
         false,
     );
 

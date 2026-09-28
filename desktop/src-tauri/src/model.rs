@@ -44,6 +44,9 @@ pub struct ServerEntry {
     /// the user let this server's page use the camera and microphone
     #[serde(default)]
     pub media_allowed: bool,
+    /// which of its messages notify
+    #[serde(default)]
+    pub notify: shiver_core::model::NotifyLevel,
 }
 
 impl ServerEntry {
@@ -67,6 +70,15 @@ pub struct Settings {
     /// Shiver plays the ping itself (so muted channels stay silent) instead of each page
     #[serde(default = "default_true")]
     pub notification_sounds: bool,
+    /// a system notification for what reaches the feed while the window is not in front
+    #[serde(default = "default_true")]
+    pub desktop_notifications: bool,
+    /// closing the window hides it to a tray icon, and servers stay connected
+    #[serde(default)]
+    pub close_to_tray: bool,
+    /// the system starts Shiver at login, out of the way
+    #[serde(default)]
+    pub start_at_login: bool,
     /// percent; above 100 works because both Shiver and Sharkord synthesise sounds via Web Audio
     #[serde(default = "default_sound_volume")]
     pub sound_volume: u16,
@@ -84,9 +96,10 @@ pub struct Settings {
     /// how many servers keep a live page; the rest are watched over a socket
     #[serde(default = "default_pages_kept")]
     pub pages_kept: u8,
-    /// sites whose links from server pages open without asking (`shiver_core::links`)
+    /// sites whose links open without asking, each from one server's pages (`shiver_core::links`);
+    /// replaces `trustedLinkSites` (trusted from every server), which is dropped
     #[serde(default)]
-    pub trusted_link_sites: Vec<String>,
+    pub trusted_links: Vec<shiver_core::links::TrustedLink>,
 }
 
 pub const DEFAULT_PAGES_KEPT: u8 = 3;
@@ -104,13 +117,16 @@ impl Default for Settings {
             accent_color: DEFAULT_ACCENT_COLOR.into(),
             text_color: None,
             notification_sounds: true,
+            desktop_notifications: true,
+            close_to_tray: false,
+            start_at_login: false,
             sound_volume: default_sound_volume(),
             minimise_attachments: true,
             last_server_id: None,
             mute_hotkey: None,
             pages_kept: DEFAULT_PAGES_KEPT,
             skipped_update: None,
-            trusted_link_sites: Vec::new(),
+            trusted_links: Vec::new(),
         }
     }
 }
@@ -146,4 +162,26 @@ pub struct Registry {
     /// only what arrives above this floor, so a server's old backlog is not "unread".
     #[serde(default)]
     pub baselines: HashMap<String, HashMap<i64, u32>>,
+}
+
+/// The registry as Shiver's own pages see it: without the floors, which only the core reads and
+/// which grow with every channel of every server.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryView {
+    pub servers: Vec<ServerEntry>,
+    pub folders: Vec<Folder>,
+    pub settings: Settings,
+    pub muted: Vec<MutedChannel>,
+}
+
+impl Registry {
+    pub fn view(&self) -> RegistryView {
+        RegistryView {
+            servers: self.servers.clone(),
+            folders: self.folders.clone(),
+            settings: self.settings.clone(),
+            muted: self.muted.clone(),
+        }
+    }
 }

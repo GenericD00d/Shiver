@@ -21,3 +21,8 @@ pub fn channel_viewed<R: Runtime>(app: &AppHandle<R>, entry_id: &str, channel_id
 pub fn is_on_screen<R: Runtime>(app: &AppHandle<R>, entry_id: &str) -> bool {
     app.state::<ActiveServer>().is_on_screen(entry_id)
 }
+
+/// On screen in a window that is not minimised, so the channel it shows counts as read.
+pub fn is_being_read<R: Runtime>(app: &AppHandle<R>, entry_id: &str) -> bool {
+    app.state::<ActiveServer>().is_being_read(entry_id)
+}

@@ -1,8 +1,8 @@
-import type { Folder, MutedChannel, ServerCheck, ServerInfo } from '../../shared/web/types';
+import type { Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink } from '../../shared/web/types';
 
 export { DEFAULT_ACCENT_COLOR, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME } from '../../shared/web/settings';
 
-export type { Folder, MutedChannel, ServerCheck, ServerInfo };
+export type { Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink };
 
 export type ServerEntry = {
   id: string;
@@ -13,6 +13,8 @@ export type ServerEntry = {
   accountLabel: string | null;
   folderId: string | null;
   position: number;
+  /** which of its messages notify */
+  notify: NotifyLevel;
 };
 
 /** `FeedSummary` in feed.rs: sent with every feed change. */
@@ -71,6 +73,12 @@ export type Settings = {
   /** the colour text is drawn in, or null to take it from the background */
   textColor: string | null;
   notificationSounds: boolean;
+  /** a system notification for what reaches the feed while the window is not in front */
+  desktopNotifications: boolean;
+  /** closing the window hides it to a tray icon */
+  closeToTray: boolean;
+  /** the system starts Shiver at login */
+  startAtLogin: boolean;
   /**
    * How loud Shiver's own ping and each server's own sounds are, as a percentage of what they would
    * otherwise be. Goes past 100: see `sound_volume` in model.rs for why that is possible at all.
@@ -79,8 +87,8 @@ export type Settings = {
   /** shrink the file card under a picture down to its icon; see `minimise_attachments` in model.rs */
   minimiseAttachments: boolean;
   lastServerId: string | null;
-  /** sites whose links from server pages open without asking */
-  trustedLinkSites: string[];
+  /** sites whose links open without asking, each from one server's pages */
+  trustedLinks: TrustedLink[];
   /** a system-wide shortcut that mutes the microphone, in Tauri's accelerator form */
   muteHotkey: string | null;
   /** how many servers keep a live page rather than a socket; see `pages_kept` in model.rs */

@@ -1,0 +1,20 @@
+# Weekly: whether Sharkord's latest source still has what the bridges match (test ids, storage keys,
+# classes, notification titles). A failure here means a coming Sharkord release will break a
+# bridge; `checks.yml` runs the same check at the commit the bridges were last checked against.
+name: Sharkord drift
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Bridges against Sharkord's latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: python3 scripts/check-sharkord.py --latest

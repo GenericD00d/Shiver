@@ -286,6 +286,73 @@ test('deliveries in flight are capped server-wide', async () => {
   assert.equal(sends, 1);
 });
 
+test('wake-ups past the cap wait for a free slot, oldest first', async () => {
+  const sent = [];
+  const pending = [];
+  const { push } = await pushFor(subscribed(), {
+    send: ({ url }) => (sent.push(url.href), new Promise((resolve) => pending.push(() => resolve(200)))),
+    maxInFlight: 1
+  });
+
+  await push.onMessage({ userId: 7, channelId: 4 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(sent, ['https://relay.example/one']);
+
+  pending.shift()();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(sent, ['https://relay.example/one', 'https://relay.example/two']);
+});
+
+test('queued wake-ups are bounded and skip endpoints unregistered meanwhile', async () => {
+  const sent = [];
+  const pending = [];
+  const ctx = fakeCtx({
+    1: { pushEndpoints: ['https://relay.example/one'] },
+    2: { pushEndpoints: ['https://relay.example/two'] },
+    3: { pushEndpoints: ['https://relay.example/three'] },
+    4: { pushEndpoints: ['https://relay.example/four'] }
+  });
+  const { push } = await pushFor(ctx, {
+    send: ({ url }) => (sent.push(url.href), new Promise((resolve) => pending.push(() => resolve(200)))),
+    maxInFlight: 1,
+    maxQueued: 2
+  });
+
+  await push.onMessage({ userId: 7, channelId: 4 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await push.unregister(2);
+
+  while (pending.length) {
+    pending.shift()();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  assert.deepEqual(sent, ['https://relay.example/one', 'https://relay.example/three']);
+});
+
+test('registering the newest endpoint again costs no lookup or write', async () => {
+  const ctx = fakeCtx({});
+  let lookups = 0;
+  let writes = 0;
+  const rows = createRows(ctx);
+  const push = createPush(ctx, rows, { lookup: (...args) => ((lookups += 1), publicLookup(...args)) });
+  const set = ctx.userData.set;
+
+  ctx.userData.set = (...args) => ((writes += 1), set(...args));
+
+  assert.deepEqual(await push.register(1, 'https://relay.example/one'), ['https://relay.example/one']);
+  assert.deepEqual(await push.register(1, 'https://relay.example/one#again'), ['https://relay.example/one']);
+  assert.equal(lookups, 1);
+  assert.equal(writes, 1);
+
+  // an older one moves to the front, which is a change
+  await push.register(1, 'https://relay.example/two');
+  assert.deepEqual(await push.register(1, 'https://relay.example/one'), ['https://relay.example/one', 'https://relay.example/two']);
+  assert.equal(lookups, 3);
+});
+
 test('clearing an endpoint forgets only that one, however it is written', async () => {
   const ctx = fakeCtx({ 1: { pushEndpoints: ['https://relay.example/one', 'https://relay.example/two'], status: 'hi' } });
   const { push } = await pushFor(ctx);
@@ -357,6 +424,28 @@ test('writes through the actions are rate limited per user', async () => {
   await actions.get('setMutedChannels')({ userId: 1 }, { mutedChannels: [4] });
   await assert.rejects(actions.get('clearPushEndpoint')({ userId: 1 }, {}), /Too many/);
   assert.deepEqual(await floor(2), { ok: true });
+  await onUnload(ctx, { quiet: true });
+});
+
+test('reads through the actions are rate limited per user', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'shiver-plugin-'));
+  const actions = new Map();
+  const ctx = {
+    ...fakeCtx({ 1: { mutedChannels: [4] } }),
+    dataPath: dir,
+    path: dir,
+    ui: { enable: () => {} },
+    actions: { register: ({ name, executes }) => actions.set(name, executes) },
+    hooks: { onBeforeFileSave: () => () => {} },
+    events: { on: () => () => {} }
+  };
+
+  await onLoad(ctx);
+
+  for (let index = 0; index < 59; index += 1) await actions.get('getStatuses')({ userId: 1 });
+  assert.deepEqual(await actions.get('getMutedChannels')({ userId: 1 }), { mutedChannels: [4] });
+  await assert.rejects(actions.get('getOwnStatus')({ userId: 1 }), /Too many/);
+  assert.deepEqual(await actions.get('getMutedChannels')({ userId: 2 }), { mutedChannels: [] });
   await onUnload(ctx, { quiet: true });
 });
 

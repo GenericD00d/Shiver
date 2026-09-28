@@ -16,11 +16,18 @@ pub trait RailServer {
     fn set_position(&mut self, position: i32);
 }
 
+/// What a top-level rail item is. Anything else is refused where the frontend's order is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RailKind {
+    Server,
+    Folder,
+}
+
 /// One top-level rail item, as the frontends report their order.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RailRef {
-    /// `server` or `folder`
-    pub kind: String,
+    pub kind: RailKind,
     pub id: String,
 }
 
@@ -227,22 +234,43 @@ impl<S: RailServer> Rail<'_, S> {
 
     /// Puts one top-level item at `position`.
     pub fn place(&mut self, item: &RailRef, position: i32) -> Result<()> {
-        match item.kind.as_str() {
-            "folder" => self.folder_mut(&item.id)?.position = position,
-            "server" => self.server_mut(&item.id)?.set_position(position),
-            other => {
-                return Err(Error::InvalidInput(format!(
-                    "'{other}' is not a kind of rail item"
-                )))
-            }
+        match item.kind {
+            RailKind::Folder => self.folder_mut(&item.id)?.position = position,
+            RailKind::Server => self.server_mut(&item.id)?.set_position(position),
         }
 
         Ok(())
     }
 
-    /// Numbers the top level in the given order.
+    /// Numbers the top level in the given order. Items the order leaves out (it came from a view
+    /// older than the registry) follow, in the order they had, rather than sharing a number.
     pub fn reorder(&mut self, ordered: &[RailRef]) -> Result<()> {
-        for (index, item) in ordered.iter().enumerate() {
+        let listed = |kind: RailKind, id: &str| {
+            ordered
+                .iter()
+                .any(|item| item.kind == kind && item.id == id)
+        };
+        let mut rest: Vec<(i32, RailRef)> = self
+            .servers
+            .iter()
+            .filter(|server| server.folder_id().is_none() && !listed(RailKind::Server, server.id()))
+            .map(|server| (server.position(), RailKind::Server, server.id().to_string()))
+            .chain(
+                self.folders
+                    .iter()
+                    .filter(|folder| !listed(RailKind::Folder, &folder.id))
+                    .map(|folder| (folder.position, RailKind::Folder, folder.id.clone())),
+            )
+            .map(|(position, kind, id)| (position, RailRef { kind, id }))
+            .collect();
+
+        rest.sort_by_key(|(position, _)| *position);
+
+        for (index, item) in ordered
+            .iter()
+            .chain(rest.iter().map(|(_, item)| item))
+            .enumerate()
+        {
             self.place(item, index as i32)?;
         }
 
@@ -491,17 +519,51 @@ mod tests {
         ));
         assert!(matches!(
             rail.reorder(&[RailRef {
-                kind: "server".into(),
+                kind: RailKind::Server,
                 id: "zz".into()
             }]),
             Err(Error::UnknownServer)
         ));
-        assert!(matches!(
-            rail.reorder(&[RailRef {
-                kind: "tile".into(),
-                id: "a".into()
-            }]),
-            Err(Error::InvalidInput(_))
-        ));
+        assert!(serde_json::from_str::<RailRef>(r#"{"kind":"tile","id":"a"}"#).is_err());
+        assert_eq!(
+            serde_json::from_str::<RailRef>(r#"{"kind":"folder","id":"f"}"#)
+                .unwrap()
+                .kind,
+            RailKind::Folder
+        );
+    }
+
+    #[test]
+    fn items_an_order_leaves_out_follow_it_in_their_old_order() {
+        let mut servers = vec![
+            at("a", None, 0),
+            at("b", None, 1),
+            at("c", None, 2),
+            at("in", Some("f"), 0),
+        ];
+        let mut folders = vec![folder("f", 3)];
+        let mut rail = Rail {
+            servers: &mut servers,
+            folders: &mut folders,
+        };
+        let server = |id: &str| RailRef {
+            kind: RailKind::Server,
+            id: id.into(),
+        };
+
+        rail.reorder(&[server("c"), server("a")]).unwrap();
+
+        let position = |id: &str| servers.iter().find(|s| s.id == id).unwrap().position;
+
+        assert_eq!(
+            (
+                position("c"),
+                position("a"),
+                position("b"),
+                folders[0].position
+            ),
+            (0, 1, 2, 3)
+        );
+        assert_eq!(position("in"), 0, "a folder's servers keep their own order");
     }
 }

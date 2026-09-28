@@ -1,4 +1,4 @@
-import type { ServerEntry } from '../types';
+import type { NotifyLevel, ServerEntry } from '../types';
 import { initials } from '../../../shared/web/rail';
 
 type Props = {
@@ -20,7 +20,15 @@ type Props = {
    */
   plugins: Record<string, string | null>;
   onSignIn: (id: string) => void;
+  onNotifyLevel: (id: string, level: NotifyLevel) => void;
 };
+
+/** What each level lets through, as the picker words it. */
+const NOTIFY_LEVELS: { level: NotifyLevel; label: string }[] = [
+  { level: 'all', label: 'All messages' },
+  { level: 'mentions', label: 'Mentions and DMs' },
+  { level: 'dms', label: 'DMs only' }
+];
 
 
 /** Managing the server list, under settings (the rail is the switcher). */
@@ -34,12 +42,13 @@ export const ServerList = ({
   remembered,
   plugins,
   onSignIn,
-  onAcceptAnySize
+  onAcceptAnySize,
+  onNotifyLevel
 }: Props) => (
   <>
     <ul className="servers">
       {servers.map((server) => (
-        <li key={server.id} className={problems[server.id] ? "has-problem" : undefined}>
+        <li key={server.id}>
           <button type="button" className="server" onClick={() => onOpen(server.id)}>
             {server.icon ? (
               <img src={server.icon} alt="" />
@@ -119,6 +128,20 @@ export const ServerList = ({
           {problems[server.id] ? (
             <span className="server-problem">{problems[server.id]}</span>
           ) : null}
+
+          <label className="server-notify">
+            <span>Notifications</span>
+            <select
+              value={server.notify}
+              onChange={(event) => onNotifyLevel(server.id, event.target.value as NotifyLevel)}
+            >
+              {NOTIFY_LEVELS.map(({ level, label }) => (
+                <option key={level} value={level}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
         </li>
       ))}
     </ul>

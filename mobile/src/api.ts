@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   DmEntry,
   Folder,
+  NotifyLevel,
   PushStatus,
   ServerCheck,
   Registry,
@@ -92,6 +93,8 @@ export const api = {
 
   setAcceptAnySize: (id: string, accept: boolean) =>
     invoke<void>('set_accept_any_size', { id, accept }),
+  /** which of a server's messages notify */
+  setNotifyLevel: (id: string, level: NotifyLevel) => invoke<void>('set_notify_level', { id, level }),
   pushStatus: () => invoke<PushStatus>('push_status'),
   setPushServer: (entryId: string, wanted: boolean) =>
     invoke<void>('set_push_server', { entryId, wanted }),

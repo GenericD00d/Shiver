@@ -17,6 +17,15 @@ pub fn clamp(text: String, limit: usize) -> String {
     }
 }
 
+/// One message as a notification line: `author in #channel: text`, or `author: text` in a DM (no
+/// channel). Both clients' system notifications read this way.
+pub fn notice_line(author: &str, channel: Option<&str>, text: &str) -> String {
+    match channel {
+        Some(channel) => format!("{author} in #{channel}: {text}"),
+        None => format!("{author}: {text}"),
+    }
+}
+
 /// A server's words made safe for Shiver's own panels: one line, no control characters, no links,
 /// no bidi tricks, bounded; `None` when nothing is left.
 pub fn presentable(message: &str) -> Option<String> {
@@ -79,5 +88,14 @@ mod tests {
         assert_eq!(clamp("héllo".into(), 2), "hé…");
         assert_eq!(clamp("hi".into(), 2), "hi");
         assert_eq!(clamp("ad\u{202e}n\u{200b}imda".into(), 5), "adnim…");
+    }
+
+    #[test]
+    fn a_notice_says_who_where_and_what() {
+        assert_eq!(
+            notice_line("Ana", Some("general"), "hi"),
+            "Ana in #general: hi"
+        );
+        assert_eq!(notice_line("Ana", None, "hi"), "Ana: hi");
     }
 }
