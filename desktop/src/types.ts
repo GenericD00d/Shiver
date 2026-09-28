@@ -1,8 +1,8 @@
-import type { Folder, MutedChannel, ServerCheck, ServerInfo, TrustedLink } from '../../shared/web/types';
+import type { Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink } from '../../shared/web/types';
 
 export { DEFAULT_ACCENT_COLOR, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME } from '../../shared/web/settings';
 
-export type { Folder, MutedChannel, ServerCheck, ServerInfo, TrustedLink };
+export type { Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink };
 
 export type ServerEntry = {
   id: string;
@@ -13,6 +13,8 @@ export type ServerEntry = {
   accountLabel: string | null;
   folderId: string | null;
   position: number;
+  /** which of its messages notify */
+  notify: NotifyLevel;
 };
 
 /** `FeedSummary` in feed.rs: sent with every feed change. */

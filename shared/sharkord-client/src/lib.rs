@@ -97,12 +97,21 @@ pub struct NewMessage {
     pub plugin_id: Option<String>,
     /// the message as plain text
     pub text: String,
+    /// the users it mentions
+    pub mentioned: Vec<i64>,
 }
 
 impl NewMessage {
     /// Whether the user wrote it themselves.
     pub fn is_own(&self, joined: &Joined) -> bool {
         self.user_id.is_some() && self.user_id == joined.own_user_id
+    }
+
+    /// Whether it mentions the user.
+    pub fn mentions_me(&self, joined: &Joined) -> bool {
+        joined
+            .own_user_id
+            .is_some_and(|own| self.mentioned.contains(&own))
     }
 
     /// Who wrote it: a plugin by its id, a user by the name the join gave them.
@@ -362,6 +371,8 @@ fn parse_shared_floor(stored: &Value) -> Option<HashMap<i64, u32>> {
 }
 
 fn parse_message(data: &Value) -> Option<Event> {
+    let content = data.get("content").and_then(Value::as_str).unwrap_or("");
+
     Some(Event::Posted(NewMessage {
         channel_id: data.get("channelId").and_then(Value::as_i64)?,
         user_id: data.get("userId").and_then(Value::as_i64),
@@ -369,8 +380,40 @@ fn parse_message(data: &Value) -> Option<Event> {
             .get("pluginId")
             .and_then(Value::as_str)
             .map(str::to_string),
-        text: plain_text(data.get("content").and_then(Value::as_str).unwrap_or("")),
+        text: plain_text(content),
+        mentioned: mentioned(content),
     }))
+}
+
+/// Mentioned users won't be many; a message listing more is not read further.
+const MAX_MENTIONS: usize = 100;
+
+/// The users a message's html mentions: `<span>`s carrying both `data-type="mention"` and
+/// `data-user-id="<id>"`, in either order (Sharkord's own `hasMention` reads them the same way).
+fn mentioned(html: &str) -> Vec<i64> {
+    let attribute = |tag: &str, name: &str| -> Option<String> {
+        tag.match_indices(name).find_map(|(at, _)| {
+            if !tag[..at].ends_with(char::is_whitespace) {
+                return None;
+            }
+
+            let value = tag[at + name.len()..].strip_prefix("=\"")?;
+
+            Some(value[..value.find('"')?].to_string())
+        })
+    };
+
+    html.match_indices("<span")
+        .filter_map(|(at, _)| {
+            let tag = &html[at..];
+            let tag = &tag[..tag.find('>')?];
+
+            (attribute(tag, "data-type").as_deref() == Some("mention"))
+                .then(|| attribute(tag, "data-user-id")?.parse().ok())
+                .flatten()
+        })
+        .take(MAX_MENTIONS)
+        .collect()
 }
 
 /// A read-state frame: `delta` for a new message, `count` for a read.
@@ -1095,10 +1138,60 @@ mod tests {
                 channel_id: 8,
                 user_id: Some(52737),
                 plugin_id: None,
-                text: "shape check".into()
+                text: "shape check".into(),
+                mentioned: Vec::new(),
             }))
         );
         assert_eq!(parse_message(&serde_json::json!({ "content": "hi" })), None);
+    }
+
+    /// Sharkord's own `hasMention` cases.
+    #[test]
+    fn mentions_are_read_as_sharkord_reads_them() {
+        let one = |html: &str| mentioned(html);
+
+        assert_eq!(
+            one(r#"<p>Hi <span data-type="mention" data-user-id="123">@a</span></p>"#),
+            [123]
+        );
+        assert_eq!(
+            one(
+                r#"<p><span class="mention" data-user-id="12" data-type="mention">@a</span> and <span data-type="mention" data-user-id="456">@b</span></p>"#
+            ),
+            [12, 456]
+        );
+
+        for html in [
+            "<p>Hello world</p>",
+            r#"<span data-type="mention">@a</span>"#,
+            r#"<span data-type="mention" data-user-id="abc">@a</span>"#,
+            r#"<span data-type="link" data-user-id="1">x</span>"#,
+            r#"<span xdata-type="mention" data-user-id="1">x</span>"#,
+            r#"<span data-typex="y" data-type="link" data-user-id="1">x</span>"#,
+            r#"<p data-type="mention" data-user-id="1">x</p>"#,
+            r#"<span data-type="mention" data-user-id="1""#,
+        ] {
+            assert!(one(html).is_empty(), "{html}");
+        }
+
+        let joined = Joined {
+            own_user_id: Some(123),
+            ..Joined::default()
+        };
+        let message = NewMessage {
+            channel_id: 1,
+            user_id: Some(9),
+            plugin_id: None,
+            text: String::new(),
+            mentioned: vec![1234, 123],
+        };
+
+        assert!(message.mentions_me(&joined));
+        assert!(!NewMessage {
+            mentioned: vec![12],
+            ..message
+        }
+        .mentions_me(&joined));
     }
 
     #[test]

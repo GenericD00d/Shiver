@@ -58,6 +58,7 @@ pub fn run() {
             commands::select_server,
             commands::sign_in_server,
             commands::set_accept_any_size,
+            commands::set_notify_level,
             commands::app_version,
             commands::update_settings,
             commands::forget_trusted_links,

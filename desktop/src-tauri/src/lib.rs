@@ -153,6 +153,7 @@ pub fn run() {
             commands::feed_summary,
             commands::unread_counts,
             commands::set_accept_any_size,
+            commands::set_notify_level,
             commands::mark_server_read,
             commands::mark_notifications_read,
             commands::clear_notifications,

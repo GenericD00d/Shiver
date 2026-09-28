@@ -30,7 +30,9 @@ import {
   installMuteStyles,
   markAllChannelsRead,
   NARROW,
+  notificationFlags,
   notificationTarget,
+  notifyAllows,
   paintMuted,
   readDms,
   rowName,
@@ -43,6 +45,7 @@ import {
   watchStore
 } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme, type ShiverTheme } from '../../shared/web/bridge/theme';
+import type { NotifyLevel } from '../../shared/web/types';
 import { AUTO_LOGIN, AUTO_LOGIN_TOKEN, installSessionShim } from '../../shared/web/session';
 
 type ShiverConfig = {
@@ -60,6 +63,8 @@ type ShiverConfig = {
   minimiseAttachments: boolean;
   /** percentage of Sharkord's own sound level */
   soundVolume: number;
+  /** which of this server's messages notify */
+  notify: NotifyLevel;
 };
 
 type QueuedNotification = {
@@ -120,6 +125,8 @@ declare global {
     __SHIVER_SET_VOICE_LOCK__?: (locked: boolean) => void;
     __SHIVER_VOICE__?: (action: VoiceAction) => void;
     __SHIVER_MARK_ALL_READ__?: () => void;
+    /** the user changed which of this server's messages notify */
+    __SHIVER_SET_NOTIFY__?: (level: NotifyLevel) => void;
   }
 }
 
@@ -144,7 +151,7 @@ const isFullscreen = () => !!nativeFullscreenElement && nativeApply(nativeFullsc
 
 function install(shiver: ShiverConfig) {
   seedSession(shiver.token);
-  seedDefaults();
+  seedDefaults(shiver.notify);
 
   // prototype patches, which must be in place before the page's scripts; the volume first, since
   // the ping filter captures the patched `connect`
@@ -157,6 +164,9 @@ function install(shiver: ShiverConfig) {
   let dmsSignature = '';
   let syncedMutes: number[] | null = null;
   let openDmFailed = false;
+  let notify = shiver.notify;
+  /** set when the level changes on a loaded page, whose Sharkord read its switches at load */
+  let notifyChangedLive = false;
   const queue: QueuedNotification[] = [];
   const openQueue: string[] = [];
   const muteQueue: QueuedMute[] = [];
@@ -181,6 +191,13 @@ function install(shiver: ShiverConfig) {
   });
   defineHook('__SHIVER_VOICE__', runVoiceAction);
   defineHook('__SHIVER_MARK_ALL_READ__', markAllChannelsRead);
+  defineHook('__SHIVER_SET_NOTIFY__', (level) => {
+    if (level !== 'all' && level !== 'mentions' && level !== 'dms') return;
+
+    notify = level;
+    notifyChangedLive = true;
+    writeStorage(notificationFlags(level), true);
+  });
 
   let reported = '';
 
@@ -231,6 +248,11 @@ function install(shiver: ShiverConfig) {
 
       if (muted.has(channelId)) return;
     }
+
+    // Sharkord applied the level it loaded with exactly; one changed since is guessed from the text
+    const mentionsMe = !notifyChangedLive || mentionsName(options?.body ?? '', ownName(state));
+
+    if (!notifyAllows(notify, isDm, mentionsMe)) return;
 
     queue.push({ channelId, channelName, author, body: options?.body ?? '', iconUrl: options?.icon ?? null, isDm });
   });
@@ -307,27 +329,30 @@ function seedSession(token: string | null) {
 }
 
 /**
- * Sharkord settings Shiver depends on, written only when absent so the user's own choices stand:
- * browser notifications on (Shiver's feed is built from them; mention-only off, since Shiver
- * filters with its own mutes) and rejoining the last channel on connect.
+ * Sharkord settings Shiver depends on: rejoining the last channel on connect, and its notification
+ * switches (Shiver's feed is built from its notifications; mention-only off, since Shiver filters
+ * with its own mutes). At the "all" level they are written only when absent, so choices made in
+ * Sharkord's own settings stand; another level is Shiver's to keep, so it is written every load.
  */
-function seedDefaults() {
-  const defaults: Record<string, string> = {
-    'sharkord-browser-notifications': 'true',
-    'sharkord-browser-notifications-for-dms': 'true',
-    'sharkord-browser-notifications-for-replies': 'true',
-    'sharkord-browser-notifications-for-mentions': 'false',
-    'sharkord-auto-join-last-channel': 'true'
-  };
+function seedDefaults(level: NotifyLevel) {
+  writeStorage({ 'sharkord-auto-join-last-channel': 'true' }, false);
+  writeStorage(notificationFlags(level), level !== 'all');
+}
 
+function writeStorage(values: Record<string, string>, overwrite: boolean) {
   try {
-    for (const [key, value] of Object.entries(defaults)) {
-      if (localStorage.getItem(key) === null) localStorage.setItem(key, value);
+    for (const [key, value] of Object.entries(values)) {
+      if (overwrite || localStorage.getItem(key) === null) localStorage.setItem(key, value);
     }
   } catch {
     // storage blocked
   }
 }
+
+const ownName = (state: SharkordState) => (state.users ?? []).find((user) => user.id === state.ownUserId)?.name ?? '';
+
+/** Whether a notification's text mentions `name` (`@name`, as Sharkord writes a mention in text). */
+const mentionsName = (text: string, name: string) => name !== '' && text.includes(`@${name}`);
 
 /** Sharkord's incoming-message tone: a single 600 Hz sine (`sfxMessageReceived`). */
 const MESSAGE_PING_HZ = 600;

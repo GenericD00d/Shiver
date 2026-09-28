@@ -496,6 +496,7 @@ export const App = () => {
                 signedOut={signedOut}
                 problems={problems}
                 onAcceptAnySize={(id, accept) => void change(() => api.setAcceptAnySize(id, accept))}
+                onNotifyLevel={(id, level) => void change(() => api.setNotifyLevel(id, level))}
                 remembered={remembered}
                 plugins={plugins}
                 onSignIn={(id: string) => {

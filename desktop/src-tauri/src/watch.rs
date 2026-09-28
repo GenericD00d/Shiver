@@ -501,25 +501,27 @@ fn announce(
         return;
     }
 
-    let Some(server_name) = app
+    let Some((server_name, notify)) = app
         .state::<Store>()
         .registry()
         .server(entry_id)
-        .map(|entry| entry.name.clone())
+        .map(|entry| (entry.name.clone(), entry.notify))
     else {
         return;
     };
 
+    let is_dm = joined.dm_channels.contains(&message.channel_id);
     let raw = RawNotification {
         channel_id: Some(message.channel_id),
         channel_name: joined.channel_names.get(&message.channel_id).cloned(),
         author: message.author(joined),
         body: message.body().to_string(),
         icon_url: None,
-        is_dm: joined.dm_channels.contains(&message.channel_id),
+        is_dm,
     };
 
-    let muted = muted_set(app, entry_id).contains(&message.channel_id);
+    let muted = muted_set(app, entry_id).contains(&message.channel_id)
+        || !notify.allows(is_dm, message.mentions_me(joined));
 
     if let Some(notification) = app
         .state::<Feed>()

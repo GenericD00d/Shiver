@@ -14,7 +14,7 @@ use std::{
 
 use serde_json::json;
 pub use shiver_core::limit::Openings;
-use shiver_core::LockExt;
+use shiver_core::{model::NotifyLevel, LockExt};
 use tauri::{
     webview::WebviewBuilder, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview,
     WebviewUrl, Window, WindowEvent,
@@ -1066,6 +1066,18 @@ fn eval_in(app: &AppHandle, label: &str, script: &str) {
     }
 }
 
+/// Tells one page which of its notifications Shiver wants.
+pub fn push_notify_level(app: &AppHandle, entry_id: &str, level: NotifyLevel) {
+    eval_in(
+        app,
+        &webview_label(entry_id),
+        &format!(
+            "window.__SHIVER_SET_NOTIFY__ && window.__SHIVER_SET_NOTIFY__({})",
+            json!(level)
+        ),
+    );
+}
+
 /// Tells one page whether a call is running elsewhere (never where).
 pub fn push_voice_lock(app: &AppHandle, entry_id: &str, locked: bool) {
     eval_in(
@@ -1127,6 +1139,7 @@ fn bridge_script(
         "soundVolume": settings.sound_volume.min(crate::model::MAX_SOUND_VOLUME),
         "minimiseAttachments": settings.minimise_attachments,
         "voiceLocked": voice_locked,
+        "notify": entry.notify,
     });
 
     format!(
@@ -1169,6 +1182,7 @@ mod tests {
             accept_any_size: false,
             profile: profile.map(str::to_string),
             media_allowed: false,
+            notify: NotifyLevel::default(),
         }
     }
 

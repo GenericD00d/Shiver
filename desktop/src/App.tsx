@@ -499,6 +499,9 @@ export const App = () => {
       // two actions rather than a toggle: the menu knew which way the server is set
       anysize: (id) => api.setAcceptAnySize(id, true),
       normalsize: (id) => api.setAcceptAnySize(id, false),
+      'notify-all': (id) => api.setNotifyLevel(id, 'all').then(refresh),
+      'notify-mentions': (id) => api.setNotifyLevel(id, 'mentions').then(refresh),
+      'notify-dms': (id) => api.setNotifyLevel(id, 'dms').then(refresh),
       logout: (id) => api.logOutServer(id).then(refresh),
       refresh: (id) => api.refreshServerInfo(id).then(refresh),
       unfolder: (id) => api.setServerFolder(id, null).then(refresh),

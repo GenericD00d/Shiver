@@ -3,6 +3,8 @@
  * combinations they match against, and the small operations both clients perform through it.
  */
 
+import type { NotifyLevel } from '../types';
+
 import { ensureStyle } from './dom';
 
 export type SharkordFile = { name: string; _accessToken?: string; _accessTokenExpiresAt?: number };
@@ -216,6 +218,34 @@ export function readDms(origin: string, state: SharkordState, lastSeen: Readonly
 
   return list.sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0) || a.name.localeCompare(b.name));
 }
+
+/* ── notifications ── */
+
+/** Sharkord's own notification switches (`browser-notifications*` in its local storage). */
+const NOTIFY_KEYS = {
+  any: 'sharkord-browser-notifications',
+  dms: 'sharkord-browser-notifications-for-dms',
+  replies: 'sharkord-browser-notifications-for-replies',
+  mentionsOnly: 'sharkord-browser-notifications-for-mentions'
+} as const;
+
+/**
+ * Sharkord's switches for a Shiver notification level. Sharkord checks a DM first, then (when
+ * "mentions only" is on) whether the message mentions the user, so it does the exact work here.
+ */
+export function notificationFlags(level: NotifyLevel): Record<string, string> {
+  const on = (value: boolean) => String(value);
+
+  return {
+    [NOTIFY_KEYS.any]: on(level !== 'dms'),
+    [NOTIFY_KEYS.dms]: 'true',
+    [NOTIFY_KEYS.replies]: on(level !== 'dms'),
+    [NOTIFY_KEYS.mentionsOnly]: on(level === 'mentions')
+  };
+}
+
+export const notifyAllows = (level: NotifyLevel, isDm: boolean, mentionsMe: boolean) =>
+  level === 'all' || isDm || (level === 'mentions' && mentionsMe);
 
 /* ── reading the page ── */
 

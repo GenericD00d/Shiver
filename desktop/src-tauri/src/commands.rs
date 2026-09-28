@@ -4,7 +4,7 @@
 //! than the UI thread. Passwords arrive as `Zeroizing<String>` so Shiver's copies are wiped.
 
 use tauri::{
-    menu::{ContextMenu, MenuBuilder, MenuItemBuilder},
+    menu::{CheckMenuItemBuilder, ContextMenu, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
     AppHandle, Emitter, Manager, State,
 };
 use uuid::Uuid;
@@ -24,7 +24,7 @@ use crate::{
 };
 
 use sharkord_client::{CheckedSessions, ServerCheck};
-use shiver_core::{login, probe};
+use shiver_core::{login, model::NotifyLevel, probe};
 
 /// Tells Shiver's own webviews the settings changed.
 const SETTINGS_EVENT: &str = "shiver://settings";
@@ -172,6 +172,7 @@ pub async fn add_server(
             accept_any_size: false,
             profile: None,
             media_allowed: false,
+            notify: NotifyLevel::default(),
         };
 
         registry.servers.push(entry.clone());
@@ -347,6 +348,35 @@ pub async fn set_accept_any_size(
     Ok(())
 }
 
+/// Sets which of a server's messages notify. Its page, if loaded and out of sight, is closed so it
+/// comes back with Sharkord's own notification settings to match; the page on screen follows at
+/// once as best it can, and exactly from its next load.
+#[tauri::command]
+pub async fn set_notify_level(
+    app: AppHandle,
+    store: State<'_, Store>,
+    id: String,
+    level: NotifyLevel,
+) -> Result<()> {
+    store.update(|registry| {
+        registry.server_mut(&id).ok_or(Core::UnknownServer)?.notify = level;
+
+        Ok(())
+    })?;
+
+    if app.get_webview(&webviews::webview_label(&id)).is_some() {
+        if app.state::<webviews::ActiveServer>().is_on_screen(&id) {
+            webviews::push_notify_level(&app, &id, level);
+        } else {
+            webviews::close_server(&app, &id)?;
+            app.state::<Readiness>().forget_entry(&id);
+            crate::watch::sync(&app);
+        }
+    }
+
+    Ok(())
+}
+
 /* ── the rail ── */
 
 /// Applies a drag of top-level servers only.
@@ -471,8 +501,28 @@ pub async fn show_server_menu(app: AppHandle, store: State<'_, Store>, id: Strin
     .enabled(false)
     .build(&app)?;
 
+    // which of its messages notify; one action per level, since the menu knows which is set
+    let level = |action: &str, label: &str, value: NotifyLevel| {
+        CheckMenuItemBuilder::with_id(format!("{action}:{id}"), label)
+            .checked(entry.notify == value)
+            .build(&app)
+    };
+    let notify = SubmenuBuilder::new(&app, "Notify me about")
+        .item(&level("notify-all", "All messages", NotifyLevel::All)?)
+        .item(&level(
+            "notify-mentions",
+            "Mentions and direct messages",
+            NotifyLevel::Mentions,
+        )?)
+        .item(&level(
+            "notify-dms",
+            "Direct messages only",
+            NotifyLevel::Dms,
+        )?)
+        .build()?;
+
     let mut builder =
-        MenuBuilder::new(&app).items(&[&open, &mark_read, &refresh, &forget, &plugin]);
+        MenuBuilder::new(&app).items(&[&open, &mark_read, &refresh, &notify, &forget, &plugin]);
 
     // the size limit is only offered where it matters: a server that tripped it, or one raised
     let sizes = if entry.accept_any_size {

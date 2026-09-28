@@ -1,6 +1,16 @@
 import { expect, test } from 'bun:test';
 
-import { dmPartnerId, fileUrl, findDmChannelIdByUserName, notificationTarget, readDms, rowName, type SharkordState } from './sharkord';
+import {
+  dmPartnerId,
+  fileUrl,
+  findDmChannelIdByUserName,
+  notificationFlags,
+  notificationTarget,
+  notifyAllows,
+  readDms,
+  rowName,
+  type SharkordState
+} from './sharkord';
 
 const ORIGIN = 'https://chat.example';
 
@@ -94,4 +104,24 @@ test('a row’s name is its name span, else its text without the unread pill', (
   expect(rowName(row(' general3 ', { count: '3' }))).toBe('general');
   expect(rowName(row('room 42', { count: '7' }))).toBe('room 42');
   expect(rowName(row(''))).toBe('');
+});
+
+test('a notification level maps onto Sharkord’s own switches', () => {
+  expect(notificationFlags('all')).toEqual({
+    'sharkord-browser-notifications': 'true',
+    'sharkord-browser-notifications-for-dms': 'true',
+    'sharkord-browser-notifications-for-replies': 'true',
+    'sharkord-browser-notifications-for-mentions': 'false'
+  });
+  expect(notificationFlags('mentions')['sharkord-browser-notifications-for-mentions']).toBe('true');
+  expect(notificationFlags('dms')['sharkord-browser-notifications']).toBe('false');
+  expect(notificationFlags('dms')['sharkord-browser-notifications-for-dms']).toBe('true');
+});
+
+test('a notification level lets through what it names', () => {
+  expect(notifyAllows('all', false, false)).toBe(true);
+  expect(notifyAllows('mentions', false, true)).toBe(true);
+  expect(notifyAllows('mentions', false, false)).toBe(false);
+  expect(notifyAllows('dms', false, true)).toBe(false);
+  expect(notifyAllows('dms', true, false)).toBe(true);
 });

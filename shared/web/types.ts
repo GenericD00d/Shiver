@@ -5,6 +5,9 @@ export type MutedChannel = {
   channelId: number;
 };
 
+/** Which of a server's messages notify (`model::NotifyLevel`); unread badges count them all. */
+export type NotifyLevel = 'all' | 'mentions' | 'dms';
+
 /** A site whose links open without asking, when this rail entry's pages ask (`links::TrustedLink`). */
 export type TrustedLink = {
   entryId: string;

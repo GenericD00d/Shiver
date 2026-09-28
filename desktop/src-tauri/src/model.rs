@@ -44,6 +44,9 @@ pub struct ServerEntry {
     /// the user let this server's page use the camera and microphone
     #[serde(default)]
     pub media_allowed: bool,
+    /// which of its messages notify
+    #[serde(default)]
+    pub notify: shiver_core::model::NotifyLevel,
 }
 
 impl ServerEntry {

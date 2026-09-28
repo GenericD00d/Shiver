@@ -12,7 +12,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use sharkord_client::{CheckedSessions, ServerCheck};
-use shiver_core::{login, probe};
+use shiver_core::{login, model::NotifyLevel, probe};
 
 use crate::{
     error::{Core, Error, Result},
@@ -385,6 +385,20 @@ pub async fn set_accept_any_size(
     inbox::restart(&app, &id);
 
     Ok(())
+}
+
+/// Sets which of a server's messages notify (only the core's own connections notify on Android).
+#[tauri::command]
+pub async fn set_notify_level(
+    store: State<'_, Store>,
+    id: String,
+    level: NotifyLevel,
+) -> Result<()> {
+    store.update(|registry| {
+        registry.server_mut(&id).ok_or(Core::UnknownServer)?.notify = level;
+
+        Ok(())
+    })
 }
 
 /// What Shiver's screens show about each server's session: waiting for a sign-in, a password kept,

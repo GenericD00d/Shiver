@@ -238,7 +238,7 @@ fn drain_webview(app: &AppHandle, webview: &tauri::Webview, entry_id: String, fu
 }
 
 fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
-    let (server_name, account_label, muted, has_identity, origin) = {
+    let (server_name, account_label, muted, has_identity, origin, notify) = {
         let store = app.state::<Store>();
         let registry = store.registry();
 
@@ -252,6 +252,7 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
             registry.muted_for(entry_id),
             entry.identity.is_some(),
             entry.origin.clone(),
+            entry.notify,
         )
     };
 
@@ -284,9 +285,12 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
         .into_iter()
         .take(MAX_NOTIFICATIONS_PER_DRAIN)
     {
+        // the page applies the level itself (Sharkord knows what mentions the user); the core
+        // holds it to "DMs only" at least, which a title is enough to tell
         let is_muted = raw
             .channel_id
-            .is_some_and(|channel_id| muted.contains(&channel_id));
+            .is_some_and(|channel_id| muted.contains(&channel_id))
+            || !notify.allows(raw.is_dm, true);
 
         if let Some(notification) = feed.push(entry_id, &server_name, Some(&origin), raw, is_muted)
         {

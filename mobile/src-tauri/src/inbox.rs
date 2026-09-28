@@ -916,11 +916,24 @@ fn announce(
 
         (
             registry.muted_for(entry_id),
-            registry.server(entry_id).map(|server| server.name.clone()),
+            registry
+                .server(entry_id)
+                .map(|server| (server.name.clone(), server.notify)),
         )
     };
 
-    let (Some(server), Some(line)) = (server, notice(joined, &muted, message)) else {
+    let Some((server, notify)) = server else {
+        return;
+    };
+
+    if !notify.allows(
+        joined.dm_channels.contains(&message.channel_id),
+        message.mentions_me(joined),
+    ) {
+        return;
+    }
+
+    let Some(line) = notice(joined, &muted, message) else {
         return;
     };
 
@@ -1088,6 +1101,7 @@ mod tests {
             user_id: Some(user_id),
             plugin_id: None,
             text: text.to_string(),
+            mentioned: Vec::new(),
         }
     }
 

@@ -43,6 +43,9 @@ pub struct ServerEntry {
     /// endpoints this server should forget, handed to its page on the next load
     #[serde(default)]
     pub retired_push_endpoints: Vec<String>,
+    /// which of its messages notify
+    #[serde(default)]
+    pub notify: shiver_core::model::NotifyLevel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

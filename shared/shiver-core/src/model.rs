@@ -45,6 +45,42 @@ fn is_hex_color(value: &str) -> bool {
 
 /// `#rrggbb` (lowercased), or `fallback`. Colours become CSS in every server page, so nothing else
 /// may pass.
+/// Which of a server's messages notify: reach the bell, a system notification or the phone's.
+/// Unread badges count every message either way.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NotifyLevel {
+    #[default]
+    All,
+    /// messages that mention the user, and DMs
+    Mentions,
+    Dms,
+}
+
+impl NotifyLevel {
+    pub fn allows(self, is_dm: bool, mentions_me: bool) -> bool {
+        match self {
+            Self::All => true,
+            Self::Mentions => is_dm || mentions_me,
+            Self::Dms => is_dm,
+        }
+    }
+}
+
+/// Anything unreadable (a value from a newer Shiver) reads as `All`, rather than failing the
+/// whole registry.
+impl<'de> Deserialize<'de> for NotifyLevel {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(
+            match serde_json::Value::deserialize(deserializer)?.as_str() {
+                Some("mentions") => Self::Mentions,
+                Some("dms") => Self::Dms,
+                _ => Self::All,
+            },
+        )
+    }
+}
+
 pub fn sanitised_color(value: &str, fallback: &str) -> String {
     if is_hex_color(value) {
         value.to_ascii_lowercase()
@@ -183,5 +219,26 @@ mod tests {
             set_muted_for(&mut muted, "a", 0..10_000).len(),
             MAX_MUTED_PER_ENTRY
         );
+    }
+
+    #[test]
+    fn a_notify_level_reads_tolerantly_and_decides() {
+        let read = |json: &str| serde_json::from_str::<NotifyLevel>(json).unwrap();
+
+        assert_eq!(read(r#""mentions""#), NotifyLevel::Mentions);
+        assert_eq!(read(r#""dms""#), NotifyLevel::Dms);
+        assert_eq!(read(r#""everything""#), NotifyLevel::All);
+        assert_eq!(read("7"), NotifyLevel::All);
+        assert_eq!(
+            serde_json::to_string(&NotifyLevel::Dms).unwrap(),
+            r#""dms""#
+        );
+
+        assert!(NotifyLevel::All.allows(false, false));
+        assert!(NotifyLevel::Mentions.allows(false, true));
+        assert!(NotifyLevel::Mentions.allows(true, false));
+        assert!(!NotifyLevel::Mentions.allows(false, false));
+        assert!(!NotifyLevel::Dms.allows(false, true));
+        assert!(NotifyLevel::Dms.allows(true, false));
     }
 }

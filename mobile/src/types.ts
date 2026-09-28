@@ -1,8 +1,8 @@
-import type { Folder, MutedChannel, ServerCheck, ServerInfo, TrustedLink } from '../../shared/web/types';
+import type { Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink } from '../../shared/web/types';
 
 export { DEFAULT_ACCENT_COLOR, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME } from '../../shared/web/settings';
 
-export type { Folder, MutedChannel, ServerCheck, ServerInfo, TrustedLink };
+export type { Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink };
 
 export type ServerEntry = {
   /** Shiver takes messages of any size from this server, because the user said it may */
@@ -16,6 +16,8 @@ export type ServerEntry = {
   accountLabel: string | null;
   folderId: string | null;
   position: number;
+  /** which of its messages notify */
+  notify: NotifyLevel;
 };
 
 /** One conversation and its server and account (mirrors `DmEntry` in `inbox.rs`); never sent to server pages. */
