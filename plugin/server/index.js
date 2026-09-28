@@ -642,9 +642,17 @@ export const createPush = (
     }
   };
 
-  /** Vets and stores an endpoint for the caller (newest first, capped). Rate limited. */
+  /**
+   * Vets and stores an endpoint for the caller (newest first, capped). Rate limited. The phone
+   * registers again on every start, so its newest endpoint registered again costs no lookup or
+   * write (it is vetted again before every delivery anyway).
+   */
   const register = async (userId, endpoint) => {
     if (!mayRegister(userId)) throw new Error('Too many push registrations; try again in a minute');
+
+    const held = subscribers.get(userId)?.endpoints;
+
+    if (held?.[0] !== undefined && held[0] === normaliseEndpoint(endpoint)) return [...held];
 
     const vetted = await vetEndpoint(endpoint, lookup);
 

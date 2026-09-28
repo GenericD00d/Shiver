@@ -111,6 +111,8 @@ struct State {
     tokens: HashMap<String, String>,
     unread: HashMap<String, u32>,
     running: HashMap<String, tauri::async_runtime::JoinHandle<()>>,
+    /// the one pending `sync` for when the next server's `WATCH_GRACE` runs out
+    grace_timer: Option<tauri::async_runtime::JoinHandle<()>>,
     announced: HashMap<String, Announcement>,
     /// entries with a notification post scheduled
     posting: HashSet<String>,
@@ -442,7 +444,8 @@ pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
 
 /// Starts a connection for every entry with a session, no connection and no problem that retrying
 /// cannot fix, stops those for entries that left the rail or are on screen (their page has its
-/// own), and settles the notification of the server on screen.
+/// own, until Shiver has been in the background for `WATCH_GRACE`), and settles the notification
+/// of the server on screen.
 pub fn sync(app: &AppHandle) {
     let registry_ids: HashSet<String> = app
         .state::<Store>()
@@ -451,7 +454,7 @@ pub fn sync(app: &AppHandle) {
         .iter()
         .map(|server| server.id.clone())
         .collect();
-    let showing = app.state::<webview::Showing>().server();
+    let showing = app.state::<webview::Showing>().kept_by_page(WATCH_GRACE);
     let just_left = app.state::<webview::Showing>().just_left(WATCH_GRACE);
     let watchable = |id: &String| {
         registry_ids.contains(id) && showing.as_ref() != Some(id) && !just_left.contains_key(id)
@@ -498,15 +501,44 @@ pub fn sync(app: &AppHandle) {
     }
 
     if let Some(rest) = just_left.into_values().min() {
-        let app = app.clone();
-
-        tauri::async_runtime::spawn(async move {
+        let handle = app.clone();
+        let timer = tauri::async_runtime::spawn(async move {
             tokio::time::sleep(rest).await;
-            sync(&app);
+            sync(&handle);
         });
+
+        // replaced rather than added to: sync runs often, and each would otherwise leave a timer
+        if let Some(earlier) = app
+            .state::<Inbox>()
+            .with(|state| state.grace_timer.replace(timer))
+        {
+            earlier.abort();
+        }
     }
 
     publish(app);
+}
+
+/// Shiver went to the background (`onPause`) or came back (`onResume`). A server left on screen is
+/// watched by the core after `WATCH_GRACE` in the background, so its messages still notify; coming
+/// back hands it to its page again.
+#[cfg_attr(not(mobile), allow(dead_code))]
+pub fn set_background(app: &AppHandle, background: bool) {
+    app.state::<webview::Showing>().set_background(background);
+
+    if !background {
+        return sync(app);
+    }
+
+    let app = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(WATCH_GRACE).await;
+
+        if app.state::<webview::Showing>().in_background() {
+            sync(&app);
+        }
+    });
 }
 
 /// Drops a server's connection and any problem with it, so the next attempt uses what changed.
@@ -689,7 +721,14 @@ pub fn watch_mutes(app: &AppHandle) {
         loop {
             ticker.tick().await;
 
-            if let Some(entry_id) = handle.state::<webview::Showing>().server() {
+            let showing = handle.state::<webview::Showing>();
+
+            // nobody changes a mute in the background, and the poll would keep the page busy
+            if showing.in_background() {
+                continue;
+            }
+
+            if let Some(entry_id) = showing.server() {
                 webview::read_mutes(&handle, &entry_id);
             }
         }
@@ -845,7 +884,12 @@ fn announce(
     joined: &sharkord::Joined,
     message: &sharkord::NewMessage,
 ) {
-    if app.state::<webview::Showing>().server().as_deref() == Some(entry_id) {
+    if app
+        .state::<webview::Showing>()
+        .kept_by_page(WATCH_GRACE)
+        .as_deref()
+        == Some(entry_id)
+    {
         return;
     }
 

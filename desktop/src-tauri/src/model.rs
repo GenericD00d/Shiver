@@ -147,3 +147,25 @@ pub struct Registry {
     #[serde(default)]
     pub baselines: HashMap<String, HashMap<i64, u32>>,
 }
+
+/// The registry as Shiver's own pages see it: without the floors, which only the core reads and
+/// which grow with every channel of every server.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryView {
+    pub servers: Vec<ServerEntry>,
+    pub folders: Vec<Folder>,
+    pub settings: Settings,
+    pub muted: Vec<MutedChannel>,
+}
+
+impl Registry {
+    pub fn view(&self) -> RegistryView {
+        RegistryView {
+            servers: self.servers.clone(),
+            folders: self.folders.clone(),
+            settings: self.settings.clone(),
+            muted: self.muted.clone(),
+        }
+    }
+}

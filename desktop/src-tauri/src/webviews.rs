@@ -77,6 +77,8 @@ struct Screen {
     recent: Vec<String>,
     /// the entry whose page is fullscreen
     fullscreen: Option<String>,
+    /// the window is minimised, so nothing in it is being read
+    window_hidden: bool,
 }
 
 impl Screen {
@@ -115,6 +117,21 @@ impl ActiveServer {
 
         (screen.showing_server && screen.current.as_deref() == Some(entry_id))
             || screen.conversation.as_deref() == Some(entry_id)
+    }
+
+    /// On screen and the window not minimised: what the page shows counts as read.
+    pub fn is_being_read(&self, entry_id: &str) -> bool {
+        self.is_on_screen(entry_id) && !self.screen.locked().window_hidden
+    }
+
+    /// Records whether the window is minimised; returns whether that changed.
+    pub fn set_window_hidden(&self, hidden: bool) -> bool {
+        let mut screen = self.screen.locked();
+        let changed = screen.window_hidden != hidden;
+
+        screen.window_hidden = hidden;
+
+        changed
     }
 
     /// Who Shiver asked this entry's page to open a conversation with, while it shows it. A page's
@@ -260,7 +277,11 @@ pub fn create_main_window(app: &AppHandle) -> Result<Window> {
 
             // minimising arrives as a resize on Windows; pages cannot see it themselves
             if let Ok(window) = main_window(&handle) {
-                push_visibility(&handle, window.is_minimized().unwrap_or(false));
+                let hidden = window.is_minimized().unwrap_or(false);
+
+                if handle.state::<ActiveServer>().set_window_hidden(hidden) {
+                    push_visibility(&handle, hidden);
+                }
             }
         }
     });

@@ -15,7 +15,7 @@ use crate::{
     error::{Core, Result},
     feed::{DmEntry, Feed, FeedSummary, Notification},
     hotkey,
-    model::{normalize_origin, Folder, Registry, ServerEntry, Settings},
+    model::{normalize_origin, Folder, RegistryView, ServerEntry, Settings},
     secrets::{self, Secret},
     session::{self, Recovery},
     store::{RegistryStore, Store},
@@ -85,8 +85,8 @@ async fn store_credentials(
 /* ── adding, checking and removing servers ── */
 
 #[tauri::command]
-pub fn list_registry(store: State<'_, Store>) -> Registry {
-    Registry::clone(&store.registry())
+pub fn list_registry(store: State<'_, Store>) -> RegistryView {
+    store.registry().view()
 }
 
 /// See [`sharkord_client::check_server`].
@@ -798,6 +798,7 @@ pub async fn set_channel_muted(
     })?;
 
     webviews::push_muted(&app, &entry_id, &remaining);
+    crate::watch::mutes_changed(&app, &entry_id);
 
     Ok(())
 }

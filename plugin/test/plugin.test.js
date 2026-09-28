@@ -332,6 +332,27 @@ test('queued wake-ups are bounded and skip endpoints unregistered meanwhile', as
   assert.deepEqual(sent, ['https://relay.example/one', 'https://relay.example/three']);
 });
 
+test('registering the newest endpoint again costs no lookup or write', async () => {
+  const ctx = fakeCtx({});
+  let lookups = 0;
+  let writes = 0;
+  const rows = createRows(ctx);
+  const push = createPush(ctx, rows, { lookup: (...args) => ((lookups += 1), publicLookup(...args)) });
+  const set = ctx.userData.set;
+
+  ctx.userData.set = (...args) => ((writes += 1), set(...args));
+
+  assert.deepEqual(await push.register(1, 'https://relay.example/one'), ['https://relay.example/one']);
+  assert.deepEqual(await push.register(1, 'https://relay.example/one#again'), ['https://relay.example/one']);
+  assert.equal(lookups, 1);
+  assert.equal(writes, 1);
+
+  // an older one moves to the front, which is a change
+  await push.register(1, 'https://relay.example/two');
+  assert.deepEqual(await push.register(1, 'https://relay.example/one'), ['https://relay.example/one', 'https://relay.example/two']);
+  assert.equal(lookups, 3);
+});
+
 test('clearing an endpoint forgets only that one, however it is written', async () => {
   const ctx = fakeCtx({ 1: { pushEndpoints: ['https://relay.example/one', 'https://relay.example/two'], status: 'hi' } });
   const { push } = await pushFor(ctx);

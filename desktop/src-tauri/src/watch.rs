@@ -373,10 +373,20 @@ fn recount<R: Runtime>(app: &AppHandle<R>, entry_id: &str) -> bool {
 }
 
 /// A channel the user is looking at (or read elsewhere) is read: clear it and lower the badge.
+/// Called on every drain of the page being read, so nothing is recounted unless it was unread.
 pub fn channel_read<R: Runtime>(app: &AppHandle<R>, entry_id: &str, channel_id: i64) {
-    app.state::<ReadStates>()
-        .apply(entry_id, |states| states.remove(&channel_id));
+    let was_unread = app
+        .state::<ReadStates>()
+        .apply(entry_id, |states| states.remove(&channel_id))
+        .is_some();
 
+    if was_unread && recount(app, entry_id) {
+        drain::notify_feed_changed(app);
+    }
+}
+
+/// An entry's mutes changed: a newly muted channel no longer counts toward its badge.
+pub fn mutes_changed<R: Runtime>(app: &AppHandle<R>, entry_id: &str) {
     if recount(app, entry_id) {
         drain::notify_feed_changed(app);
     }

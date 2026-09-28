@@ -3,8 +3,8 @@
 //! A Sharkord page has no Tauri IPC, so the core evaluates `__SHIVER_DRAIN__` in it and applies
 //! what it returns: every `POLL_INTERVAL` for the page on screen, one still connecting and the one
 //! holding the call, every `BACKGROUND_EVERY`th for the rest. A page answers with nothing when
-//! nothing changed, except the one on screen (its channel counts as read) and a signed-out one
-//! (recovery retries on its reports). A page answers only about itself, and everything it says is
+//! nothing changed, except the one being read (on screen in a window that is not minimised: its
+//! channel counts as read) and a signed-out one (recovery retries on its reports). A page answers only about itself, and everything it says is
 //! treated as a claim: bounded, and never trusted beyond its own entry.
 
 use std::{
@@ -152,8 +152,14 @@ fn poll_once(app: &AppHandle, background_turn: bool) {
             || in_call.as_ref() == Some(entry_id)
             || !app.state::<Readiness>().is_ready(entry_id);
 
+        // a full answer each time only while it is being read, so a minimised page answers null
         if urgent || background_turn {
-            drain_webview(app, &webview, entry_id.clone(), on_screen);
+            drain_webview(
+                app,
+                &webview,
+                entry_id.clone(),
+                crate::badges::is_being_read(app, entry_id),
+            );
         }
     }
 
@@ -316,6 +322,7 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
 
         if stored && !result.mutes.is_empty() {
             webviews::push_muted(app, entry_id, &next);
+            crate::watch::mutes_changed(app, entry_id);
         }
 
         changed |= stored && next != muted;
@@ -407,8 +414,9 @@ fn apply_page_state(
         let _ = app.emit_to(SHELL_WEBVIEW, VOICE_EVENT, ());
     }
 
+    // not while minimised: what arrives in the channel on screen then is news to the user
     if let Some(channel_id) = result.viewing_channel_id {
-        if crate::badges::is_on_screen(app, entry_id) {
+        if crate::badges::is_being_read(app, entry_id) {
             crate::badges::channel_viewed(app, entry_id, channel_id);
         }
     }

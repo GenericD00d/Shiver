@@ -79,6 +79,7 @@ pub fn run() {
             commands::set_push_server,
             commands::set_push_distributor,
         ]))
+        .on_window_event(on_window_event)
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -190,6 +191,20 @@ pub fn run() {
             eprintln!("[shiver] Shiver could not start: {error}");
             std::process::exit(1);
         });
+}
+
+/// Android's `onPause` and `onResume` (mobile builds only; the crate also compiles on desktop for
+/// its checks).
+fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+    #[cfg(mobile)]
+    match event {
+        tauri::WindowEvent::Suspended => inbox::set_background(window.app_handle(), true),
+        tauri::WindowEvent::Resumed => inbox::set_background(window.app_handle(), false),
+        _ => {}
+    }
+
+    #[cfg(not(mobile))]
+    let _ = (window, event);
 }
 
 /// Asks for notification permission once, off the main thread (a JVM call from the setup hook
