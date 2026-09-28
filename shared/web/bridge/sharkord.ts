@@ -60,6 +60,10 @@ export const COMPOSE_EDITOR = '[data-testid="message-compose-editor"]';
 export const IMAGE_VIEWER = '#imagePortal';
 /** Sharkord's "Connection lost" dialog while it retries, over the (blurred, inert) channel */
 export const RECONNECTING_OVERLAY = '[role="alertdialog"][aria-live="polite"][class~="backdrop-blur-sm"]';
+/** Sharkord's voice-channel chat and thread panels while open (a closed one is `w-0`) */
+export const SIDE_PANEL = '.bg-card[class~="hidden"][class~="lg:flex"]:not(.w-0)';
+/** below Tailwind's `lg`, where Sharkord hides its top bar and those panels */
+export const NARROW = '(width < 64rem)';
 export const CONNECT_FORM = '[data-testid="connect-form"]';
 export const SERVER_VIEW = '[data-testid="server-view"]';
 /** each message's wrapper; its parent's previous sibling is the author header */
