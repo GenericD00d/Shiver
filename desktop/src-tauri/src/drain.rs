@@ -288,7 +288,11 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
             .channel_id
             .is_some_and(|channel_id| muted.contains(&channel_id));
 
-        changed |= feed.push(entry_id, &server_name, Some(&origin), raw, is_muted);
+        if let Some(notification) = feed.push(entry_id, &server_name, Some(&origin), raw, is_muted)
+        {
+            crate::notify::announce(app, &notification);
+            changed = true;
+        }
     }
 
     if let Some(dms) = result.dms {

@@ -270,6 +270,22 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
               <label className="checkbox">
                 <input
                   type="checkbox"
+                  checked={draft.desktopNotifications}
+                  onChange={(event) => update('desktopNotifications', event.target.checked)}
+                />
+                <span>
+                  Show system notifications
+                  <small>
+                    While Shiver is not the window in front, what reaches the bell also shows as a
+                    notification from your system. A direct message flashes Shiver in the taskbar
+                    either way.
+                  </small>
+                </span>
+              </label>
+
+              <label className="checkbox">
+                <input
+                  type="checkbox"
                   checked={draft.notificationSounds}
                   onChange={(event) => update('notificationSounds', event.target.checked)}
                 />

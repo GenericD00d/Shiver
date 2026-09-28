@@ -57,6 +57,7 @@ const EMPTY_REGISTRY: Registry = {
     accentColor: DEFAULT_ACCENT_COLOR,
     textColor: null,
     notificationSounds: true,
+    desktopNotifications: true,
     soundVolume: 100,
     minimiseAttachments: true,
     lastServerId: null,

@@ -224,9 +224,9 @@ impl Feed {
         origin: Option<&str>,
         raw: RawNotification,
         muted: bool,
-    ) -> bool {
+    ) -> Option<Notification> {
         if muted {
-            return false;
+            return None;
         }
 
         let author = clamp(raw.author, MAX_AUTHOR);
@@ -247,12 +247,11 @@ impl Feed {
                 existing.channel_name = channel_name;
             }
 
-            return false;
+            return None;
         }
 
         let id = state.next_id();
-
-        state.insert(Notification {
+        let notification = Notification {
             id,
             entry_id: entry_id.to_string(),
             server_name: server_name.to_string(),
@@ -265,9 +264,11 @@ impl Feed {
             at: now,
             read: false,
             update: None,
-        });
+        };
 
-        true
+        state.insert(notification.clone());
+
+        Some(notification)
     }
 
     pub fn forget_updates(&self) {
@@ -438,10 +439,18 @@ mod tests {
     fn a_message_announced_twice_is_one_entry_and_keeps_its_channel() {
         let feed = Feed::default();
 
-        assert!(feed.push("a", "s", None, raw(None, "Smiddy", "hello"), false));
-        assert!(!feed.push("a", "s", None, raw(Some(7), "Smiddy", "hello"), false));
-        assert!(feed.push("a", "s", None, raw(Some(7), "Smiddy", "another"), false));
-        assert!(feed.push("b", "s", None, raw(Some(7), "Smiddy", "hello"), false));
+        assert!(feed
+            .push("a", "s", None, raw(None, "Smiddy", "hello"), false)
+            .is_some());
+        assert!(feed
+            .push("a", "s", None, raw(Some(7), "Smiddy", "hello"), false)
+            .is_none());
+        assert!(feed
+            .push("a", "s", None, raw(Some(7), "Smiddy", "another"), false)
+            .is_some());
+        assert!(feed
+            .push("b", "s", None, raw(Some(7), "Smiddy", "hello"), false)
+            .is_some());
 
         assert!(feed.mark_channel_read("a", 7));
         assert_eq!(feed.unread_count(), 1);
@@ -471,7 +480,9 @@ mod tests {
     fn a_muted_channel_never_reaches_the_feed() {
         let feed = Feed::default();
 
-        assert!(!feed.push("a", "s", None, raw(Some(1), "x", "y"), true));
+        assert!(feed
+            .push("a", "s", None, raw(Some(1), "x", "y"), true)
+            .is_none());
         assert!(feed.notifications().is_empty());
     }
 

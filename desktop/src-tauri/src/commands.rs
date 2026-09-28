@@ -209,6 +209,7 @@ pub async fn remove_server(
     app.state::<Readiness>().forget_entry(&id);
     app.state::<Recovery>().forget_entry(&id);
     app.state::<webviews::Openings>().forget(&id);
+    app.state::<crate::notify::Posted>().forget_entry(&id);
 
     store.update(|registry| {
         registry.servers.retain(|server| server.id != id);

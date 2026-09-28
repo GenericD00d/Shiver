@@ -521,10 +521,11 @@ fn announce(
 
     let muted = muted_set(app, entry_id).contains(&message.channel_id);
 
-    if app
+    if let Some(notification) = app
         .state::<Feed>()
         .push(entry_id, &server_name, None, raw, muted)
     {
+        crate::notify::announce(app, &notification);
         drain::notify_feed_changed(app);
     }
 }
@@ -552,7 +553,7 @@ fn report_too_large(app: &AppHandle, entry_id: &str, size: usize) {
 
     let size = sharkord::readable_size(size);
 
-    app.state::<Feed>().push(
+    let _ = app.state::<Feed>().push(
         entry_id,
         &name,
         None,

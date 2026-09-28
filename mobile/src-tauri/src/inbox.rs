@@ -972,21 +972,22 @@ fn notice(
 
     let author = clamp(message.author(joined), MAX_AUTHOR);
     let text = clamp(message.body().to_string(), MAX_BODY);
+    let channel = (!joined.dm_channels.contains(&message.channel_id)).then(|| {
+        clamp(
+            joined
+                .channel_names
+                .get(&message.channel_id)
+                .cloned()
+                .unwrap_or_else(|| "a channel".into()),
+            MAX_CHANNEL_NAME,
+        )
+    });
 
-    if joined.dm_channels.contains(&message.channel_id) {
-        return Some(format!("{author}: {text}"));
-    }
-
-    let channel = clamp(
-        joined
-            .channel_names
-            .get(&message.channel_id)
-            .cloned()
-            .unwrap_or_else(|| "a channel".into()),
-        MAX_CHANNEL_NAME,
-    );
-
-    Some(format!("{author} in #{channel}: {text}"))
+    Some(shiver_core::text::notice_line(
+        &author,
+        channel.as_deref(),
+        &text,
+    ))
 }
 
 fn post(app: &AppHandle, id: i32, title: String, announcement: &Announcement) {

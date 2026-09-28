@@ -16,7 +16,7 @@ tauri-build.workspace = true
 tauri.workspace = true
 tauri-plugin-opener.workspace = true
 tauri-plugin-dialog.workspace = true
-tauri-plugin-notification = "2.4.0"
+tauri-plugin-notification.workspace = true
 tauri-plugin-shiver-secrets = { path = "../plugins/tauri-plugin-shiver-secrets" }
 tauri-plugin-shiver-push = { path = "../plugins/tauri-plugin-shiver-push" }
 sharkord-client.workspace = true

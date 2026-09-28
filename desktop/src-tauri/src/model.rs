@@ -67,6 +67,9 @@ pub struct Settings {
     /// Shiver plays the ping itself (so muted channels stay silent) instead of each page
     #[serde(default = "default_true")]
     pub notification_sounds: bool,
+    /// a system notification for what reaches the feed while the window is not in front
+    #[serde(default = "default_true")]
+    pub desktop_notifications: bool,
     /// percent; above 100 works because both Shiver and Sharkord synthesise sounds via Web Audio
     #[serde(default = "default_sound_volume")]
     pub sound_volume: u16,
@@ -105,6 +108,7 @@ impl Default for Settings {
             accent_color: DEFAULT_ACCENT_COLOR.into(),
             text_color: None,
             notification_sounds: true,
+            desktop_notifications: true,
             sound_volume: default_sound_volume(),
             minimise_attachments: true,
             last_server_id: None,

@@ -71,6 +71,8 @@ export type Settings = {
   /** the colour text is drawn in, or null to take it from the background */
   textColor: string | null;
   notificationSounds: boolean;
+  /** a system notification for what reaches the feed while the window is not in front */
+  desktopNotifications: boolean;
   /**
    * How loud Shiver's own ping and each server's own sounds are, as a percentage of what they would
    * otherwise be. Goes past 100: see `sound_volume` in model.rs for why that is possible at all.

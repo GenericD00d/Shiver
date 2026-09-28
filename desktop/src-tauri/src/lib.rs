@@ -6,6 +6,7 @@ mod error;
 mod feed;
 mod hotkey;
 mod model;
+mod notify;
 mod permissions;
 mod secrets;
 mod session;
@@ -83,7 +84,8 @@ fn only_shiver_chrome(
 
 /// A plugin set up for Rust alone. tauri-plugin-dialog's page script replaces `alert` and `confirm`
 /// in every webview, server pages included, with calls no page may make, so there `alert` did
-/// nothing and `confirm` answered yes at once. Shiver only asks from Rust.
+/// nothing and `confirm` answered yes at once; tauri-plugin-notification's replaces
+/// `Notification`, which the bridge needs for itself. Shiver only uses either from Rust.
 struct RustOnly<P>(P);
 
 impl<R: tauri::Runtime, P: tauri::plugin::Plugin<R>> tauri::plugin::Plugin<R> for RustOnly<P> {
@@ -105,6 +107,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(RustOnly(tauri_plugin_dialog::init()))
+        .plugin(RustOnly(tauri_plugin_notification::init()))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(only_shiver_chrome(tauri::generate_handler![
@@ -176,6 +179,7 @@ pub fn run() {
             app.manage(watch::Plugins::default());
             app.manage(watch::Reported::default());
             app.manage(watch::ReadStates::default());
+            app.manage(notify::Posted::default());
 
             // folders left thin by an older Shiver, which never dissolved them
             let _ = app
