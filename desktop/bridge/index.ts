@@ -196,7 +196,7 @@ function install(shiver: ShiverConfig) {
 
     notify = level;
     notifyChangedLive = true;
-    writeStorage(notificationFlags(level), true);
+    applyNotifyLevel(level, true);
   });
 
   let reported = '';
@@ -330,13 +330,33 @@ function seedSession(token: string | null) {
 
 /**
  * Sharkord settings Shiver depends on: rejoining the last channel on connect, and its notification
- * switches (Shiver's feed is built from its notifications; mention-only off, since Shiver filters
- * with its own mutes). At the "all" level they are written only when absent, so choices made in
- * Sharkord's own settings stand; another level is Shiver's to keep, so it is written every load.
+ * switches (see `applyNotifyLevel`).
  */
 function seedDefaults(level: NotifyLevel) {
   writeStorage({ 'sharkord-auto-join-last-channel': 'true' }, false);
-  writeStorage(notificationFlags(level), level !== 'all');
+  applyNotifyLevel(level, false);
+}
+
+/** The level Shiver last wrote Sharkord's switches for, in the server's own storage. */
+const NOTIFY_MARK = 'shiver-notify-level';
+
+/**
+ * Sharkord's notification switches for a level (Shiver's feed is built from its notifications). At
+ * "all" they are written only when unset, so choices made in Sharkord's own settings stand, unless
+ * Shiver wrote them for another level; any other level is Shiver's to keep, so it is written every
+ * load. `force` writes them regardless (a change the user just made).
+ */
+function applyNotifyLevel(level: NotifyLevel, force: boolean) {
+  let mark: string | null = null;
+
+  try {
+    mark = localStorage.getItem(NOTIFY_MARK);
+  } catch {
+    // storage blocked
+  }
+
+  writeStorage(notificationFlags(level), force || level !== 'all' || (mark !== null && mark !== level));
+  writeStorage({ [NOTIFY_MARK]: level }, true);
 }
 
 function writeStorage(values: Record<string, string>, overwrite: boolean) {

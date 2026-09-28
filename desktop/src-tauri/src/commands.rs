@@ -349,8 +349,9 @@ pub async fn set_accept_any_size(
 }
 
 /// Sets which of a server's messages notify. Its page, if loaded and out of sight, is closed so it
-/// comes back with Sharkord's own notification settings to match; the page on screen follows at
-/// once as best it can, and exactly from its next load.
+/// comes back with Sharkord's own notification settings to match; the page on screen, or one
+/// holding the call (closing it would end the call), follows at once as best it can, and exactly
+/// from its next load.
 #[tauri::command]
 pub async fn set_notify_level(
     app: AppHandle,
@@ -365,7 +366,9 @@ pub async fn set_notify_level(
     })?;
 
     if app.get_webview(&webviews::webview_label(&id)).is_some() {
-        if app.state::<webviews::ActiveServer>().is_on_screen(&id) {
+        let in_call = app.state::<VoiceState>().holder().as_deref() == Some(id.as_str());
+
+        if in_call || app.state::<webviews::ActiveServer>().is_on_screen(&id) {
             webviews::push_notify_level(&app, &id, level);
         } else {
             webviews::close_server(&app, &id)?;
