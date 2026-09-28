@@ -68,6 +68,8 @@ struct Screen {
     showing_server: bool,
     /// the entry whose page is on screen showing a conversation, beside Shiver's DM list
     conversation: Option<String>,
+    /// who that conversation is with, as Shiver asked for it
+    conversation_with: Option<String>,
     popup_open: bool,
     popup_dismissed_at: Option<Instant>,
     /// servers with a page, most recently shown first, then those opened hidden (what `trim_pages`
@@ -113,6 +115,17 @@ impl ActiveServer {
 
         (screen.showing_server && screen.current.as_deref() == Some(entry_id))
             || screen.conversation.as_deref() == Some(entry_id)
+    }
+
+    /// Who Shiver asked this entry's page to open a conversation with, while it shows it. A page's
+    /// report that the conversation could not be opened names no one itself: this is the name told.
+    pub fn conversation_with(&self, entry_id: &str) -> Option<String> {
+        let screen = self.screen.locked();
+
+        screen
+            .conversation_with
+            .clone()
+            .filter(|_| screen.conversation.as_deref() == Some(entry_id))
     }
 
     pub fn note_popup_dismissed(&self) {
@@ -323,14 +336,25 @@ pub fn set_page_fullscreen(app: &AppHandle, entry_id: &str, on: bool) -> Result<
     Ok(())
 }
 
+/// Whether `url` is one of Shiver's bundled pages: exactly Tauri's own origin (`http://tauri.localhost`
+/// on Windows, `tauri://localhost` elsewhere), with no port. Any other port on a `*.localhost` host is
+/// whatever listens on the loopback, and a page there with a chrome label would get every command.
+/// Debug builds also allow the dev server.
+fn is_shiver_page(url: &Url) -> bool {
+    let (scheme, host) = if cfg!(windows) {
+        ("http", "tauri.localhost")
+    } else {
+        ("tauri", "localhost")
+    };
+
+    (url.scheme() == scheme && url.host_str() == Some(host) && url.port().is_none())
+        || (cfg!(debug_assertions) && url.scheme() == "http" && url.host_str() == Some("localhost"))
+}
+
 /// One of Shiver's own webviews, which only ever shows Shiver's pages.
 fn chrome_webview(label: &str, path: &str) -> WebviewBuilder<tauri::Wry> {
     WebviewBuilder::new(label, WebviewUrl::App(path.into()))
-        .on_navigation(|url| {
-            url.scheme() == "tauri"
-                || url.host_str() == Some("tauri.localhost")
-                || (cfg!(debug_assertions) && url.host_str() == Some("localhost"))
-        })
+        .on_navigation(is_shiver_page)
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
 }
 
@@ -571,6 +595,7 @@ pub fn show_conversation(
     active.update(|screen| {
         screen.showing_server = false;
         screen.conversation = Some(entry.id.clone());
+        screen.conversation_with = Some(name.to_string());
         screen.fullscreen = None;
         screen.hold(&entry.id, true);
     });
@@ -584,10 +609,10 @@ pub fn show_conversation(
 
 /// Ends the conversation on screen, if any: its page gets its channels back and is hidden.
 pub fn end_conversation(app: &AppHandle) {
-    let Some(entry_id) = app
-        .state::<ActiveServer>()
-        .update(|screen| screen.conversation.take())
-    else {
+    let Some(entry_id) = app.state::<ActiveServer>().update(|screen| {
+        screen.conversation_with = None;
+        screen.conversation.take()
+    }) else {
         return;
     };
 
@@ -654,6 +679,10 @@ pub fn close_server(app: &AppHandle, entry_id: &str) -> Result<()> {
             if held.as_deref() == Some(entry_id) {
                 *held = None;
             }
+        }
+
+        if screen.conversation.is_none() {
+            screen.conversation_with = None;
         }
 
         screen.recent.retain(|held| held != entry_id);
@@ -815,7 +844,7 @@ fn build_page_webview(
         .map_err(|_| Core::InvalidOrigin(format!("'{}' is not a valid address", entry.origin)))?;
     let origin = entry.origin.clone();
 
-    let mut builder = WebviewBuilder::new(webview_label(&entry.id), WebviewUrl::External(url))
+    let builder = WebviewBuilder::new(webview_label(&entry.id), WebviewUrl::External(url))
         // Sharkord uploads by listening for dragover/drop, which the native handler would swallow
         .disable_drag_drop_handler()
         .initialization_script(bridge_script(entry, settings, token, muted, opening))
@@ -832,6 +861,7 @@ fn build_page_webview(
             allowed
         })
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
+    let mut builder = crate::permissions::gate_downloads(builder, entry);
 
     if let Some(root) = profiles_root(window.app_handle()) {
         builder = builder.data_directory(root.join(profile_name(entry)));
@@ -1128,6 +1158,29 @@ mod tests {
             "if (window === window.top && location.origin === \"https://chat.example.com\") {"
         ));
         assert!(script.trim_end().ends_with('}'));
+    }
+
+    #[test]
+    fn shivers_own_webviews_stay_on_its_exact_origin() {
+        let url = |value: &str| Url::parse(value).expect("a url");
+        let own = if cfg!(windows) {
+            "http://tauri.localhost"
+        } else {
+            "tauri://localhost"
+        };
+
+        assert!(is_shiver_page(&url(&format!(
+            "{own}/index.html?view=popup"
+        ))));
+
+        for away in [
+            "http://tauri.localhost:8080/",
+            "https://tauri.localhost/",
+            "tauri://elsewhere/",
+            "https://evil.example/",
+        ] {
+            assert!(!is_shiver_page(&url(away)), "{away}");
+        }
     }
 
     #[test]

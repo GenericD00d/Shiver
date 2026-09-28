@@ -131,6 +131,12 @@ jobs:
       - run: cargo install cargo-audit --locked --version 0.22.2
       # one workspace, one lockfile
       - run: cargo audit
+      # and each app's JavaScript (the bridge ships inside every server page); only the lockfile is read
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+      - run: bun audit
+        working-directory: desktop
+      - run: bun audit
+        working-directory: mobile
 
   frontend:
     name: Frontends and plugin

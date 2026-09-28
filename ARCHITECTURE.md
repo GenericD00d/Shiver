@@ -31,7 +31,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 ## Checks (run before pushing)
 
 `cargo fmt --all --check` · `cargo clippy --workspace --all-targets -- -D warnings` ·
-`cargo test --workspace` · `bunx tsc --noEmit` in `desktop` and `mobile` · `bun test shared/web` ·
+`cargo test --workspace` · `bunx tsc --noEmit` and `bun audit` in `desktop` and `mobile` · `bun test shared/web` ·
 `node --test test/*.test.js` in `plugin` · `python3 scripts/check-version.py` ·
 `bun run build:bridge` in each app (bridges must build before the Rust crates compile).
 
@@ -95,7 +95,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `commands` | all `#[tauri::command]`s for shell/bell/popup: registry & servers (`list_registry`, `check_server`, `add_server`, `remove_server`, `log_out_server`, `sign_in_server`, `forget_password`, `refresh_server_info`, `set_accept_any_size`, `reset_media_permissions`), rail (`reorder_servers`, `reorder_rail`, `create_folder_with`, `rename_folder`, `delete_folder`, `set_server_folder`, `set_folder_expanded`, `show_folder_menu`, `show_server_menu`), navigation (`select_server`, `prepare_server`, `show_shell`, `exit_dm_split`, `open_dm`, `open_message`, `select_channel`), voice (`voice_status`, `voice_control`), settings (`app_version`, `get_settings`, `update_settings`, `forget_trusted_links`), feed (`list_notifications`, `list_dms`, `feed_summary`, `unread_counts`, `mark_server_read`, `mark_notifications_read`, `clear_notifications`, `set_channel_muted`), popup (`toggle_popup`, `close_popup`, `dismiss_popup`) |
 | `model` | `ServerEntry` (`label`), `Settings` (`sanitised`, `pages_kept`), `Registry` (`registry!` helpers), `*_PAGES_KEPT` |
 | `store` | `Store` alias, `RegistryStore::update`, `load` |
-| `webviews` | window/webview layout and page lifecycle: labels (`MAIN_WINDOW`, `SHELL_WEBVIEW`, `OVERLAY_WEBVIEW`, `POPUP_WEBVIEW`, `webview_label`, `is_shiver_chrome`), `ActiveServer` (`is_on_screen`), `create_main_window`, `main_window`, `chrome_webview` (Shiver's own webviews, pinned to its pages), `show_shell_only`, `set_popup_open`, `set_page_fullscreen`, `relayout`, `show_server`, `preload_server`, `trim_pages`, `close_server`, conversations in the server's own page beside the DM list (`show_conversation`, `end_conversation`), profiles (`discard_profiles`, `prune_profiles`; a directory each, a data store on macOS 14+), pushes into pages (`push_visibility`, `push_theme`, `push_voice_lock`, `push_muted`, `run_voice_action`, `mark_all_read`), `ask_to_open` (a native dialog before a page's link opens), `Openings` |
+| `webviews` | window/webview layout and page lifecycle: labels (`MAIN_WINDOW`, `SHELL_WEBVIEW`, `OVERLAY_WEBVIEW`, `POPUP_WEBVIEW`, `webview_label`, `is_shiver_chrome`), `ActiveServer` (`is_on_screen`, `conversation_with`: who Shiver asked a page to open a DM with), `create_main_window`, `main_window`, `chrome_webview` (Shiver's own webviews, pinned to Tauri's exact origin by `is_shiver_page`), `show_shell_only`, `set_popup_open`, `set_page_fullscreen`, `relayout`, `show_server`, `preload_server`, `trim_pages`, `close_server`, conversations in the server's own page beside the DM list (`show_conversation`, `end_conversation`), profiles (`discard_profiles`, `prune_profiles`; a directory each, a data store on macOS 14+), pushes into pages (`push_visibility`, `push_theme`, `push_voice_lock`, `push_muted`, `run_voice_action`, `mark_all_read`), `ask_to_open` (a native dialog before a page's link opens), `Openings` |
 | `drain` | polls pages' `__SHIVER_DRAIN__` (on screen, connecting or in a call every 0.75 s, the rest every ~2 s; an unchanged page answers null); events `shiver://feed|dm-failed|server-ready|voice|signed-out|status|open-message` (`VOICE_EVENT`, `OPEN_MESSAGE_EVENT` also sent by commands); `Readiness`, `ServerStatus`, `Broadcast`, `spawn`, `notify_feed_changed` |
 | `watch` | core sockets to servers without an open page (`sharkord_client::watch`): `sync`, `restart`, `forget`, `Missed`, `ReadStates`, `Plugins`, `Reported`, `Watcher`, `channel_read`, `mark_read`, `publish_floor` |
 | `feed` | `Feed` (notifications + DMs): `push`, `push_update`, `set_dms`, `mark_*`, `clear`, `forget_entry`, `unread_*`, `summary`; `FeedSummary` (the feed event's payload), `Notification`, `DmEntry`, `DmChannel`, `DrainResult`, `RawNotification`, `QueuedMute` |
@@ -105,7 +105,7 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 | `voice` | `VoiceState` (one call across servers, started only by the page on screen), `VoiceStatus`, `VoiceSnapshot` |
 | `hotkey` | global mic-mute shortcut `apply` |
 | `badge` / `badges` | taskbar badge `refresh`; `channel_viewed`, `is_on_screen` |
-| `permissions` | camera/mic and downloads for pages: `gate` (WebView2: on-screen page only; camera/mic after a per-server yes in a native dialog, nothing saved in the profile), `forget_consents` |
+| `permissions` | camera/mic and downloads for pages: `gate` (WebView2: on-screen page only; camera/mic after a per-server yes in a native dialog, nothing saved in the profile), `gate_downloads` (elsewhere: Tauri's download hook, on-screen page only), `forget_consents` |
 | `update` | signed self-update: `start` (announces `shiver://update`), `check_for_update`, `install_update`, `available_update`, `skip_update`, `open_repository`, `Available` |
 
 Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and core→page
@@ -151,7 +151,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 
 ## Frontends
 
-- **desktop/src**: `main.tsx` (label → `App` | `Bell` | `NotificationsPopup`), `api.ts` (`api.*` invoke
+- **desktop/src**: `main.tsx` (label → `App` | `Bell` | `NotificationsPopup`; drops refused wherever the rail does not take them, so none navigates a chrome webview), `api.ts` (`api.*` invoke
   wrappers, `errorMessage`), `events.ts` (`EVENTS`, `useCoreEvent`), `types.ts` (`*_PAGES_KEPT`), `sounds.ts` (`playNotificationSound`), `components/`:
   `ServerRail`, `AddServerPanel`, `SignInPanel`, `SettingsPanel`, `HotkeyField`, `DirectMessagesPanel`,
   `NotificationList` (`relativeTime`), `RenameFolderPanel`, `RemoveServerPanel`, `ConnectingPanel`, `WelcomePanel`,
