@@ -16,8 +16,10 @@ tauri-build.workspace = true
 
 [dependencies]
 # `unstable` exposes Window::add_child, the multi-webview api the rail is built on
-tauri = { workspace = true, features = ["unstable"] }
+tauri = { workspace = true, features = ["unstable", "tray-icon"] }
 tauri-plugin-updater = "2"
+tauri-plugin-autostart = "~2.5.1"
+tauri-plugin-single-instance = "~2.4.5"
 tauri-plugin-opener.workspace = true
 tauri-plugin-dialog.workspace = true
 tauri-plugin-notification.workspace = true

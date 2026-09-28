@@ -695,6 +695,7 @@ pub async fn update_settings(
     store: State<'_, Store>,
     settings: Settings,
 ) -> Result<()> {
+    let before = store.registry().settings.start_at_login;
     let saved = store.update(|registry| {
         registry.settings = Settings {
             last_server_id: registry.settings.last_server_id.take(),
@@ -706,6 +707,11 @@ pub async fn update_settings(
         Ok(registry.settings.clone())
     })?;
 
+    if saved.start_at_login != before {
+        crate::tray::set_start_at_login(&app, saved.start_at_login);
+    }
+
+    crate::tray::apply(&app, saved.close_to_tray);
     hotkey::apply(&app, saved.mute_hotkey.as_deref());
     webviews::trim_pages(&app);
     webviews::push_theme(&app, &saved);

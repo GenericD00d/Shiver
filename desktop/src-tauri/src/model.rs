@@ -70,6 +70,12 @@ pub struct Settings {
     /// a system notification for what reaches the feed while the window is not in front
     #[serde(default = "default_true")]
     pub desktop_notifications: bool,
+    /// closing the window hides it to a tray icon, and servers stay connected
+    #[serde(default)]
+    pub close_to_tray: bool,
+    /// the system starts Shiver at login, out of the way
+    #[serde(default)]
+    pub start_at_login: bool,
     /// percent; above 100 works because both Shiver and Sharkord synthesise sounds via Web Audio
     #[serde(default = "default_sound_volume")]
     pub sound_volume: u16,
@@ -109,6 +115,8 @@ impl Default for Settings {
             text_color: None,
             notification_sounds: true,
             desktop_notifications: true,
+            close_to_tray: false,
+            start_at_login: false,
             sound_volume: default_sound_volume(),
             minimise_attachments: true,
             last_server_id: None,

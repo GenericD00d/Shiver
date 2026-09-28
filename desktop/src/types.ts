@@ -73,6 +73,10 @@ export type Settings = {
   notificationSounds: boolean;
   /** a system notification for what reaches the feed while the window is not in front */
   desktopNotifications: boolean;
+  /** closing the window hides it to a tray icon */
+  closeToTray: boolean;
+  /** the system starts Shiver at login */
+  startAtLogin: boolean;
   /**
    * How loud Shiver's own ping and each server's own sounds are, as a percentage of what they would
    * otherwise be. Goes past 100: see `sound_volume` in model.rs for why that is possible at all.

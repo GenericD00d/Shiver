@@ -11,6 +11,7 @@ mod permissions;
 mod secrets;
 mod session;
 mod store;
+mod tray;
 mod update;
 mod voice;
 mod watch;
@@ -105,6 +106,14 @@ impl<R: tauri::Runtime, P: tauri::plugin::Plugin<R>> tauri::plugin::Plugin<R> fo
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // first, so a second launch hands over before anything else starts
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show(app)
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![tray::AT_LOGIN_ARG]),
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(RustOnly(tauri_plugin_dialog::init()))
         .plugin(RustOnly(tauri_plugin_notification::init()))
@@ -191,6 +200,7 @@ pub fn run() {
             hotkey::apply(handle, mute_hotkey.as_deref());
 
             webviews::create_main_window(handle)?;
+            tray::start(handle);
             webviews::prune_profiles(handle);
             drain::spawn(handle);
             crate::watch::sync(handle);
@@ -213,6 +223,13 @@ pub fn run() {
                 serde_json::json!({ "action": action, "entryId": entry_id }),
             );
         })
-        .run(tauri::generate_context!())
-        .unwrap_or_else(|error| report_failed_start(error));
+        .build(tauri::generate_context!())
+        .unwrap_or_else(|error| report_failed_start(error))
+        .run(|_app, _event| {
+            // the dock icon brings back a window closed to the tray
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                tray::show(_app);
+            }
+        });
 }

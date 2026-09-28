@@ -58,6 +58,8 @@ const EMPTY_REGISTRY: Registry = {
     textColor: null,
     notificationSounds: true,
     desktopNotifications: true,
+    closeToTray: false,
+    startAtLogin: false,
     soundVolume: 100,
     minimiseAttachments: true,
     lastServerId: null,

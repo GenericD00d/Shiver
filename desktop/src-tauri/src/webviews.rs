@@ -77,7 +77,7 @@ struct Screen {
     recent: Vec<String>,
     /// the entry whose page is fullscreen
     fullscreen: Option<String>,
-    /// the window is minimised, so nothing in it is being read
+    /// the window is minimised or hidden to the tray, so nothing in it is being read
     window_hidden: bool,
 }
 
@@ -119,12 +119,12 @@ impl ActiveServer {
             || screen.conversation.as_deref() == Some(entry_id)
     }
 
-    /// On screen and the window not minimised: what the page shows counts as read.
+    /// On screen and the window in sight: what the page shows counts as read.
     pub fn is_being_read(&self, entry_id: &str) -> bool {
         self.is_on_screen(entry_id) && !self.screen.locked().window_hidden
     }
 
-    /// Records whether the window is minimised; returns whether that changed.
+    /// Records whether the window is out of sight; returns whether that changed.
     pub fn set_window_hidden(&self, hidden: bool) -> bool {
         let mut screen = self.screen.locked();
         let changed = screen.window_hidden != hidden;
@@ -277,16 +277,29 @@ pub fn create_main_window(app: &AppHandle) -> Result<Window> {
 
             // minimising arrives as a resize on Windows; pages cannot see it themselves
             if let Ok(window) = main_window(&handle) {
-                let hidden = window.is_minimized().unwrap_or(false);
+                let hidden =
+                    window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true);
 
-                if handle.state::<ActiveServer>().set_window_hidden(hidden) {
-                    push_visibility(&handle, hidden);
-                }
+                set_window_hidden(&handle, hidden);
+            }
+        }
+
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            if crate::tray::hide_instead_of_closing(&handle) {
+                api.prevent_close();
             }
         }
     });
 
     Ok(window)
+}
+
+/// Records whether the window is out of sight (minimised, or hidden to the tray) and tells the
+/// pages when that changes.
+pub fn set_window_hidden(app: &AppHandle, hidden: bool) {
+    if app.state::<ActiveServer>().set_window_hidden(hidden) {
+        push_visibility(app, hidden);
+    }
 }
 
 /// Re-places every webview for the current window size. One failure does not stop the rest.

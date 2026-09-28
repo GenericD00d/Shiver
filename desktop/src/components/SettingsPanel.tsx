@@ -411,25 +411,54 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
           ) : null}
 
           {section === 'servers' ? (
-            <label className="field">
-              <span>Servers kept loaded</span>
-              <div className="field-row">
+            <>
+              <label className="checkbox">
                 <input
-                  type="range"
-                  min={MIN_PAGES_KEPT}
-                  max={MAX_PAGES_KEPT}
-                  step={1}
-                  value={draft.pagesKept}
-                  onChange={(event) => update('pagesKept', Number(event.target.value))}
+                  type="checkbox"
+                  checked={draft.closeToTray}
+                  onChange={(event) => update('closeToTray', event.target.checked)}
                 />
-                <output className="volume-readout">{draft.pagesKept}</output>
-              </div>
-              <small className="hint">
-                How many servers keep a client running. A loaded one switches to instantly; the rest
-                start when you open them. This is memory rather than taste — roughly a browser tab
-                each. <strong>Notifications are unaffected.</strong>
-              </small>
-            </label>
+                <span>
+                  Close to the tray
+                  <small>
+                    Closing the window leaves Shiver running behind an icon in the tray, so servers
+                    stay connected and notifications keep coming. Quit from the icon's menu.
+                  </small>
+                </span>
+              </label>
+
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={draft.startAtLogin}
+                  onChange={(event) => update('startAtLogin', event.target.checked)}
+                />
+                <span>
+                  Start Shiver when you sign in
+                  <small>It starts minimised, or in the tray when it closes there.</small>
+                </span>
+              </label>
+
+              <label className="field">
+                <span>Servers kept loaded</span>
+                <div className="field-row">
+                  <input
+                    type="range"
+                    min={MIN_PAGES_KEPT}
+                    max={MAX_PAGES_KEPT}
+                    step={1}
+                    value={draft.pagesKept}
+                    onChange={(event) => update('pagesKept', Number(event.target.value))}
+                  />
+                  <output className="volume-readout">{draft.pagesKept}</output>
+                </div>
+                <small className="hint">
+                  How many servers keep a client running. A loaded one switches to instantly; the rest
+                  start when you open them. This is memory rather than taste — roughly a browser tab
+                  each. <strong>Notifications are unaffected.</strong>
+                </small>
+              </label>
+            </>
           ) : null}
         </div>
       </div>
