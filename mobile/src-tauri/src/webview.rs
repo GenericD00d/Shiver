@@ -91,6 +91,8 @@ struct ShowingState {
     left: HashMap<String, Instant>,
     /// when Shiver went to the background (Android's `onPause`), while it is there
     background_since: Option<Instant>,
+    /// counts servers asked for, so one that waited for its turn can tell a newer choice was made
+    opening: u64,
 }
 
 /// Where Shiver's own pages live and which server the webview is on.
@@ -145,6 +147,27 @@ impl Showing {
 
     pub fn server(&self) -> Option<String> {
         self.0.locked().server.clone()
+    }
+
+    /// Starts opening a server; the ticket says whether this is still the latest one asked for.
+    pub fn begin_opening(&self) -> u64 {
+        let mut state = self.0.locked();
+
+        state.opening += 1;
+        state.opening
+    }
+
+    pub fn still_opening(&self, ticket: u64) -> bool {
+        self.0.locked().opening == ticket
+    }
+
+    /// Holds back the core's own connection to a server for the grace given to one just left (the
+    /// one about to open at launch: its page will have its own).
+    pub fn hold_back(&self, entry_id: &str) {
+        self.0
+            .locked()
+            .left
+            .insert(entry_id.to_string(), Instant::now());
     }
 
     /// Records Shiver going to the background or coming back.

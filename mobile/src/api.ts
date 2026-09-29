@@ -112,7 +112,10 @@ export const api = {
 
   /** fires whenever one of those counts moves */
   onUnread: (handler: (unread: Record<string, number>) => void) =>
-    listen<Record<string, number>>('shiver://inbox', (event) => handler(event.payload))
+    listen<Record<string, number>>('shiver://inbox', (event) => handler(event.payload)),
+  /** a server opens only after a wait, since Sharkord allows only a few joins a minute */
+  onJoinWait: (handler: (wait: { entryId: string; seconds: number }) => void) =>
+    listen<{ entryId: string; seconds: number }>('shiver://join-wait', (event) => handler(event.payload))
 };
 
 /** Tauri rejects with the rust error's user-facing message, which is already worth showing. */

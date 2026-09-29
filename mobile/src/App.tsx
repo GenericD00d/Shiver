@@ -263,6 +263,21 @@ export const App = () => {
     };
   }, [screen, resume]);
 
+  // a server that must wait for another join counts down on the connecting screen
+  useEffect(() => {
+    const stop = api.onJoinWait(({ entryId, seconds }) =>
+      setBoot((current) =>
+        current.kind === 'connecting' && current.server.id === entryId
+          ? { ...current, until: Date.now() + seconds * 1000 }
+          : current
+      )
+    );
+
+    return () => {
+      void stop.then((unlisten) => unlisten());
+    };
+  }, []);
+
   // unread counts from the core's own connections: read once, then pushed
   useEffect(() => {
     api.unreadCounts().then(setUnread).catch(() => undefined);

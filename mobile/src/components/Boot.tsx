@@ -7,7 +7,8 @@ export type ConfirmAction = 'remove' | 'forgetpw' | 'logout';
 
 export type BootState =
   | { kind: 'waiting' }
-  | { kind: 'connecting'; server: ServerEntry }
+  /** `until`: when the core will open it, if it is waiting for the server to take another join */
+  | { kind: 'connecting'; server: ServerEntry; until?: number }
   | { kind: 'failed'; server: ServerEntry }
   | { kind: 'confirm'; action: ConfirmAction; server: ServerEntry }
   /** a server's page came back to the rail; `server` is the one it left */
@@ -102,6 +103,28 @@ export const Boot = ({ state, onRetry, onAdd, onConfirm }: Props) => {
       <p className="hint" role="status">
         {state.kind === 'connecting' ? `Connecting to ${state.server.name}…` : 'Starting Shiver…'}
       </p>
+
+      {state.kind === 'connecting' && state.until ? <JoinWait until={state.until} /> : null}
     </div>
+  );
+};
+
+/** Counts down a wait for the server to take another join, and says why there is one. */
+const JoinWait = ({ until }: { until: number }) => {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const seconds = Math.max(0, Math.ceil((until - now) / 1000));
+
+  return (
+    <p className="hint">
+      {seconds > 0 ? `In ${seconds} s: ` : ''}Sharkord lets an account connect only a few times a minute, so
+      Shiver waits rather than be turned away.
+    </p>
   );
 };

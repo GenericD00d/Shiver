@@ -13,6 +13,7 @@ use std::{
 
 use shiver_core::{
     jwt::{self, Freshness, Renewals},
+    limit::Joins,
     text::clamp,
     LockExt,
 };
@@ -330,6 +331,19 @@ pub fn restore(app: &AppHandle) {
             }
         }
 
+        // Shiver opens the last server at launch, whose page joins it: the core's own connection
+        // waiting out the grace saves a second join, which Sharkord allows only a few of a minute
+        let last = app
+            .state::<Store>()
+            .registry()
+            .settings
+            .last_server_id
+            .clone();
+
+        if let Some(last) = last {
+            app.state::<webview::Showing>().hold_back(&last);
+        }
+
         sync(&app);
         sign_in_missing(&app);
     });
@@ -442,6 +456,7 @@ fn forget_session(app: &AppHandle, entry_id: &str) {
 /// Drops everything Shiver holds for an entry, in memory and in the store.
 pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
     app.state::<Inbox>().forget(entry_id);
+    app.state::<Joins>().forget(entry_id);
     clear_notification(app, entry_id);
 
     for key in [
@@ -598,6 +613,11 @@ impl sharkord::Watcher for Watch {
 
             return None;
         };
+
+        // each connection joins the server, which Sharkord allows only a few times a minute
+        let place = self.app.state::<Joins>().take(&self.entry_id);
+
+        tokio::time::sleep(place.wait).await;
 
         Some(sharkord::Target {
             origin,
