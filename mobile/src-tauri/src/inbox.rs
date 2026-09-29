@@ -37,7 +37,7 @@ const MAX_CHANNEL_NAME: usize = 100;
 /// Refusals in a row, each after a fresh sign-in, before Shiver stops trying for a server.
 const MAX_REFUSALS: u32 = 3;
 
-/// How long each server left goes unwatched: each trip to the rail and back reloads its page, and
+/// How long each server left goes unwatched: switching away and back reloads its page, and
 /// opening and closing a connection of Shiver's own besides doubled what the server saw.
 const WATCH_GRACE: Duration = Duration::from_secs(30);
 
@@ -770,6 +770,7 @@ pub fn watch_mutes(app: &AppHandle) {
 /// Sends the unread counts to Shiver's own page.
 fn publish(app: &AppHandle) {
     webview::emit_home(app, INBOX_EVENT, app.state::<Inbox>().unread());
+    crate::rail::refresh(app);
 }
 
 /* ── sessions ── */

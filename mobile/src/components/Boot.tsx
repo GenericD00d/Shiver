@@ -11,7 +11,7 @@ export type BootState =
   | { kind: 'connecting'; server: ServerEntry; until?: number }
   | { kind: 'failed'; server: ServerEntry }
   | { kind: 'confirm'; action: ConfirmAction; server: ServerEntry }
-  /** a server's page came back to the rail; `server` is the one it left */
+  /** Shiver's own page, asked for from the quick rail; `server` is the one it came from */
   | { kind: 'home'; server: ServerEntry }
   | { kind: 'empty' };
 
@@ -66,15 +66,14 @@ export const Boot = ({ state, onRetry, onAdd, onConfirm }: Props) => {
     );
   }
 
-  // the still of the page just left shows behind the rail; tapping it goes back, as for a drawer
+  // Shiver's own page, asked for from the quick rail: the rail here has the rest, and this goes back
   if (state.kind === 'home') {
     return (
-      <button
-        type="button"
-        className="boot-return"
-        aria-label={`Back to ${state.server.name}`}
-        onClick={() => onRetry(state.server)}
-      />
+      <div className="boot">
+        <button type="button" className="primary" onClick={() => onRetry(state.server)}>
+          Back to {state.server.name}
+        </button>
+      </div>
     );
   }
 

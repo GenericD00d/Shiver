@@ -7,6 +7,7 @@ members = [
     "mobile/src-tauri",
     "mobile/plugins/tauri-plugin-shiver-secrets",
     "mobile/plugins/tauri-plugin-shiver-push",
+    "mobile/plugins/tauri-plugin-shiver-rail",
 ]
 
 # Every crate inherits this; Android also needs it in its tauri.conf.json (scripts/check-version.py).

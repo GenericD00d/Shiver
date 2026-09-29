@@ -4,6 +4,7 @@ mod icons;
 mod inbox;
 mod model;
 mod push;
+mod rail;
 pub use sharkord_client as sharkord;
 mod store;
 mod update;
@@ -43,6 +44,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shiver_secrets::init())
         .plugin(tauri_plugin_shiver_push::init())
+        .plugin(tauri_plugin_shiver_rail::init())
         .invoke_handler(only_home(tauri::generate_handler![
             update::update_available,
             update::open_releases,
@@ -73,7 +75,6 @@ pub fn run() {
             commands::list_dms,
             commands::refresh_server_info,
             commands::server_icons,
-            commands::server_still,
             commands::log_out_server,
             commands::forget_sessions,
             commands::push_status,
@@ -91,6 +92,7 @@ pub fn run() {
             app.manage(Inbox::default());
             app.manage(shiver_core::jwt::Renewals::default());
             app.manage(shiver_core::limit::Joins::default());
+            app.manage(rail::QuickRail::default());
             app.manage(push::Push::default());
             app.manage(update::Available::default());
 
@@ -113,6 +115,13 @@ pub fn run() {
                 // Allowed is not arrived: Android asks here for frames inside a page too, and for
                 // navigations the page then cancels, so arrival is noticed on load (below).
                 move |target| {
+                    // the page asking for the rail: drawn over it instead, so it stays loaded
+                    if rail::wanted(&handle, target) {
+                        rail::open(&handle);
+
+                        return false;
+                    }
+
                     let server_origin = current_origin(&handle);
 
                     if webview::is_allowed(&handle, target, server_origin.as_deref()) {
@@ -140,6 +149,9 @@ pub fn run() {
                     if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
                         return install_bridge_if_server(&handle, url);
                     }
+
+                    // whatever the rail was drawn over is going
+                    rail::close(&handle);
 
                     // A load that started in the main frame, however it was asked for (a page, the
                     // core's `navigate`, a step through history): where home is noticed, and where
@@ -175,6 +187,20 @@ pub fn run() {
 
             inbox::restore(&handle);
             ask_to_notify(&handle);
+
+            // what the user chooses on the quick rail
+            {
+                use tauri_plugin_shiver_rail::RailExt;
+
+                let chosen = handle.clone();
+
+                if let Err(error) = handle
+                    .shiver_rail()
+                    .on_event(move |event| rail::chosen(&chosen, event))
+                {
+                    eprintln!("[shiver] the quick rail is unavailable: {error}");
+                }
+            }
 
             // tokens before listening, listening before registering: the distributor answers a
             // registration with a broadcast

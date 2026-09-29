@@ -757,28 +757,6 @@ button {
   }
 }
 
-/* the whole content area, over the still: tapping the page left goes back to it */
-.boot-return {
-  display: block;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  border: 0;
-  background: none;
-}
-
-/* the server page just left, frozen and dimmed behind the rail, as if the rail slid over it */
-.still {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  filter: brightness(0.4);
-  pointer-events: none;
-}
-
 .boot-failed {
   margin: 0;
   color: var(--shiver-danger);

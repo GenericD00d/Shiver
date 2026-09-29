@@ -187,7 +187,7 @@ span { display: block; width: ${SPINNER_PX}px; height: ${SPINNER_PX}px; box-sizi
   return host;
 }
 
-/** Covers the server's "connection lost" screen (back and the swipe home still work). */
+/** Covers the server's "connection lost" screen (back and the swipe to the rail still work). */
 function showReconnecting() {
   if (document.getElementById(HOST_ID)) return;
 

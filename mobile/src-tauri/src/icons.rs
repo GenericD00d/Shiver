@@ -45,6 +45,24 @@ pub fn save(app: &AppHandle, id: &str, data: Option<&str>) {
     }
 }
 
+/// Names the stored logo's current contents without reading them (its size and when it was written),
+/// or `None` when the entry has none.
+pub fn key(app: &AppHandle, id: &str) -> Option<String> {
+    let metadata = fs::metadata(path(app, id)?).ok()?;
+    let written = metadata
+        .modified()
+        .ok()
+        .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_nanos());
+
+    Some(format!("{}-{written}", metadata.len()))
+}
+
+/// One stored logo.
+pub fn load_one(app: &AppHandle, id: &str) -> Option<String> {
+    fs::read_to_string(path(app, id)?).ok()
+}
+
 /// Every stored logo, by entry id.
 pub fn load(app: &AppHandle, ids: &[String]) -> HashMap<String, String> {
     ids.iter()

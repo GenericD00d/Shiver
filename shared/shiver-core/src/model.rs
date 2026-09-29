@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 /// Sharkord's own dark theme (`--background` and `--primary`), so a stock Shiver restyles nothing.
 pub const DEFAULT_THEME_COLOR: &str = "#0a0a0a";
 pub const DEFAULT_ACCENT_COLOR: &str = "#e5e5e5";
+/// Sharkord's sidebar shade, kept for the rail on the default theme (`DEFAULT_RAIL_COLOR` in
+/// `shared/web/settings.ts`).
+pub const DEFAULT_RAIL_COLOR: &str = "#171717";
 
 /// A sound gain above this could hurt someone wearing headphones.
 pub const MAX_SOUND_VOLUME: u16 = 250;
@@ -111,6 +114,70 @@ pub fn rgb(value: &str) -> Option<[u8; 3]> {
     let channel = |at: usize| u8::from_str_radix(&value[at..at + 2], 16).ok();
 
     Some([channel(1)?, channel(3)?, channel(5)?])
+}
+
+/// Whether dark text reads better than light on `color` (relative luminance, as
+/// `shared/web/colors.ts` decides it).
+fn is_light([r, g, b]: [u8; 3]) -> bool {
+    let channel = |value: u8| {
+        let srgb = f64::from(value) / 255.0;
+
+        if srgb <= 0.03928 {
+            srgb / 12.92
+        } else {
+            ((srgb + 0.055) / 1.055).powf(2.4)
+        }
+    };
+
+    0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b) > 0.35
+}
+
+/// `color` mixed towards black (a light colour) or white (a dark one), keeping `percent` of it:
+/// `lift` in `shared/web/colors.ts`.
+fn lift(color: [u8; 3], percent: u8) -> [u8; 3] {
+    let toward = if is_light(color) { 0.0 } else { 255.0 };
+    let share = f64::from(percent.min(100)) / 100.0;
+
+    color.map(|channel| (f64::from(channel) * share + toward * (1.0 - share)).round() as u8)
+}
+
+fn hex([r, g, b]: [u8; 3]) -> String {
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// Shiver's own colours for something drawn natively rather than in its page, as
+/// `shared/web/theme.ts` derives them there: `#rrggbb` each.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Palette {
+    pub rail: String,
+    pub surface: String,
+    pub surface_dim: String,
+    pub text: String,
+    pub accent: String,
+}
+
+pub fn palette(theme: &str, accent: &str, text: Option<&str>) -> Palette {
+    let theme_hex = sanitised_color(theme, DEFAULT_THEME_COLOR);
+    let theme = rgb(&theme_hex).unwrap_or([0x0a; 3]);
+    let rail = if theme_hex == DEFAULT_THEME_COLOR {
+        DEFAULT_RAIL_COLOR.to_string()
+    } else {
+        theme_hex
+    };
+    let automatic = if is_light(theme) {
+        "#171717"
+    } else {
+        "#fafafa"
+    };
+
+    Palette {
+        rail,
+        surface: hex(lift(theme, 84)),
+        surface_dim: hex(lift(theme, 92)),
+        text: sanitised_optional_color(text).unwrap_or_else(|| automatic.to_string()),
+        accent: sanitised_color(accent, DEFAULT_ACCENT_COLOR),
+    }
 }
 
 /// The theme handed to server pages: `null` on Sharkord's own colours (pages are left untouched),
@@ -240,5 +307,26 @@ mod tests {
         assert!(!NotifyLevel::Mentions.allows(false, false));
         assert!(!NotifyLevel::Dms.allows(false, true));
         assert!(NotifyLevel::Dms.allows(true, false));
+    }
+
+    #[test]
+    fn a_native_palette_follows_the_page_theme() {
+        let stock = palette(DEFAULT_THEME_COLOR, DEFAULT_ACCENT_COLOR, None);
+
+        assert_eq!(stock.rail, DEFAULT_RAIL_COLOR);
+        assert_eq!(stock.text, "#fafafa");
+        // 84% of #0a0a0a, the rest white
+        assert_eq!(stock.surface, "#313131");
+
+        let light = palette("#ffffff", "#123456", Some("#000000"));
+
+        assert_eq!(light.rail, "#ffffff");
+        assert_eq!(light.surface, "#d6d6d6");
+        assert_eq!(light.text, "#000000");
+        assert_eq!(light.accent, "#123456");
+        assert_eq!(
+            palette("red", "blue", Some("green")).accent,
+            DEFAULT_ACCENT_COLOR
+        );
     }
 }

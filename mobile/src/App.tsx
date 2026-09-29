@@ -22,7 +22,7 @@ import {
 } from './types';
 import { byPosition } from '../../shared/web/rail';
 
-/** Shiver's own screens. `boot` opens the last server used, or waits on the rail after `#home`. */
+/** Shiver's own screens. `boot` opens the last server used, or waits after `#home` (the quick rail's Shiver tile). */
 type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms';
 
 /** The settings sections, in the order they are listed. */
@@ -57,8 +57,8 @@ const TITLES: Record<Exclude<Screen, 'boot'>, string> = {
 };
 
 /**
- * What a fragment on Shiver's own URL may ask for: the rail (a server's page going home), a server
- * to reopen (its page reconnecting) or one that failed (the core). Any page can navigate here, so
+ * What a fragment on Shiver's own URL may ask for: to stay here (the quick rail's Shiver tile), a
+ * server to open (chosen on the quick rail, or its page reconnecting) or one that failed (the core). Any page can navigate here, so
  * ids are looked up in the registry and nothing else is taken from the URL.
  */
 type Intent = { kind: 'open' | 'failed'; id: string } | { kind: 'home' } | null;
@@ -97,8 +97,6 @@ export const App = () => {
   const [boot, setBoot] = useState<BootState>({ kind: 'waiting' });
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
-  /** the page just left, frozen, shown behind the rail until a server is opened */
-  const [still, setStill] = useState<string | null>(null);
 
   const [icons, setIcons] = useState<Record<string, string>>({});
   const loadIcons = useCallback(() => void api.serverIcons().then(setIcons, () => undefined), []);
@@ -138,7 +136,6 @@ export const App = () => {
   const connect = useCallback(async (server: ServerEntry, dmUser?: string) => {
     setScreen('boot');
     setBoot({ kind: 'connecting', server });
-    setStill(null);
 
     try {
       await api.probeServer(server.origin);
@@ -221,7 +218,6 @@ export const App = () => {
 
         if (left) {
           setBoot({ kind: 'home', server: left });
-          void api.serverStill(left.id).then((image) => image && setStill(image), () => undefined);
         } else {
           await resume(next);
         }
@@ -359,12 +355,8 @@ export const App = () => {
 
   const handleSettings = useCallback((settings: Settings) => void change(() => api.updateSettings(settings)), [change]);
 
-  const showStill = still && screen === 'boot' && boot.kind === 'home';
-
   return (
     <div className="app">
-      {showStill ? <img className="still" src={still} alt="" aria-hidden="true" /> : null}
-
       <Rail
         servers={servers}
         activeId={null}

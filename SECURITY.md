@@ -107,16 +107,15 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   before the server's first load is refused. It steps aside if the server refuses the token or the
   user signs in on the page; logging out of or removing a server clears what its page stored
   (on Android every account on one address shares that storage, so it is cleared for all of them).
-- **What a server's page can learn on Android.** There is one webview, but the rail is on Shiver's
-  own page, not in the server's. A server's page is handed its own entry's settings, mutes, session
-  and push endpoint, and the address of Shiver's page (going home is a navigation there); nothing
-  about other servers. It can navigate to Shiver's page, whose fragment can only ask to show the
-  rail, or reopen a server (or say it failed) by id; nothing is changed from a URL. The core's
-  events (unread counts, push, updates) are sent only while Shiver's page is up, because the one
-  webview keeps that page's event listeners after it navigates to a server. As you leave a server
-  for the rail, Android copies what its page showed into memory (never to disk) for Shiver's page to
-  show behind the rail; it is taken once, dropped whenever a server opens, and never given to a
-  server's page.
+- **What a server's page can learn on Android.** There is one webview, and the rail is never in
+  the server's page: the quick rail is drawn with Android's own views over it (a page cannot read
+  those), and the full one is on Shiver's own page. A server's page is handed its own entry's
+  settings, mutes, session and push endpoint, and the address of Shiver's page (asking for the rail
+  is a navigation there, which the core turns into the quick rail); nothing about other servers. It
+  can navigate to Shiver's page, whose fragment can only ask for the rail, or open a server (or say
+  it failed) by id; nothing is changed from a URL. The core's events (unread counts, push, updates)
+  are sent only while Shiver's page is up, because the one webview keeps that page's event
+  listeners after it navigates to a server.
 - **The plugin's push delivery is pinned.** The endpoint is resolved once, every address is
   checked, and the request is sent over TLS on port 443 to that vetted address with the hostname as
   SNI, so DNS rebinding cannot redirect it. Deliveries in flight are capped server-wide, and the

@@ -22,7 +22,8 @@ desktop/bridge/            desktop bridge (IIFE, include_str!'d as an init scrip
 mobile/src-tauri/          Android core (crate `shiver-mobile`); capabilities/: event listen only, own page
 mobile/src/                Android UI (React)
 mobile/bridge/             mobile bridge (inside server pages; knows only that server); document-start.ts runs first
-mobile/plugins/            tauri-plugin-shiver-push (UnifiedPush), tauri-plugin-shiver-secrets (Keystore)
+mobile/plugins/            tauri-plugin-shiver-push (UnifiedPush), tauri-plugin-shiver-secrets (Keystore),
+                           tauri-plugin-shiver-rail (the quick rail, native views over the server page)
 plugin/                    Sharkord companion plugin (server/ + client/, plain JS, node tests)
 scripts/check-version.py   checks the workspace and tauri.conf.json versions agree
 scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys, classes and conventions the bridges
@@ -49,8 +50,7 @@ scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys,
 - Rail/folder logic lives in `shiver_core::rail`; the clients call `registry.rail().<op>()`.
 - Keep shared constants in step: `shared/web/settings.ts` ↔ `shiver_core::model`.
 - `mobile/src-tauri/gen/android/` is mostly generated, but `MainActivity.kt` (insets, back handling,
-  `MediaGate`: camera and microphone only for the server on screen, asked once per server; a still of the server page
-  as a swipe right or back leaves it, kept in memory for `takeStill`),
+  `MediaGate`: camera and microphone only for the server on screen, asked once per server),
   `AndroidManifest.xml` and `res/xml/` + `res/values*/` are hand-written: re-running
   `tauri android init` must be merged, not accepted.
 - Compatibility code, to delete once upgrading from those versions is no longer supported:
@@ -68,8 +68,8 @@ scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys,
 | `error` | `Error` {InvalidOrigin, Storage, Unreachable, NotSharkord, Refused, InvalidInput, UnknownServer, UnknownFolder}, `Result` |
 | `origin` | `normalize_origin`, `is_same_origin` (the one webview-boundary comparison) |
 | `store` | `Store<R>` (`load`, `registry`→`ReadGuard`, `edit`); `LockExt::locked` (poison-tolerant lock). An edit applies only once written, and one that changes nothing is not written; readers never wait on the disk; atomic writes, owner-only on Unix |
-| `model` | `NotifyLevel` {All, Mentions, Dms} (`allows(is_dm, mentions_me)`; an unreadable value reads as All), `Folder`, `MutedChannel`, `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `MAX_SOUND_VOLUME`, `default_true`, `default_sound_volume`, `sanitised_color`, `sanitised_optional_color`, `rgb`, `theme_payload`, `muted_for`, `normalized_mutes`, `set_muted_for` |
-| `rail` | `RailServer` trait + `rail_server!(Type)` macro; `registry!(Registry, Server)` (that plus `server`, `server_mut`, `muted_for`, `set_muted_for`, `next_position`, `rail`); `RailRef {kind: RailKind (Server/Folder), id}`; `next_position`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder` (items left out follow in their old order), `reorder_servers`, `prune_folders` |
+| `model` | `Palette`/`palette` (Shiver's page colours as `theme.ts` derives them, for native views), `DEFAULT_RAIL_COLOR`, `NotifyLevel` {All, Mentions, Dms} (`allows(is_dm, mentions_me)`; an unreadable value reads as All), `Folder`, `MutedChannel`, `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `MAX_SOUND_VOLUME`, `default_true`, `default_sound_volume`, `sanitised_color`, `sanitised_optional_color`, `rgb`, `theme_payload`, `muted_for`, `normalized_mutes`, `set_muted_for` |
+| `rail` | `initials`, `rows`→`RailRow` {Server, Folder(folder, servers)} (the rail as drawn; the quick rail's order); `RailServer` trait + `rail_server!(Type)` macro; `registry!(Registry, Server)` (that plus `server`, `server_mut`, `muted_for`, `set_muted_for`, `next_position`, `rail`); `RailRef {kind: RailKind (Server/Folder), id}`; `next_position`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder` (items left out follow in their old order), `reorder_servers`, `prune_folders` |
 | `http` | `client()` (pooled, no redirects), `bytes_within_limit`, `MAX_BODY` |
 | `login` | `sign_in` (`POST /login` → token) |
 | `jwt` | reads `exp` only: `freshness`→`Freshness` {Fresh, Due (use it, renew in the background), Expired}, `outlasts`; `Renewals` (`begin`/`succeeded`: one background renewal per entry per 5 min) |
@@ -121,13 +121,14 @@ Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and
 
 | module | role / key items |
 |---|---|
-| `lib` | `run()`, `only_home` (commands refused unless Shiver's own page is on screen), `on_window_event` (`onPause`/`onResume` → `inbox::set_background`), page loads Shiver did not open sent home, `ask_to_open` (a native dialog before a page's link opens); `pub use sharkord_client as sharkord` |
-| `commands` | `list_registry`, `probe_server`, `check_server`, `add_server`, `remove_server`, `refresh_server_info`, `server_icons`, `server_still`, `set_accept_any_size`, `set_notify_level`, `log_out_server`, `sign_in_server`, `forget_password`, `forget_sessions`, `session_states`/`SessionStates` (signed out, password kept, problems, plugins), push (`push_status`, `set_push_server`, `set_push_distributor`; `PushStatus`, `PushServer`), `unread_counts`, `list_dms`, `select_server` (waits for its join place, counting down on Shiver's page through `shiver://join-wait`; a newer choice made meanwhile wins), `app_version`, `update_settings`, `forget_trusted_links`, rail (`reorder_rail`, `create_folder_with`, `set_server_folder`, `rename_folder`, `delete_folder`, `set_folder_expanded`) |
+| `lib` | `run()`, `only_home` (commands refused unless Shiver's own page is on screen), navigation guard (a page's `#home` becomes `rail::open`; a page starting to load closes the rail), `on_window_event` (`onPause`/`onResume` → `inbox::set_background`), page loads Shiver did not open sent home, `ask_to_open` (a native dialog before a page's link opens); `pub use sharkord_client as sharkord` |
+| `commands` | `list_registry`, `probe_server`, `check_server`, `add_server`, `remove_server`, `refresh_server_info`, `server_icons`, `set_accept_any_size`, `set_notify_level`, `log_out_server`, `sign_in_server`, `forget_password`, `forget_sessions`, `session_states`/`SessionStates` (signed out, password kept, problems, plugins), push (`push_status`, `set_push_server`, `set_push_distributor`; `PushStatus`, `PushServer`), `unread_counts`, `list_dms`, `select_server` (waits for its join place, counting down on Shiver's page through `shiver://join-wait`; a newer choice made meanwhile wins), `app_version`, `update_settings`, `forget_trusted_links`, rail (`reorder_rail`, `create_folder_with`, `set_server_folder`, `rename_folder`, `delete_folder`, `set_folder_expanded`) |
 | `model` | `ServerEntry` (+`push_token`, `retired_push_endpoints`), `Settings`, `Registry` (`registry!` helpers, `entry_for_push_token`, `ensure_push_tokens`) |
 | `store` | as desktop |
-| `icons` | logos as files (`icons/<entry id>`, a `data:` uri each): `save` (none deletes), `load`, `restore` (prune the gone, fetch the missing) |
+| `icons` | logos as files (`icons/<entry id>`, a `data:` uri each): `save` (none deletes), `load`, `load_one`, `key` (names the file's contents by size and time, unread), `restore` (prune the gone, fetch the missing) |
+| `rail` | the quick rail over the server page: `QuickRail` (whether it is up, the logo keys it holds), `wanted` (a page's `#home`), `open`, `refresh` (unread changed), `close`, `chosen` (another server or Shiver's page leave through `#open=`/`#home`; the same server just closes it) |
 | `inbox` | core sockets for servers not on screen + secret storage: `Inbox` (tokens, problems, plugins, dms, unread, signed_out, baselines), `sync` (each server left goes unwatched for `WATCH_GRACE`, one timer for all), `set_background` (the server on screen is watched by the core after `WATCH_GRACE` in the background), `restart`, `restore` (holds back the socket of the server about to open), `session_for` (renews a due session in the background, an expired one first), `remember_session`, `remember_password`, `forget_password`, `forget_everywhere`, `Watch` (each connection takes a join place first), `harvest_token` (never over a session that outlasts it), `replace_mutes`, `watch_mutes` (not in the background), `collect_dms`, `DmEntry`, `INBOX_EVENT` |
-| `webview` | the single webview (`main_window`): `Showing` (home, current server and whether it loaded, a stray page from history, pending DM user, when each server was left, whether Shiver is in the background; `at_home`, `just_left`, `hold_back`, `begin_opening`/`still_opening`, `set_background`, `in_background`, `kept_by_page`), `show_server` (drops any still), `take_still` (the still `MainActivity` took of the page left, once), `show_failed` (back to Shiver's page with `#failed=<id>`), `go_home`, `emit_home` (events only while Shiver's page is up), `without_seed`, `install_bridge`/`PageContext` (that entry's own config only), `read_mutes` (the page's mutes and outside links), navigation guard (`is_allowed`, `navigation_allowed`; allows only, since Android also asks it for frames and cancelled navigations), arrival on load (`is_home`, `landed_home`), `background_color`, `document_start` (bundle wrapped with the per-launch seed secret; `seed_key_for` derives each origin's key), `Openings` |
+| `webview` | the single webview (`main_window`): `Showing` (home, current server and whether it loaded, a stray page from history, pending DM user, when each server was left, whether Shiver is in the background; `at_home`, `just_left`, `hold_back`, `begin_opening`/`still_opening`, `set_background`, `in_background`, `kept_by_page`), `show_server`, `show_failed` (back to Shiver's page with `#failed=<id>`), `go_home`, `emit_home` (events only while Shiver's page is up), `without_seed`, `install_bridge`/`PageContext` (that entry's own config only), `read_mutes` (the page's mutes and outside links), navigation guard (`is_allowed`, `navigation_allowed`; allows only, since Android also asks it for frames and cancelled navigations), arrival on load (`is_home`, `landed_home`), `background_color`, `document_start` (bundle wrapped with the per-launch seed secret; `seed_key_for` derives each origin's key), `Openings` |
 | `push` | UnifiedPush per chosen server: `Push`, `start`, `register_wanted`, `set_wanted` (turning off retires the endpoint; the page clears it with the plugin), `unregister`, `migrate_tokens`, `PUSH_EVENT` |
 | `update` | notify-only: `start` (announces `shiver://update`), `check_for_update`, `update_available`, `skip_update`, `open_releases`, `open_repository` |
 
@@ -135,7 +136,9 @@ Page hooks (mobile): `__SHIVER__` (config), `__SHIVER_MUTED__`, `__SHIVER_OPEN__
 `__SHIVER_MOBILE_INSTALLED__`, `__SHIVER_SESSION_SHIM__`.
 
 Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unregister`, `on_event`,
-`PushEvent`); `SecretsExt` (`set`, `get`, `remove`, `keys`, `wipe_origin`: that origin's webview storage and camera/mic consent). Kotlin in `android/src/main/java`.
+`PushEvent`); `SecretsExt` (`set`, `get`, `remove`, `keys`, `wipe_origin`: that origin's webview storage and camera/mic consent);
+`RailExt` (`show`, `refresh`: a `RailView` of `Row`s and `Tile`s, answering the logo keys it lacks; `hide`; `on_event` → `RailEvent`
+{Open, Home, Closed}; Kotlin `RailPlugin`: the overlay, its back press and animations). Kotlin in `android/src/main/java`.
 
 ## shared/web (TS)
 
@@ -163,11 +166,11 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 - **desktop/bridge/index.ts**: one file: session seeding, DM list (`openDmChannelId`, `resolveDmChannels`), conversation mode (`showConversation`; an open dialog such as
   Sharkord's settings is closed first, as for a clicked notification's channel), voice read/control/lock,
   channel menu mute, notification capture (filtered by the server's `NotifyLevel`: Sharkord's switches seeded to match by `applyNotifyLevel`, which marks the level it wrote in `shiver-notify-level`; `__SHIVER_SET_NOTIFY__` for a change), drain queue.
-- **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits on the rail after `#home`, over a still of the page left; `__SHIVER_BACK__` reopens it), `api.ts`, `types.ts`, `components/`:
-  `Boot` (confirms rail menu actions; after `#home`, tapping the page left goes back to it; counts down a wait for a join), `Rail` (`RailRef`), `ServerList` (a notification level per server), `AddServer`, `SignInServer`,
+- **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits after `#home` (the quick rail's Shiver tile); `#open=` opens one; `__SHIVER_BACK__` reopens the last), `api.ts`, `types.ts`, `components/`:
+  `Boot` (confirms rail menu actions; after `#home`, a button back to the server left; counts down a wait for a join), `Rail` (`RailRef`), `ServerList` (a notification level per server), `AddServer`, `SignInServer`,
   `SettingsScreen`, `BackgroundNotifications`, `Sessions` (+`TrustedLinks`), `DirectMessages`, `UpdateNotice`, `icons`.
-- **mobile/bridge**: `index.ts` (install, `seedSession`), `home.ts` (`setHome`, `goHome`, `installHomeSwipe`: back (after closing a menu or
-  side panel) and a swipe past the drawer leave for Shiver's page), `touch.ts` (`installTouchStyles`, `installReturnMakesALine`, `installReactionNames`, `installImageZoom` (pinch, pan and
+- **mobile/bridge**: `index.ts` (install, `seedSession`), `home.ts` (`setHome`, `goHome`, `openRail` and `installRailSwipe`: back (after closing a menu or
+  side panel) and a swipe past the drawer ask for the rail, which the core draws over the page), `touch.ts` (`installTouchStyles`, `installReturnMakesALine`, `installReactionNames`, `installImageZoom` (pinch, pan and
   double tap in Sharkord's full-screen picture, which only knows the mouse),
   channel menu with mark all read: `installChannelMenu`, `closeChannelMenu`; `drawerIsOpen`, `openConversation`), `reconnect.ts` (`installAutoReconnect`; `installQuietReconnect`: Sharkord's own reconnecting dialog hidden, an accent spinner above the chat box while it retries), `document-start.ts` (seed,
   `__SHIVER_OPEN__`, theme), `types.ts` (`ShiverConfig`).

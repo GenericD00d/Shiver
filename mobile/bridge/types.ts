@@ -7,7 +7,7 @@ export type ShiverConfig = {
   /** null while the user is on Sharkord's own colours */
   theme: ShiverTheme | null;
   muted: number[];
-  /** Shiver's own page, which back and the swipe past the drawer navigate to (there is no IPC) */
+  /** Shiver's own page, navigated to for the rail (`#home`) or to leave (there is no IPC) */
   home: string;
   /** open the DM with this person on arrival */
   openDmUser: string | null;
