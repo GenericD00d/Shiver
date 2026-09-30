@@ -24,6 +24,7 @@ import {
   type Settings,
   type VoiceStatus
 } from './types';
+import { dmKey } from '../../shared/web/dms';
 import { byPosition, railOrder } from '../../shared/web/rail';
 
 /**
@@ -319,7 +320,7 @@ export const App = () => {
         await api.openDm(entryId, name);
 
         setActiveId(entryId);
-        setOpenedDm(`${entryId}:${channelId}`);
+        setOpenedDm(dmKey(entryId, channelId));
         setLastDm({ entryId, name });
         setDmError(null);
         setError(null);

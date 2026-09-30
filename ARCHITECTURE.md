@@ -14,7 +14,8 @@ icon.png                   1024px master icon, the input to `tauri icon` for bot
 Cargo.toml                 workspace (rust 1.77.2): shared/*, desktop/src-tauri, mobile/src-tauri, mobile/plugins/*
 shared/shiver-core/        Rust: origin rules, registry store, rail, http, login, session freshness, probe, rate limit
 shared/sharkord-client/    Rust: read-only Sharkord tRPC-over-WebSocket client, watch loop, add-server check
-shared/web/                TS for both frontends (relative imports; no .tsx: react won't resolve here)
+shared/web/                TS for both frontends (relative imports); components/: React both draw, on each app's own
+                           React (`resolve.dedupe` in its vite config, `paths` in its tsconfig)
 shared/web/bridge/         TS for both bridges
 desktop/src-tauri/         desktop core (crate `shiver`); capabilities/: event listen only, Shiver's own webviews
 desktop/src/               desktop UI (React): shell, bell, popup — one bundle, picked by webview label
@@ -76,14 +77,14 @@ scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys,
 | `login` | `sign_in` (`POST /login` → token) |
 | `jwt` | reads `exp` only: `freshness`→`Freshness` {Fresh, Due (use it, renew in the background), Expired}, `outlasts`; `Renewals` (`begin`/`succeeded`: one background renewal per entry per 5 min) |
 | `text` | `presentable` (server words made safe to show), `clamp` (bounded, invisible marks dropped), `notice_line` (`author in #channel: text`, both apps' system notifications) |
-| `probe` | `ServerInfo`, `fetch_info` (`GET /info`, name and description cleaned and bounded), `fetch_icon` (data URI) |
+| `probe` | `ServerInfo`, `fetch_info` (`GET /info`, name and description cleaned and bounded), `fetch_icon` (data URI), `public_file_url` (a file under `/public/`, one segment, with a signed link's token) |
 | `limit` | `Openings`: `take(key, n)` (5/s, 10/10s per key), `grant`, `forget`; `Joins`/`JoinPlace`: `take` (the next place for a join of an entry's server, 4 per 62 s, under Sharkord's 5 a minute per user; places queue in order), `give_back`, `forget` |
 | `links` | links a page asks to open: `decide`→`Decision` {Refuse, Open, Ask{site, question, always}}, `Answer::from_choice` (the dialog's buttons: `OPEN`, `always`, `CANCEL`), `site` (http(s) only, none for a link carrying credentials), `question` (names the site first); `TrustedLink` {entry_id, site}: `is_trusted`, `trust` (bounded, per server), `forget_entry` |
 | `hash` | `java_string` (Java `String.hashCode`) |
 
 ## shared/sharkord-client (`sharkord_client`)
 
-- Types: `Joined` (join payload: read states, user names, `plugin_version`…), `DirectMessage`,
+- Types: `Joined` (join payload: read states, user names and `user_avatars`, `plugin_version`…), `Avatar` (`url`), `DirectMessage` (with the partner's `avatar_url`),
   `NewMessage` (`is_own`, `author`, `body`, `mentioned`/`mentions_me`: read from the html as Sharkord's `hasMention` does), `Event`, `Error` (`TooLarge`, `Refused` and `Busy` (a rate limit, retried later, never a refused session) matter; converts
   into `shiver_core::Error`), `readable_size`.
 - Watch loop: `watch(key, impl Watcher)`; `Watcher` trait: `target()→Option<Target{origin,token,accept_any_size}>`,
@@ -150,6 +151,9 @@ settings pinned at the bottom), its back press and animations; icons in `android
 | `types.ts` | `Folder`, `MutedChannel`, `ServerInfo`, `ServerCheck`, `TrustedLink`, `NotifyLevel` (re-exported by each app's `types.ts`) |
 | `settings.ts` | `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `DEFAULT_RAIL_COLOR`, `MAX_SOUND_VOLUME` |
 | `rail.ts` | `initials`, `byPosition`, `membersOf`, `railOrder` (every server as the rail shows them) |
+| `dms.ts` | `DmRow` (a conversation as either client lists it), `dmKey`, `filterDms` (person or server), `dmMeta`, `dmInitial`; tested in `dms.test.ts` |
+| `time.ts` | `relativeTime` ("5m ago": the feed and the DM list) |
+| `components/DmList.tsx` | `DmList`: the DM list both clients draw (search, rows with avatar, account · server, time; `touch` sizes it for a finger), styled by `components/dm-list.css` |
 | `colors.ts` | `automaticTextColor`, `lift` |
 | `theme.ts` | `applyTheme` (`--shiver-*` vars on Shiver's own pages) |
 | `session.ts` | `installSessionShim`, `takeSeedFromLocation`, `AUTO_LOGIN*` (session kept off disk) |
@@ -164,15 +168,15 @@ settings pinned at the bottom), its back press and animations; icons in `android
 
 - **desktop/src**: `main.tsx` (label → `App` | `Bell` | `NotificationsPopup`; drops refused wherever the rail does not take them, so none navigates a chrome webview), `api.ts` (`api.*` invoke
   wrappers, `errorMessage`), `events.ts` (`EVENTS`, `useCoreEvent`; `App` answers `shortcut` in rail order), `types.ts` (`*_PAGES_KEPT`), `sounds.ts` (`playNotificationSound`), `components/`:
-  `ServerRail`, `AddServerPanel`, `SignInPanel`, `SettingsPanel`, `HotkeyField`, `DirectMessagesPanel`,
-  `NotificationList` (`relativeTime`), `RenameFolderPanel`, `RemoveServerPanel`, `ConnectingPanel`, `WelcomePanel`,
+  `ServerRail`, `AddServerPanel`, `SignInPanel`, `SettingsPanel`, `HotkeyField`, `DirectMessagesPanel` (the shared `DmList` in a sidebar),
+  `NotificationList`, `RenameFolderPanel`, `RemoveServerPanel`, `ConnectingPanel`, `WelcomePanel`,
   `VoiceTile`, `UpdateNotice`, `icons`.
 - **desktop/bridge/index.ts**: one file: session seeding, DM list (`openDmChannelId`, `resolveDmChannels`), conversation mode (`showConversation`; an open dialog such as
   Sharkord's settings is closed first, as for a clicked notification's channel), voice read/control/lock,
   the channel menu on right-click (`installChannelRightClick`; its mutes and "Mark all as read" go to the core through the drain), notification capture (filtered by the server's `NotifyLevel`: Sharkord's switches seeded to match by `applyNotifyLevel`, which marks the level it wrote in `shiver-notify-level`; `__SHIVER_SET_NOTIFY__` for a change), drain queue.
 - **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits after `#home` (the quick rail could not be drawn); `#open=` opens one; `#dms`, `#add`, `#settings` (`RAIL_SCREENS`, from the quick rail) open that screen; its own rail is not drawn while the page only passes through to a server, unless that takes `PASSING_THROUGH_MS`; `__SHIVER_BACK__` reopens the last), `api.ts`, `types.ts`, `components/`:
   `Boot` (confirms rail menu actions; after `#home`, a button back to the server left; counts down a wait for a join), `Rail` (`RailRef`), `ServerList` (a notification level per server), `AddServer`, `SignInServer`,
-  `SettingsScreen`, `BackgroundNotifications`, `Sessions` (+`TrustedLinks`), `DirectMessages`, `UpdateNotice`, `icons`.
+  `SettingsScreen`, `BackgroundNotifications`, `Sessions` (+`TrustedLinks`), `DirectMessages` (the shared `DmList`, `touch`), `UpdateNotice`, `icons`.
 - **mobile/bridge**: `index.ts` (install, `seedSession`), `home.ts` (`setHome`, `goHome`, `openRail` and `installRailSwipe`: back (after closing a menu or
   side panel) and a swipe past the drawer ask for the rail, which the core draws over the page), `touch.ts` (`installTouchStyles`, `installReturnMakesALine`, `installReactionNames`, `installImageZoom` (pinch, pan and
   double tap in Sharkord's full-screen picture, which only knows the mouse),

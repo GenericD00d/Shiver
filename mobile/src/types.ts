@@ -32,6 +32,8 @@ export type DmEntry = {
    * list is ordered by. Null only from a server that answered without the field, which sorts last.
    */
   lastMessageAt: number | null;
+  /** the person's picture on that server, a signed link that expires (the list falls back to an initial) */
+  avatarUrl: string | null;
 };
 
 /** What Shiver knows about being woken while it is closed. Carries no endpoint: see `push_status`. */

@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import { relativeTime } from '../../../shared/web/time';
 import { api, errorMessage } from '../api';
 import type { Notification } from '../types';
 
@@ -8,16 +9,6 @@ type Props = {
   onChanged: () => void;
   /** take the user to where the message is. absent where there is nowhere to go from. */
   onOpen?: (entry: Notification) => void;
-};
-
-export const relativeTime = (at: number) => {
-  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
-
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-
-  return `${Math.floor(seconds / 86400)}d ago`;
 };
 
 /** Shared by the bell popup and anywhere else the feed is listed. */

@@ -70,6 +70,8 @@ pub struct DmEntry {
     pub channel_id: i64,
     pub user_name: String,
     pub last_message_at: Option<u64>,
+    /// the other person's picture, a signed link on that server's own origin
+    pub avatar_url: Option<String>,
 }
 
 /// Every server's conversations, newest first (ties by name), independent of rail order.
@@ -90,6 +92,7 @@ pub fn collect_dms(
                     channel_id: dm.channel_id,
                     user_name: dm.user_name.clone(),
                     last_message_at: dm.last_message_at,
+                    avatar_url: dm.avatar_url.clone(),
                 })
         })
         .collect();
@@ -1136,6 +1139,7 @@ mod tests {
             channel_id,
             user_name: name.into(),
             last_message_at: at,
+            avatar_url: None,
         }
     }
 

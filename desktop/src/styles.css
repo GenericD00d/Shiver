@@ -486,8 +486,8 @@ button.small {
 }
 
 /* The DM inbox mirrors Sharkord's own per-server DM list: same 288px column (w-72), same p-2
-   container, same row metrics (rounded, px-2 py-1.5, text-sm, gap-2, 24px avatar), same
-   muted-foreground text turning accent on hover. */
+   container. The list itself (search and rows) is shared with the mobile client:
+   shared/web/components/dm-list.css. */
 .dm-layout {
   display: flex;
   height: 100%;
@@ -532,104 +532,12 @@ button.small {
   color: var(--shiver-text);
 }
 
-.dm-search {
-  width: 100%;
-  padding: 5px 8px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 4px;
-  background: var(--shiver-bg);
-  color: var(--shiver-text);
-  font: inherit;
-  font-size: 13px;
-}
-
-.dm-search:focus {
-  outline: 1px solid var(--shiver-accent);
-  outline-offset: -1px;
-}
-
-.dm-items {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.dm-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border: none;
-  border-radius: 4px;
-  background: none;
-  color: var(--shiver-text-dim);
-  font: inherit;
-  font-size: 14px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.dm-item:hover,
-.dm-item.selected {
-  background: var(--shiver-surface);
-  color: var(--shiver-text);
-}
-
-.dm-item img,
-.dm-avatar {
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
-  border-radius: 50%;
-  object-fit: cover;
-  background: var(--shiver-surface-hover);
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--shiver-text);
-}
-
-.dm-item-body {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  line-height: 1.25;
-}
-
-.dm-item-name,
-.dm-item-meta {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dm-item-meta {
-  font-size: 11px;
-  opacity: 0.7;
-}
-
-.dm-item-time {
-  flex: 0 0 auto;
-  font-size: 11px;
-  opacity: 0.7;
-}
-
 .dm-error {
   margin: 0;
   padding: 8px;
   border-radius: 4px;
   background: rgb(255 100 103 / 12%);
   color: var(--shiver-danger);
-  font-size: 12px;
-}
-
-.dm-empty {
-  margin: 0;
-  padding: 16px 8px;
-  color: var(--shiver-text-dim);
   font-size: 12px;
 }
 

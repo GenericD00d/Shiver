@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use shiver_core::text::presentable;
+use shiver_core::{probe::public_file_url, text::presentable};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
@@ -69,6 +69,28 @@ pub struct DirectMessage {
     pub user_name: String,
     /// the server's own `max(messages.createdAt)` for the conversation, in milliseconds
     pub last_message_at: Option<u64>,
+    /// the other person's picture: a signed link, good until the server's token expires
+    pub avatar_url: Option<String>,
+}
+
+/// A user's picture as the join names it: a file under `/public/`, and the signed link's token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Avatar {
+    pub name: String,
+    pub access_token: Option<String>,
+    pub expires_at: Option<u64>,
+}
+
+impl Avatar {
+    /// Its address on `origin`.
+    pub fn url(&self, origin: &str) -> Option<String> {
+        let token = self
+            .access_token
+            .as_deref()
+            .map(|token| (token, self.expires_at));
+
+        public_file_url(origin, &self.name, token)
+    }
 }
 
 /// What the server says about itself and this user when Shiver joins.
@@ -81,6 +103,8 @@ pub struct Joined {
     pub channel_names: HashMap<i64, String>,
     /// every user's name, since any of them may post next
     pub user_names: HashMap<i64, String>,
+    /// the users who have a picture
+    pub user_avatars: HashMap<i64, Avatar>,
     pub dms: Vec<DirectMessage>,
     /// the unread floor this user stored through the companion plugin, shared across devices
     pub shared_floor: Option<HashMap<i64, u32>>,
@@ -321,7 +345,38 @@ fn parse_join(data: &Value) -> Joined {
         })
         .collect();
 
+    joined.user_avatars = data
+        .get("users")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|user| {
+            Some((
+                user.get("id").and_then(Value::as_i64)?,
+                parse_avatar(user.get("avatar")?)?,
+            ))
+        })
+        .collect();
+
     joined
+}
+
+/// A signed file as Sharkord sends it: `{ name, _accessToken?, _accessTokenExpiresAt? }`.
+fn parse_avatar(file: &Value) -> Option<Avatar> {
+    Some(Avatar {
+        name: file.get("name").and_then(Value::as_str)?.to_string(),
+        access_token: file
+            .get("_accessToken")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        expires_at: file.get("_accessTokenExpiresAt").and_then(|at| {
+            at.as_u64().or_else(|| {
+                at.as_f64()
+                    .filter(|at| *at >= 0.0)
+                    .map(|at| at.round() as u64)
+            })
+        }),
+    })
 }
 
 fn plugin_version(data: &Value, plugin_id: &str) -> Option<String> {
@@ -340,16 +395,22 @@ fn plugin_version(data: &Value, plugin_id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// `dms.get`'s answer, named from the join's user list. Unknown users read as "Unknown".
-fn parse_dms(conversations: &[Value], user_names: &HashMap<i64, String>) -> Vec<DirectMessage> {
+/// `dms.get`'s answer, named and pictured from the join's user list. Unknown users read as
+/// "Unknown".
+fn parse_dms(conversations: &[Value], joined: &Joined, origin: &str) -> Vec<DirectMessage> {
     conversations
         .iter()
         .filter_map(|dm| {
             let user_id = dm.get("userId").and_then(Value::as_i64)?;
 
             Some(DirectMessage {
+                avatar_url: joined
+                    .user_avatars
+                    .get(&user_id)
+                    .and_then(|avatar| avatar.url(origin)),
                 channel_id: dm.get("channelId").and_then(Value::as_i64)?,
-                user_name: user_names
+                user_name: joined
+                    .user_names
                     .get(&user_id)
                     .cloned()
                     .unwrap_or_else(|| "Unknown".into()),
@@ -742,9 +803,7 @@ async fn join(socket: &mut Socket, origin: &str, token: &str) -> Result<Joined> 
 
     // Optional extras: failing either costs that feature, not the connection.
     match call(socket, DMS_ID, "dms.get", None).await {
-        Ok(Value::Array(conversations)) => {
-            joined.dms = parse_dms(&conversations, &joined.user_names)
-        }
+        Ok(Value::Array(conversations)) => joined.dms = parse_dms(&conversations, &joined, origin),
         Ok(_) => eprintln!("[shiver] {origin}: dms.get did not answer with a list"),
         Err(error) => eprintln!("[shiver] could not read {origin}'s direct messages: {error}"),
     }
@@ -1092,20 +1151,39 @@ mod tests {
     }
 
     #[test]
-    fn conversations_carry_their_name_and_latest_message() {
-        let names = HashMap::from([(2, "Smiddy".to_string())]);
+    fn conversations_carry_their_name_picture_and_latest_message() {
+        let joined = parse_join(&serde_json::json!({
+            "users": [
+                { "id": 2, "name": "Smiddy", "avatar": { "name": "a b.png", "_accessToken": "t0k", "_accessTokenExpiresAt": 99.0 } },
+                { "id": 3, "name": "Plain", "avatar": { "name": "p.png" } },
+                { "id": 4, "name": "Nobody", "avatar": null }
+            ]
+        }));
         let dms = parse_dms(
             serde_json::json!([
                 { "channelId": 9, "userId": 2, "lastMessageAt": 1_757_000_000_000u64 },
                 { "channelId": 10, "userId": 404, "lastMessageAt": 1.757e12 },
-                { "channelId": 11 }
+                { "channelId": 11 },
+                { "channelId": 12, "userId": 3 },
+                { "channelId": 13, "userId": 4 }
             ])
             .as_array()
             .unwrap(),
-            &names,
+            &joined,
+            "https://chat.example.com",
         );
 
-        assert_eq!(dms.len(), 2);
+        assert_eq!(dms.len(), 4);
+        assert_eq!(
+            dms[0].avatar_url.as_deref(),
+            Some("https://chat.example.com/public/a%20b.png?accessToken=t0k&expires=99")
+        );
+        assert_eq!(dms[1].avatar_url, None, "unknown user");
+        assert_eq!(
+            dms[2].avatar_url.as_deref(),
+            Some("https://chat.example.com/public/p.png")
+        );
+        assert_eq!(dms[3].avatar_url, None, "no picture");
         assert_eq!(
             (dms[0].user_name.as_str(), dms[0].last_message_at),
             ("Smiddy", Some(1_757_000_000_000))
