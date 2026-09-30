@@ -13,7 +13,7 @@ declare global {
   }
 }
 
-type PluginResult = { mutedChannels?: number[]; status?: string } | null;
+type PluginResult = { mutedChannels?: number[] } | null;
 
 type PluginResponse = { source?: string; id?: string; ok?: boolean; result?: PluginResult };
 

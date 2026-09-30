@@ -1,0 +1,19 @@
+[package]
+name = "tauri-plugin-shiver-rail"
+version.workspace = true
+description = "Shiver's quick rail on Android, drawn natively over the server page so leaving for it does not unload the page"
+edition.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+# required by tauri's plugin build script, which keys the android project on it
+links = "tauri-plugin-shiver-rail"
+
+[dependencies]
+tauri.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[build-dependencies.tauri-plugin]
+version = "2.5"
+features = ["build"]

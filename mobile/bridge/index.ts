@@ -1,30 +1,28 @@
 /**
  * The Shiver bridge (mobile): evaluated in a Sharkord page once it has loaded. It is handed this
  * entry's own config and nothing about the user's other servers. The page has no IPC: back and a
- * swipe past the drawer navigate to Shiver's own page, where the rail is, and the core polls the
- * hooks in `types.ts`. The session was served from memory since document start (`document-start.ts`).
+ * swipe past the drawer ask for the rail with a navigation the core turns into the rail drawn over
+ * this page (`home.ts`), and the core polls the hooks in `types.ts`. The session was served from memory since document start (`document-start.ts`).
  */
 
+import { closeChannelMenu } from '../../shared/web/bridge/channel-menu';
 import { defineHook, isTopFrame, onDomSettled, touched } from '../../shared/web/bridge/dom';
 import {
   closeSidePanel,
   installAttachmentCards,
-  installRoleColors,
   installSidePanels,
   installSoundVolume,
-  installStatusButton,
   installVoiceColors
 } from '../../shared/web/bridge/features';
 import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, waitForPlugin } from '../../shared/web/bridge/plugin';
 import { CHANNEL_ITEM, installMuteStyles, paintMuted } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme } from '../../shared/web/bridge/theme';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
-import { goHome, installHomeSwipe, setHome } from './home';
+import { installRailSwipe, openRail, setHome } from './home';
 import { installAutoReconnect, installQuietReconnect } from './reconnect';
 import {
-  closeChannelMenu,
-  installChannelMenu,
   installImageZoom,
+  installLongPress,
   installReactionNames,
   installReturnMakesALine,
   installTouchStyles,
@@ -48,11 +46,9 @@ function install(shiver: ShiverConfig) {
   installAttachmentCards(shiver.minimiseAttachments);
   installVoiceColors();
   installSidePanels();
-  installRoleColors();
   installReactionNames();
   installImageZoom();
   installReturnMakesALine();
-  installStatusButton(true);
   installAutoReconnect(shiver.session, shiver.entryId);
   installQuietReconnect();
 
@@ -60,7 +56,7 @@ function install(shiver: ShiverConfig) {
   const paint = () => paintMuted(muted);
 
   defineHook('__SHIVER_MUTED__', () => [...muted]);
-  installChannelMenu({
+  installLongPress({
     has: (channelId) => muted.has(channelId),
     toggle: (channelId) => {
       if (!muted.delete(channelId)) muted.add(channelId);
@@ -97,8 +93,8 @@ function install(shiver: ShiverConfig) {
   // arriving at a server is what moves its shared unread floor
   if (shiver.readFloor) void storeReadFloor(shiver.readFloor);
 
-  defineHook('__SHIVER_BACK__', () => closeChannelMenu() || closeSidePanel() || goHome());
-  installHomeSwipe();
+  defineHook('__SHIVER_BACK__', () => closeChannelMenu() || closeSidePanel() || openRail());
+  installRailSwipe();
 
   if (shiver.openDmUser) openConversation(shiver.openDmUser);
 }

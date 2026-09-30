@@ -1,22 +1,23 @@
 /** Adapting Sharkord's desktop-shaped client to a finger. */
 
-import { addedMenu, ensureStyle, openMenuOnScreen } from '../../shared/web/bridge/dom';
 import {
-  addMenuItem,
-  addMuteItem,
+  channelPressed,
+  type ChannelMutes,
+  installChannelMenu,
+  isInChannelMenu,
+  requestChannelMenu
+} from '../../shared/web/bridge/channel-menu';
+import { ensureStyle } from '../../shared/web/bridge/dom';
+import {
   CHANNEL_ITEM,
-  channelOfRow,
   DM_ITEM,
   DM_TOGGLE,
   IMAGE_VIEWER,
   markAllChannelsRead,
   MESSAGE_ITEM,
   SERVER_VIEW,
-  SIDEBAR,
-  type SharkordChannel
+  SIDEBAR
 } from '../../shared/web/bridge/sharkord';
-
-type Mutes = { has: (channelId: number) => boolean; toggle: (channelId: number) => void };
 
 /** a press held this long is a hold */
 const HOLD_MS = 500;
@@ -27,9 +28,6 @@ const CLICK_GRACE_MS = 700;
 /** Tailwind's `md`, where Sharkord stops hiding its sidebar */
 const WIDE_LAYOUT = 768;
 const MESSAGE_ACTIONS_CLASS = 'shiver-message-actions';
-/** how long after a press Sharkord's own menu (it has one for channel managers) may still arrive */
-const SHARKORD_MENU_GRACE_MS = 450;
-const SHARKORD_MENU_WINDOW_MS = 1500;
 const APPEAR_TIMEOUT_MS = 15_000;
 
 /**
@@ -65,39 +63,21 @@ div.flex.flex-col.justify-center.items-center.h-full.gap-2 > span.text-xl { disp
   }
 }
 
-let menuHost: HTMLElement | null = null;
-
-/** Closes Shiver's channel menu; true when one was open. */
-export function closeChannelMenu() {
-  const open = !!menuHost;
-
-  menuHost?.remove();
-  menuHost = null;
-
-  return open;
-}
-
 function clearMessageActions() {
   for (const shown of document.querySelectorAll(`.${MESSAGE_ACTIONS_CLASS}`)) shown.classList.remove(MESSAGE_ACTIONS_CLASS);
 }
 
 /**
- * Long presses on channels and messages. On a message it reveals Sharkord's toolbar. On a channel
- * it adds Shiver's items (mute, mark all read) to Sharkord's own menu when one appears (for channel
- * managers), or after a grace opens Shiver's own menu. The press's own click is swallowed.
+ * Long presses on channels and messages. On a message it reveals Sharkord's toolbar; on a channel it
+ * asks for the channel menu (`channel-menu.ts`). The press's own click is swallowed.
  */
-export function installChannelMenu(mutes: Mutes) {
+export function installLongPress(mutes: ChannelMutes) {
   let timer = 0;
-  let fallback = 0;
   let startX = 0;
   let startY = 0;
   let row: HTMLElement | null = null;
   /** when the last hold fired (a time, so a stale value cannot swallow a later tap) */
   let heldAt = 0;
-  let pending: SharkordChannel | null = null;
-  /** the row a finger went down on: Sharkord's menu can arrive before Shiver's hold fires */
-  let pressedRow: HTMLElement | null = null;
-  let pressedAt = 0;
 
   const cancel = () => {
     window.clearTimeout(timer);
@@ -105,33 +85,16 @@ export function installChannelMenu(mutes: Mutes) {
     row = null;
   };
 
-  const settle = () => {
-    window.clearTimeout(fallback);
-    fallback = 0;
-    pending = null;
-    pressedRow = null;
-    pressedAt = 0;
-  };
-
-  const join = (menu: HTMLElement, channel: SharkordChannel) => {
-    addMuteItem(menu, mutes.has(channel.id), () => mutes.toggle(channel.id));
-    addMenuItem(menu, 'Mark all as read', markAllChannelsRead);
-  };
-
-  new MutationObserver((records) => {
-    if (!pressedRow || Date.now() - pressedAt > SHARKORD_MENU_WINDOW_MS) return;
-
-    const menu = addedMenu(records);
-    const channel = menu ? (pending ?? channelOfRow(pressedRow)) : null;
-
-    if (!menu || !channel) return;
-
-    join(menu, channel);
-    heldAt = Date.now();
-    cancel();
-    closeChannelMenu();
-    settle();
-  }).observe(document.body, { childList: true, subtree: true });
+  installChannelMenu({
+    mutes,
+    markAllRead: markAllChannelsRead,
+    touch: true,
+    // Sharkord's menu can open before the hold fires, and is then what the press opened
+    onJoined: () => {
+      heldAt = Date.now();
+      cancel();
+    }
+  });
 
   document.addEventListener(
     'touchstart',
@@ -149,10 +112,12 @@ export function installChannelMenu(mutes: Mutes) {
 
       if (!touch || !(target instanceof HTMLElement)) return;
 
-      row = pressedRow = target;
-      pressedAt = Date.now();
+      row = target;
       startX = touch.clientX;
       startY = touch.clientY;
+
+      // a menu Sharkord opens for a held message is not a channel's
+      channelPressed(target.matches(CHANNEL_ITEM) ? target : null);
 
       timer = window.setTimeout(() => {
         const held = row;
@@ -163,29 +128,8 @@ export function installChannelMenu(mutes: Mutes) {
 
         heldAt = Date.now();
 
-        if (held.matches(MESSAGE_ITEM)) {
-          held.classList.add(MESSAGE_ACTIONS_CLASS);
-
-          return;
-        }
-
-        pending = channelOfRow(held);
-
-        if (!pending) return;
-
-        fallback = window.setTimeout(() => {
-          const channel = pending;
-
-          settle();
-
-          if (!channel) return;
-
-          // Radix moves an already-open menu rather than adding one
-          const open = openMenuOnScreen();
-
-          if (open) join(open, channel);
-          else openChannelMenu(channel, startX, startY, mutes);
-        }, SHARKORD_MENU_GRACE_MS);
+        if (held.matches(MESSAGE_ITEM)) held.classList.add(MESSAGE_ACTIONS_CLASS);
+        else requestChannelMenu(held, startX, startY);
       }, HOLD_MS);
     },
     { passive: true, capture: true }
@@ -210,8 +154,8 @@ export function installChannelMenu(mutes: Mutes) {
 
       const target = event.target instanceof Node ? event.target : null;
 
-      // taps inside Shiver's menu (retargeted to its host) or Sharkord's menu are theirs
-      if (target && (menuHost?.contains(target) || (target instanceof Element && target.closest('[role="menu"]')))) return;
+      // taps inside Shiver's menu or Sharkord's are theirs
+      if (target && (isInChannelMenu(target) || (target instanceof Element && target.closest('[role="menu"]')))) return;
 
       const wasThePress = Date.now() - heldAt < CLICK_GRACE_MS;
 
@@ -224,61 +168,6 @@ export function installChannelMenu(mutes: Mutes) {
     },
     true
   );
-}
-
-/** Shiver's channel menu, in a closed shadow root over a sheet that closes it. */
-function openChannelMenu(channel: SharkordChannel, x: number, y: number, mutes: Mutes) {
-  closeChannelMenu();
-
-  const host = document.createElement('div');
-  const root = host.attachShadow({ mode: 'closed' });
-  const sheet = document.createElement('div');
-  const menu = document.createElement('div');
-  const openedAt = Date.now();
-
-  host.id = 'shiver-channel-menu';
-  root.innerHTML = `<style>
-:host { position: fixed; inset: 0; z-index: 2147483646; }
-.sheet { position: absolute; inset: 0; }
-.menu { position: absolute; min-width: 200px; max-width: 70vw; padding: 6px; border-radius: 12px;
-  border: 1px solid rgb(255 255 255 / 12%); background: #1f1f1f; color: #fafafa; box-shadow: 0 12px 32px rgb(0 0 0 / 55%);
-  font: 500 14px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif; }
-.menu-item { display: block; width: 100%; padding: 11px 12px; border: none; border-radius: 8px;
-  background: none; color: inherit; font: inherit; text-align: left; }
-.menu-item:active { background: var(--shiver-surface-hover, #333333); }
-</style>`;
-
-  const items = [
-    [`${mutes.has(channel.id) ? 'Unmute' : 'Mute'} #${channel.name}`, () => mutes.toggle(channel.id)],
-    ['Mark all as read', markAllChannelsRead]
-  ] as const;
-
-  for (const [label, run] of items) {
-    const item = document.createElement('button');
-
-    item.className = 'menu-item';
-    item.type = 'button';
-    item.textContent = label;
-    item.addEventListener('click', () => {
-      run();
-      closeChannelMenu();
-    });
-    menu.append(item);
-  }
-
-  menu.className = 'menu';
-  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - 220))}px`;
-  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - 124))}px`;
-
-  // the finger that opened it lifts over the sheet, so that first tap is ignored
-  sheet.className = 'sheet';
-  sheet.addEventListener('click', () => {
-    if (Date.now() - openedAt >= CLICK_GRACE_MS) closeChannelMenu();
-  });
-
-  root.append(sheet, menu);
-  document.body.append(host);
-  menuHost = host;
 }
 
 /**

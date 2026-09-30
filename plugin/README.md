@@ -1,10 +1,11 @@
 # Shiver companion plugin
 
-Optional. Shiver works fine against a stock Sharkord server; installing this adds one thing the
-client cannot do alone: **your Shiver settings are kept on the server, per user, so they follow you to
+Optional. Shiver works fine against a stock Sharkord server; installing this adds what the client
+cannot do alone: **your Shiver settings are kept on the server, per user, so they follow you to
 every device.** Today that means your muted channels, your custom status, and the UnifiedPush
-endpoints that let this server wake your phone while Shiver is closed. The last two have sections
-of their own below.
+endpoints that let this server wake your phone while Shiver is closed. It also draws usernames in
+their role colour, for everyone on the server. Statuses, push and colours have sections of their own
+below.
 
 Needs Sharkord **0.0.25 or newer** (plugin SDK 2). A server on 0.0.24 refuses to load it, and the
 0.0.24 version of this plugin refuses to load on 0.0.25 — the SDK version is checked both ways.
@@ -83,6 +84,7 @@ overwritten.
 
 | Action | Does |
 | --- | --- |
+| `getOptions` | What the admin turned on for everyone's page (today: role colours) |
 | `getMutedChannels` / `setMutedChannels` | Reads or replaces the caller's muted channels |
 | `setReadFloor` | Stores the caller's shared unread floor, so their devices agree on one badge |
 | `setStatus` | Sets the caller's status line, and pushes it to everyone connected (rate limited) |
@@ -158,8 +160,28 @@ line, and pushed to everyone currently connected so open member lists update wit
 **Shown** through Sharkord's own `member_list_item` slot, so it reaches anyone on the server — in a
 browser as much as in Shiver.
 
-**Set** in either of two places, both ending at the same server action. The plugin adds a Status
-field to Sharkord's own user settings, which is what anyone in a browser uses; Shiver's bridge adds a
-button beside the settings gear that does it in one click. The field was briefly removed as a
-duplicate of the button and is back, because the button is drawn by Shiver and exists only inside it —
-without the field, a browser can read everyone's status and never write its own.
+**Set** in either of two places, both ending at the same server action, and both drawn by the plugin
+for everyone: a button beside Sharkord's settings gear that does it in one click (centred above the
+keyboard on a touch screen), and a Status field in Sharkord's own user settings. Both appear only to
+users Sharkord lets use plugins.
+
+## Role colours
+
+Sharkord colours a role's badge but never the names of the people who hold it. The plugin draws
+names in the colour of their role: in message headers, reply previews, mentions (except your own,
+which keep Sharkord's "you were mentioned" colour) and the member list. A user's colour is their
+first coloured role in the server's role order, else the default role's; white counts as no colour,
+as it does in Sharkord.
+
+Member-list names are coloured by user id, through the `member_list_item` slot. Messages, replies and
+mentions carry no id in Sharkord's page, so those are matched by the name shown.
+
+An admin can turn it off for everyone under **Settings → Plugins → Shiver → Colour usernames by
+role**. Open pages follow the change without a reload. Shiver's apps draw no colours of their own, so
+on a server without this plugin names stay Sharkord's plain colour.
+
+## Updating while people are connected
+
+Sharkord imports the client half by a url that carries the plugin's version, so after an update a
+page that stayed open holds two copies of it. The newest one answers and draws; older ones stand
+down.

@@ -76,8 +76,6 @@ export const api = {
   refreshServerInfo: (id: string) => invoke<ServerEntry>('refresh_server_info', { id }),
   /** every stored logo as a `data:` uri, by server id */
   serverIcons: () => invoke<Record<string, string>>('server_icons'),
-  /** the still of a server's page taken as the user left it for the rail, once */
-  serverStill: (id: string) => invoke<string | null>('server_still', { id }),
 
   /** forgets the server's session and password and wipes its page's storage */
   logOutServer: (id: string) => invoke<void>('log_out_server', { id }),
@@ -112,7 +110,10 @@ export const api = {
 
   /** fires whenever one of those counts moves */
   onUnread: (handler: (unread: Record<string, number>) => void) =>
-    listen<Record<string, number>>('shiver://inbox', (event) => handler(event.payload))
+    listen<Record<string, number>>('shiver://inbox', (event) => handler(event.payload)),
+  /** a server opens only after a wait, since Sharkord allows only a few joins a minute */
+  onJoinWait: (handler: (wait: { entryId: string; seconds: number }) => void) =>
+    listen<{ entryId: string; seconds: number }>('shiver://join-wait', (event) => handler(event.payload))
 };
 
 /** Tauri rejects with the rust error's user-facing message, which is already worth showing. */

@@ -91,6 +91,8 @@ struct ShowingState {
     left: HashMap<String, Instant>,
     /// when Shiver went to the background (Android's `onPause`), while it is there
     background_since: Option<Instant>,
+    /// counts servers asked for, so one that waited for its turn can tell a newer choice was made
+    opening: u64,
 }
 
 /// Where Shiver's own pages live and which server the webview is on.
@@ -145,6 +147,27 @@ impl Showing {
 
     pub fn server(&self) -> Option<String> {
         self.0.locked().server.clone()
+    }
+
+    /// Starts opening a server; the ticket says whether this is still the latest one asked for.
+    pub fn begin_opening(&self) -> u64 {
+        let mut state = self.0.locked();
+
+        state.opening += 1;
+        state.opening
+    }
+
+    pub fn still_opening(&self, ticket: u64) -> bool {
+        self.0.locked().opening == ticket
+    }
+
+    /// Holds back the core's own connection to a server for the grace given to one just left (the
+    /// one about to open at launch: its page will have its own).
+    pub fn hold_back(&self, entry_id: &str) {
+        self.0
+            .locked()
+            .left
+            .insert(entry_id.to_string(), Instant::now());
     }
 
     /// Records Shiver going to the background or coming back.
@@ -210,73 +233,9 @@ pub fn main_window(app: &AppHandle) -> Result<WebviewWindow> {
         .ok_or_else(|| Error::Webview("The Shiver window is not open".into()))
 }
 
-/// The still Android took of `origin`'s page as the user left it (`MainActivity.takeStill`), as
-/// a `data:` uri. Taken once; a still of another page is dropped.
-#[cfg(target_os = "android")]
-pub async fn take_still(app: &AppHandle, origin: String) -> Option<String> {
-    use jni::objects::{JString, JValue};
-
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-
-    main_window(app)
-        .ok()?
-        .with_webview(move |platform| {
-            platform.jni_handle().exec(move |env, activity, _| {
-                let take = || -> jni::errors::Result<Option<String>> {
-                    let origin = env.new_string(origin)?;
-                    let still = env
-                        .call_method(
-                            activity,
-                            "takeStill",
-                            "(Ljava/lang/String;)Ljava/lang/String;",
-                            &[JValue::Object(&origin)],
-                        )?
-                        .l()?;
-
-                    if still.is_null() {
-                        return Ok(None);
-                    }
-
-                    Ok(Some(env.get_string(&JString::from(still))?.into()))
-                };
-                let still = take();
-
-                if still.is_err() {
-                    let _ = env.exception_clear();
-                }
-
-                let _ = sender.send(still.ok().flatten());
-            });
-        })
-        .ok()?;
-
-    tokio::time::timeout(std::time::Duration::from_secs(2), receiver)
-        .await
-        .ok()?
-        .ok()?
-}
-
-/// Only Android takes stills.
-#[cfg(not(target_os = "android"))]
-pub async fn take_still(_app: &AppHandle, _origin: String) -> Option<String> {
-    None
-}
-
-/// Drops the still Android may still hold, as a server is opened (no origin matches none).
-fn forget_still(app: &AppHandle) {
-    let app = app.clone();
-
-    tauri::async_runtime::spawn(async move {
-        take_still(&app, String::new()).await;
-    });
-}
-
 /// Navigates to a server's client, seeding `token` through the URL fragment when there is one.
 pub fn show_server(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) -> Result<()> {
     let window = main_window(app)?;
-
-    forget_still(app);
-
     let mut url = Url::parse(&entry.origin)
         .map_err(|_| Core::InvalidOrigin(format!("'{}' is not a valid address", entry.origin)))?;
 

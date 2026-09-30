@@ -12,7 +12,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use sharkord_client::{CheckedSessions, ServerCheck};
-use shiver_core::{login, model::NotifyLevel, probe};
+use shiver_core::{limit::Joins, login, model::NotifyLevel, probe};
 
 use crate::{
     error::{Core, Error, Result},
@@ -194,14 +194,6 @@ pub async fn refresh_server_info(
     icons::save(&app, &id, icon.as_deref());
 
     Ok(entry)
-}
-
-/// The still of `id`'s page Android took as the user left it for the rail, given once.
-#[tauri::command]
-pub async fn server_still(app: AppHandle, id: String) -> Option<String> {
-    let origin = app.state::<Store>().registry().server(&id)?.origin.clone();
-
-    webview::take_still(&app, origin).await
 }
 
 /// Every server's logo as a `data:` uri, by entry id.
@@ -443,8 +435,15 @@ pub fn list_dms(store: State<'_, Store>, inbox: State<'_, Inbox>) -> Vec<inbox::
     inbox::collect_dms(&store.registry().servers, &inbox.dms())
 }
 
+/// Tells Shiver's page a server opens only after a wait: `{ entryId, seconds }`.
+const JOIN_WAIT_EVENT: &str = "shiver://join-wait";
+
 /// Hands the webview to a server's client; `dm_user` asks the bridge to open that conversation once
 /// connected.
+///
+/// Each page load joins the server, which Sharkord allows only a few times a minute, and past that
+/// its client drops the session. So a load waits for its place (`limit::Joins`), with Shiver's page
+/// counting down meanwhile; a newer choice made while it waits wins.
 #[tauri::command]
 pub async fn select_server(
     app: AppHandle,
@@ -453,7 +452,24 @@ pub async fn select_server(
     dm_user: Option<String>,
 ) -> Result<()> {
     let entry = entry_of(&store, &id)?;
+    let ticket = app.state::<Showing>().begin_opening();
     let token = inbox::session_for(&app, &id).await;
+    let place = app.state::<Joins>().take(&id);
+
+    if !place.wait.is_zero() {
+        webview::emit_home(
+            &app,
+            JOIN_WAIT_EVENT,
+            serde_json::json!({ "entryId": id, "seconds": place.wait.as_secs_f64().ceil() }),
+        );
+        tokio::time::sleep(place.wait).await;
+    }
+
+    if !app.state::<Showing>().still_opening(ticket) {
+        app.state::<Joins>().give_back(&id, place);
+
+        return Ok(());
+    }
 
     app.state::<Showing>().set_pending_dm_user(dm_user);
 

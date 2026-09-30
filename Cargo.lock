@@ -4020,7 +4020,6 @@ dependencies = [
 name = "shiver-mobile"
 version = "0.1.8"
 dependencies = [
- "jni 0.21.1",
  "reqwest 0.12.28",
  "semver",
  "serde",
@@ -4034,6 +4033,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-shiver-push",
+ "tauri-plugin-shiver-rail",
  "tauri-plugin-shiver-secrets",
  "thiserror 2.0.20",
  "tokio",
@@ -4612,6 +4612,17 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-shiver-push"
+version = "0.1.8"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "tauri-plugin-shiver-rail"
 version = "0.1.8"
 dependencies = [
  "serde",

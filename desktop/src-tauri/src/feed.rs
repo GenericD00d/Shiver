@@ -128,9 +128,12 @@ pub struct DrainResult {
     /// absent when nothing changed
     #[serde(default)]
     pub dms: Option<Vec<DmChannel>>,
-    /// mutes toggled from Sharkord's channel menu
+    /// mutes toggled from the channel menu
     #[serde(default)]
     pub mutes: Vec<QueuedMute>,
+    /// "Mark all as read" was chosen in the channel menu, which marked Sharkord's channels already
+    #[serde(default)]
+    pub mark_all_read: bool,
     /// the plugin's reconciled mute list, once per connect
     #[serde(default)]
     pub synced_mutes: Option<Vec<i64>>,
@@ -615,5 +618,21 @@ mod tests {
                 .unwrap();
 
         assert_eq!(dm.last_message_at, None);
+    }
+
+    #[test]
+    fn the_channel_menus_requests_arrive_under_the_pages_names() {
+        let result: DrainResult = serde_json::from_str(
+            r#"{ "mutes": [{ "channelId": 4, "muted": true }], "markAllRead": true }"#,
+        )
+        .unwrap();
+
+        assert!(result.mark_all_read);
+        assert_eq!(result.mutes[0].channel_id, 4);
+        assert!(
+            !serde_json::from_str::<DrainResult>("{}")
+                .unwrap()
+                .mark_all_read
+        );
     }
 }
