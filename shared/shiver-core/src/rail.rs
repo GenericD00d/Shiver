@@ -114,58 +114,6 @@ pub fn next_position<S: RailServer>(servers: &[S], folders: &[Folder]) -> i32 {
         .map_or(0, |max| max + 1)
 }
 
-/// Up to two initials, for a server without a logo (`initials` in `shared/web/rail.ts`).
-pub fn initials(name: &str) -> String {
-    let letters: String = name
-        .split_whitespace()
-        .take(2)
-        .filter_map(|word| word.chars().next())
-        .flat_map(char::to_uppercase)
-        .collect();
-
-    if letters.is_empty() {
-        "?".into()
-    } else {
-        letters
-    }
-}
-
-/// One row of the rail as drawn: a loose server, or a folder with its servers.
-#[derive(Debug, PartialEq)]
-pub enum RailRow<'a, S> {
-    Server(&'a S),
-    Folder(&'a Folder, Vec<&'a S>),
-}
-
-/// The rail's rows in order: loose servers and folders by position, each folder's servers in their
-/// own order. A server naming a folder that is gone is drawn loose rather than lost.
-pub fn rows<'a, S: RailServer>(servers: &'a [S], folders: &'a [Folder]) -> Vec<RailRow<'a, S>> {
-    let in_folder = |server: &S| {
-        server
-            .folder_id()
-            .is_some_and(|id| folders.iter().any(|folder| folder.id == id))
-    };
-    let mut rows: Vec<(i32, RailRow<'a, S>)> = servers
-        .iter()
-        .filter(|server| !in_folder(server))
-        .map(|server| (server.position(), RailRow::Server(server)))
-        .chain(folders.iter().map(|folder| {
-            let mut members: Vec<&S> = servers
-                .iter()
-                .filter(|server| server.folder_id() == Some(folder.id.as_str()))
-                .collect();
-
-            members.sort_by_key(|server| server.position());
-
-            (folder.position, RailRow::Folder(folder, members))
-        }))
-        .collect();
-
-    rows.sort_by_key(|(position, _)| *position);
-
-    rows.into_iter().map(|(_, row)| row).collect()
-}
-
 /// A client's servers and folders, borrowed together.
 pub struct Rail<'a, S> {
     pub servers: &'a mut Vec<S>,
@@ -432,42 +380,6 @@ mod tests {
             position,
             expanded: true,
         }
-    }
-
-    #[test]
-    fn initials_take_two_words_and_fall_back_to_a_question_mark() {
-        assert_eq!(initials("my  cool server"), "MC");
-        assert_eq!(initials("éclair"), "É");
-        assert_eq!(initials("   "), "?");
-    }
-
-    #[test]
-    fn rows_put_a_folders_servers_where_the_folder_sits() {
-        let servers = vec![
-            at("a", Some("f"), 1),
-            at("b", Some("f"), 0),
-            at("c", None, 0),
-            at("d", None, 2),
-            at("e", Some("gone"), 3),
-        ];
-        let folders = vec![folder("f", 1)];
-        let drawn: Vec<String> = rows(&servers, &folders)
-            .into_iter()
-            .map(|row| match row {
-                RailRow::Server(server) => server.id.clone(),
-                RailRow::Folder(folder, members) => format!(
-                    "{}[{}]",
-                    folder.id,
-                    members
-                        .iter()
-                        .map(|member| member.id.as_str())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                ),
-            })
-            .collect();
-
-        assert_eq!(drawn, ["c", "f[b,a]", "d", "e"]);
     }
 
     #[test]

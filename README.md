@@ -88,9 +88,9 @@ Everyone on the server gets statuses and colours, browser users included.
 ## What it deliberately does not do
 
 Each server's client runs pinned to its own origin with no way to call into Shiver. On desktop the
-rail is Shiver's own webview; on Android, where there is one webview, it is drawn with Android's own
-views over the server's page, which cannot read them. Either way a server's page is told nothing
-about your other servers.
+rail is Shiver's own webview; on Android it is drawn over the server's page in a WebView of its own,
+which loads nothing but the rail and which the server's page cannot read. Either way a server's page
+is told nothing about your other servers.
 
 ## Building
 

@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build:bridge": "vite build --config vite.bridge.config.ts && vite build --config vite.bridge.config.ts --mode document-start",
-    "build": "bun run build:bridge && tsc --noEmit && vite build",
+    "build:rail": "vite build --config vite.rail.config.ts",
+    "build": "bun run build:bridge && bun run build:rail && tsc --noEmit && vite build",
     "tauri": "tauri",
     "app": "tauri dev",
     "android": "tauri android dev",

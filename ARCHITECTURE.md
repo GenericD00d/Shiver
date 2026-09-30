@@ -23,9 +23,11 @@ desktop/bridge/            desktop bridge (IIFE, include_str!'d as an init scrip
 mobile/src-tauri/          Android core (crate `shiver-mobile`); capabilities/: event listen only, own page
 mobile/src/                Android UI (React)
 mobile/bridge/             mobile bridge (inside server pages; knows only that server); document-start.ts runs first
+mobile/rail/               the quick rail's page (the shared `Rail`), built by `bun run build:rail` into the rail
+                           plugin's assets (generated, ignored); part of `bun run build` and `beforeDevCommand`
 mobile/plugins/            tauri-plugin-shiver-push (UnifiedPush), tauri-plugin-shiver-secrets (Keystore),
                            tauri-plugin-shiver-rail (the quick rail: direct messages, servers, add, settings;
-                           native views over the server page)
+                           that page in a WebView of its own over the server page)
 plugin/                    Sharkord companion plugin (server/ + client/, plain JS, node tests)
 docs/react-plan.md         the plan for moving the remaining non-React UI to shared React (delete when done)
 scripts/check-version.py   checks the workspace and tauri.conf.json versions agree
@@ -40,7 +42,7 @@ scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys,
 `cargo fmt --all --check` · `cargo clippy --workspace --all-targets -- -D warnings` ·
 `cargo test --workspace` · `bunx tsc --noEmit` and `bun audit` in `desktop` and `mobile` · `bun test shared/web` ·
 `node --test test/*.test.js` in `plugin` · `python3 scripts/check-version.py` · `python3 scripts/check-sharkord.py` ·
-`bun run build:bridge` in each app (bridges must build before the Rust crates compile).
+`bun run build:bridge` in each app (bridges must build before the Rust crates compile) · `bun run build:rail` in `mobile`.
 
 ## Conventions
 
@@ -72,8 +74,8 @@ scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys,
 | `error` | `Error` {InvalidOrigin, Storage, Unreachable, NotSharkord, Refused, InvalidInput, UnknownServer, UnknownFolder}, `Result` |
 | `origin` | `normalize_origin`, `is_same_origin` (the one webview-boundary comparison) |
 | `store` | `Store<R>` (`load`, `registry`→`ReadGuard`, `edit`); `LockExt::locked` (poison-tolerant lock). An edit applies only once written, and one that changes nothing is not written; readers never wait on the disk; atomic writes, owner-only on Unix |
-| `model` | `Palette`/`palette` (Shiver's page colours as `theme.ts` derives them, for native views), `DEFAULT_RAIL_COLOR`, `NotifyLevel` {All, Mentions, Dms} (`allows(is_dm, mentions_me)`; an unreadable value reads as All), `Folder`, `MutedChannel`, `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `MAX_SOUND_VOLUME`, `default_true`, `default_sound_volume`, `sanitised_color`, `sanitised_optional_color`, `rgb`, `theme_payload`, `muted_for`, `normalized_mutes`, `set_muted_for` |
-| `rail` | `initials`, `rows`→`RailRow` {Server, Folder(folder, servers)} (the rail as drawn; the quick rail's order); `RailServer` trait + `rail_server!(Type)` macro; `registry!(Registry, Server)` (that plus `server`, `server_mut`, `muted_for`, `set_muted_for`, `next_position`, `rail`); `RailRef {kind: RailKind (Server/Folder), id}`; `next_position`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder` (items left out follow in their old order), `reorder_servers`, `prune_folders` |
+| `model` | `NotifyLevel` {All, Mentions, Dms} (`allows(is_dm, mentions_me)`; an unreadable value reads as All), `Folder`, `MutedChannel`, `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `MAX_SOUND_VOLUME`, `default_true`, `default_sound_volume`, `sanitised_color`, `sanitised_optional_color`, `rgb`, `theme_payload`, `muted_for`, `normalized_mutes`, `set_muted_for` |
+| `rail` | `RailServer` trait + `rail_server!(Type)` macro; `registry!(Registry, Server)` (that plus `server`, `server_mut`, `muted_for`, `set_muted_for`, `next_position`, `rail`); `RailRef {kind: RailKind (Server/Folder), id}`; `next_position`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder` (items left out follow in their old order), `reorder_servers`, `prune_folders` |
 | `http` | `client()` (pooled, no redirects), `bytes_within_limit`, `MAX_BODY` |
 | `login` | `sign_in` (`POST /login` → token) |
 | `jwt` | reads `exp` only: `freshness`→`Freshness` {Fresh, Due (use it, renew in the background), Expired}, `outlasts`; `Renewals` (`begin`/`succeeded`: one background renewal per entry per 5 min) |
@@ -130,7 +132,7 @@ Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and
 | `model` | `ServerEntry` (+`push_token`, `retired_push_endpoints`), `Settings`, `Registry` (`registry!` helpers, `entry_for_push_token`, `ensure_push_tokens`) |
 | `store` | as desktop |
 | `icons` | logos as files (`icons/<entry id>`, a `data:` uri each): `save` (none deletes), `load`, `load_one`, `key` (names the file's contents by size and time, unread), `restore` (prune the gone, fetch the missing) |
-| `rail` | the quick rail over the server page: `QuickRail` (whether it is up, the logo keys it holds), `wanted` (a page's `#home`), `open`, `refresh` (unread changed), `close`, `chosen` (another server or one of Shiver's screens leave through `#open=`, `#dms`, `#add`, `#settings`; the same server just closes it; a rail that cannot be drawn falls back to `#home`) |
+| `rail` | the quick rail over the server page: `QuickRail` (whether it is up, the logo keys it holds), `wanted` (a page's `#home`), `open`, `refresh` (unread changed), `close`, `chosen` (another server or one of Shiver's screens leave through `#open=`, `#dms`, `#add`, `#settings`; the same server just closes it; a folder opened or shut is stored and the rail redrawn; a rail that cannot be drawn falls back to `#home`) |
 | `inbox` | core sockets for servers not on screen + secret storage: `Inbox` (tokens, problems, plugins, dms, unread, signed_out, baselines), `sync` (each server left goes unwatched for `WATCH_GRACE`, one timer for all), `set_background` (the server on screen is watched by the core after `WATCH_GRACE` in the background), `restart`, `restore` (holds back the socket of the server about to open), `session_for` (renews a due session in the background, an expired one first), `remember_session`, `remember_password`, `forget_password`, `forget_everywhere`, `Watch` (each connection takes a join place first), `harvest_token` (never over a session that outlasts it), `replace_mutes`, `watch_mutes` (not in the background), `collect_dms`, `DmEntry`, `INBOX_EVENT` |
 | `webview` | the single webview (`main_window`): `Showing` (home, current server and whether it loaded, a stray page from history, pending DM user, when each server was left, whether Shiver is in the background; `at_home`, `just_left`, `hold_back`, `begin_opening`/`still_opening`, `set_background`, `in_background`, `kept_by_page`), `show_server`, `show_failed` (back to Shiver's page with `#failed=<id>`), `go_home`, `emit_home` (events only while Shiver's page is up), `without_seed`, `install_bridge`/`PageContext` (that entry's own config only), `read_mutes` (the page's mutes and outside links), navigation guard (`is_allowed`, `navigation_allowed`; allows only, since Android also asks it for frames and cancelled navigations), arrival on load (`is_home`, `landed_home`), `background_color`, `document_start` (bundle wrapped with the per-launch seed secret; `seed_key_for` derives each origin's key), `Openings` |
 | `push` | UnifiedPush per chosen server: `Push`, `start`, `register_wanted`, `set_wanted` (turning off retires the endpoint; the page clears it with the plugin), `unregister`, `migrate_tokens`, `PUSH_EVENT` |
@@ -141,9 +143,11 @@ Page hooks (mobile): `__SHIVER__` (config), `__SHIVER_MUTED__`, `__SHIVER_OPEN__
 
 Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unregister`, `on_event`,
 `PushEvent`); `SecretsExt` (`set`, `get`, `remove`, `keys`, `wipe_origin`: that origin's webview storage and camera/mic consent);
-`RailExt` (`show`, `refresh`: a `RailView` of `Row`s and `Tile`s, answering the logo keys it lacks; `hide`; `on_event` → `RailEvent`
-{Open, Dms, Add, Settings, Closed}; Kotlin `RailPlugin`: the overlay laid out as Shiver's rail (direct messages, servers, add,
-settings pinned at the bottom), its back press and animations; icons in `android/src/main/res/drawable`). Kotlin in `android/src/main/java`.
+`RailExt` (`show`, `refresh`: a `RailView` (the user's colours, `Tile`s, `RailFolder`s), answering the logo keys it lacks; `hide`;
+`on_event` → `RailEvent` {Open, Dms, Add, Settings, Closed, Folder}; Kotlin `RailPlugin`: the host, a WebView made at start-up and
+kept, loading only `mobile/rail`'s page from the assets (`WebViewAssetLoader`, network loads blocked, no navigation), talking to it
+over `shiverRail` (`addWebMessageListener`, its origin only; only known choices with well-formed ids pass), and the overlay, scrim,
+slide-in once the page has drawn, and back press). Kotlin in `android/src/main/java`.
 
 ## shared/web (TS)
 

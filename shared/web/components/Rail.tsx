@@ -34,10 +34,10 @@ type Props = {
   onAdd: () => void;
   onSettings: () => void;
   onToggleFolder: (id: string, expanded: boolean) => void;
-  /** a drag ended: the calls to make, in order (`railDrop`) */
-  onDrop: (steps: RailStep[]) => void;
-  /** a right click, or a touch held still: the menu for this tile, beside it */
-  onMenu: (target: RailRef, at: { x: number; y: number }) => void;
+  /** a drag ended: the calls to make, in order (`railDrop`). Without it tiles are not picked up. */
+  onDrop?: (steps: RailStep[]) => void;
+  /** a right click, or a touch held still: the menu for this tile, beside it. Without it, none. */
+  onMenu?: (target: RailRef, at: { x: number; y: number }) => void;
   /** drawn above the settings tile (the desktop client's call controls) */
   children?: ReactNode;
 };
@@ -144,8 +144,9 @@ export const Rail = ({
   const items = useMemo(
     () =>
       byPosition([
+        // a server naming a folder that is gone is drawn loose rather than lost
         ...servers
-          .filter((server) => !server.folderId)
+          .filter((server) => !server.folderId || !folders.some((folder) => folder.id === server.folderId))
           .map((server) => ({ kind: 'server' as const, position: server.position, server })),
         ...folders.map((folder) => ({
           kind: 'folder' as const,
@@ -296,11 +297,11 @@ export const Rail = ({
 
         // held still, a finger meant the menu; moved, the order is what matters
         if (current.touch && !current.moved) {
-          latest.current.onMenu(refOf(current.key), menuAt(current.key));
+          latest.current.onMenu?.(refOf(current.key), menuAt(current.key));
         } else if (target) {
           const { servers, folders, onDrop } = latest.current;
 
-          onDrop(railDrop(servers, folders, refOf(current.key), refOf(target.key), target.zone));
+          onDrop?.(railDrop(servers, folders, refOf(current.key), refOf(target.key), target.zone));
         }
       }
 
@@ -341,8 +342,8 @@ export const Rail = ({
       else tiles.current.delete(key);
     },
     onPointerDown: (event: React.PointerEvent) => {
-      // the right button is the menu's, which `contextmenu` brings
-      if (event.button !== 0 || press.current) return;
+      // the right button is the menu's, which `contextmenu` brings; a rail that takes no drops has no drag
+      if (event.button !== 0 || press.current || !onDrop) return;
 
       const touch = event.pointerType === 'touch';
 
@@ -365,7 +366,7 @@ export const Rail = ({
       // a held finger brings this too, and its menu comes from the hold instead
       if (press.current?.touch) return;
 
-      onMenu(refOf(key), menuAt(key));
+      onMenu?.(refOf(key), menuAt(key));
     },
     onClick: () => {
       if (Date.now() - swallowClick.current < HOLD_MS) return;

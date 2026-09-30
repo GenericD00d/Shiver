@@ -4,7 +4,7 @@
   "version": "0.1.8",
   "identifier": "com.shiver.mobile",
   "build": {
-    "beforeDevCommand": "bun run build:bridge && bun run dev",
+    "beforeDevCommand": "bun run build:bridge && bun run build:rail && bun run dev",
     "devUrl": "http://localhost:1421",
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"

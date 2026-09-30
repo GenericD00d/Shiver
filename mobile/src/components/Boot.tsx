@@ -11,7 +11,7 @@ export type BootState =
   | { kind: 'connecting'; server: ServerEntry; until?: number }
   | { kind: 'failed'; server: ServerEntry }
   | { kind: 'confirm'; action: ConfirmAction; server: ServerEntry }
-  /** Shiver's own page after a swipe for the rail that could not be drawn natively; `server` is the one it came from */
+  /** Shiver's own page after a swipe for the quick rail that could not be drawn; `server` is the one it came from */
   | { kind: 'home'; server: ServerEntry }
   | { kind: 'empty' };
 
