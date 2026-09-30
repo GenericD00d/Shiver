@@ -81,7 +81,8 @@ will serve you perfectly well.
 
 Copied into a server's `plugins/` directory. It stores per-user settings on the server so they
 follow you between devices: muted channels, custom statuses, and the push endpoints that let a
-server wake your phone. Everyone on the server sees statuses, browser users included.
+server wake your phone. It also draws usernames in their role colour (an admin can turn that off).
+Everyone on the server gets statuses and colours, browser users included.
 
 ## What it deliberately does not do
 

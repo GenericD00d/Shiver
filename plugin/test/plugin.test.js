@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import {
   adoptOldStore,
   createLimiter,
+  createOptions,
   createPush,
   createRows,
   createStatuses,
@@ -32,9 +33,11 @@ import {
 const fakeCtx = (rows = {}) => {
   const data = new Map(Object.entries(rows).map(([id, row]) => [Number(id), row]));
   const pushed = [];
+  const settingValues = new Map();
   const ctx = {
     data,
     pushed,
+    settingValues,
     failReads: new Set(),
     logger: { log: () => {}, debug: () => {} },
     userData: {
@@ -52,6 +55,13 @@ const fakeCtx = (rows = {}) => {
     },
     permissions: { userCanInChannel: async () => true },
     push: { toAll: (payload) => pushed.push(payload) },
+    settings: {
+      register: async (definitions) => {
+        for (const { key, defaultValue } of definitions) if (!settingValues.has(key)) settingValues.set(key, defaultValue);
+
+        return { get: (key) => settingValues.get(key) };
+      }
+    },
     users: { list: async () => [...data.keys()].map((id) => ({ id })) }
   };
 
@@ -442,11 +452,29 @@ test('reads through the actions are rate limited per user', async () => {
 
   await onLoad(ctx);
 
-  for (let index = 0; index < 59; index += 1) await actions.get('getStatuses')({ userId: 1 });
+  assert.deepEqual(await actions.get('getOptions')({ userId: 1 }), { roleColors: true });
+
+  for (let index = 0; index < 58; index += 1) await actions.get('getStatuses')({ userId: 1 });
   assert.deepEqual(await actions.get('getMutedChannels')({ userId: 1 }), { mutedChannels: [4] });
   await assert.rejects(actions.get('getOwnStatus')({ userId: 1 }), /Too many/);
   assert.deepEqual(await actions.get('getMutedChannels')({ userId: 2 }), { mutedChannels: [] });
   await onUnload(ctx, { quiet: true });
+});
+
+/* ── page options ── */
+
+test('the role colour switch is on by default, and pushed to every page when an admin changes it', async () => {
+  const ctx = fakeCtx();
+  const options = await createOptions(ctx);
+
+  assert.deepEqual(options.read(), { roleColors: true });
+
+  ctx.settingValues.set('roleColors', false);
+  options.onSet({ key: 'roleColors', value: false });
+  options.onSet({ key: 'unrelated', value: 1 });
+
+  assert.deepEqual(options.read(), { roleColors: false });
+  assert.deepEqual(ctx.pushed, [{ kind: 'options', roleColors: false }]);
 });
 
 /* ── migration ── */

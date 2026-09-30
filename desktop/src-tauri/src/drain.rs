@@ -309,8 +309,14 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
         changed = true;
     }
 
-    // Mutes: the plugin's reconciled list replaces ours, then toggles from Sharkord's channel menu
-    // apply on top. One registry write for the lot.
+    // the rest of what the rail's "Mark all as read" does: Shiver's notifications and missed count
+    if result.mark_all_read {
+        crate::watch::mark_read(app, entry_id);
+        changed |= feed.mark_entry_read(entry_id);
+    }
+
+    // Mutes: the plugin's reconciled list replaces ours, then toggles from the channel menu apply on
+    // top. One registry write for the lot.
     if result.synced_mutes.is_some() || !result.mutes.is_empty() {
         let mut next: BTreeSet<i64> = result
             .synced_mutes

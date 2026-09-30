@@ -17,14 +17,11 @@ export type SharkordChannel = {
   type?: string;
 };
 
-export type SharkordUser = { id: number; name: string; avatar?: SharkordFile | null; roleIds?: number[] };
-
-export type SharkordRole = { id: number; name: string; color?: string; isDefault?: boolean };
+export type SharkordUser = { id: number; name: string; avatar?: SharkordFile | null };
 
 export type SharkordState = {
   channels?: SharkordChannel[];
   users?: SharkordUser[];
-  roles?: SharkordRole[];
   ownUserId?: number;
   selectedChannelId?: number;
   currentVoiceChannelId?: number | null;
@@ -55,8 +52,6 @@ export const DM_ITEM = '[data-testid="dm-item"]';
 export const DM_TOGGLE = '[data-testid="dm-toggle"]';
 const UNREAD_COUNT = '[data-testid="unread-count"]';
 export const MESSAGE_ITEM = '[data-testid="message-item"]';
-export const MEMBER_ITEM = '[data-testid="member-item"]';
-export const SETTINGS_TRIGGER = '[data-testid="user-settings-trigger"]';
 export const COMPOSE_EDITOR = '[data-testid="message-compose-editor"]';
 /** where Sharkord portals its full-screen picture */
 export const IMAGE_VIEWER = '#imagePortal';
@@ -68,12 +63,8 @@ export const SIDE_PANEL = '.bg-card[class~="hidden"][class~="lg:flex"]:not(.w-0)
 export const NARROW = '(width < 64rem)';
 export const CONNECT_FORM = '[data-testid="connect-form"]';
 export const SERVER_VIEW = '[data-testid="server-view"]';
-/** each message's wrapper; its parent's previous sibling is the author header */
+/** each message's wrapper */
 export const MESSAGE_WRAPPER = '[id^="message-"]';
-/** the author's name in an inline reply's preview line */
-export const REPLY_AUTHOR = '[class~="max-w-40"][class~="truncate"][class~="font-medium"]';
-/** `<span class="mention">@Name</span>` inside a message */
-export const MENTION_CHIP = 'span.mention';
 /** a reaction pill the user is part of (Sharkord marks it with only a 1px border) */
 const REACTED_PILL = '[class~="h-9"][class~="border-border"]';
 /** a file card: an anchor to the file with its icon, name, size and sometimes a delete button */
@@ -293,17 +284,12 @@ export function markAllChannelsRead() {
 
 /** an attribute rather than a class: React rewrites a row's classes, never an attribute it did not set */
 const MUTED = 'data-shiver-muted';
-const SHIVER_MENU_ITEM = 'shiver-menu-item';
 
-/**
- * Styles muted channel rows (dimmed, unread pill hidden), Shiver's item in Sharkord's menus, and
- * reaction pills the user is part of (tinted in the accent).
- */
+/** Styles muted channel rows (dimmed, unread pill hidden) and reaction pills the user is part of (tinted in the accent). */
 export function installMuteStyles() {
   ensureStyle('shiver-mute-style').textContent = `
 [${MUTED}] { opacity: 0.45; }
 [${MUTED}] ${UNREAD_COUNT} { display: none !important; }
-.${SHIVER_MENU_ITEM}:hover, .${SHIVER_MENU_ITEM}:focus { background-color: var(--accent); color: var(--accent-foreground); }
 ${REACTED_PILL} {
   background-color: color-mix(in srgb, var(--primary) 22%, transparent) !important;
   border-color: var(--primary) !important;
@@ -327,17 +313,8 @@ export function paintMuted(muted: ReadonlySet<number>, rows: Iterable<Element> =
   for (const row of list) row.toggleAttribute(MUTED, names.has(rowName(row)));
 }
 
-/**
- * Adds "Mute/Unmute in Shiver" to one of Sharkord's own (Radix) menus, styled like its siblings.
- * Replaces Shiver's items left from an earlier open, since Radix reuses its menu.
- */
-export function addMuteItem(menu: HTMLElement, isMuted: boolean, toggle: () => void) {
-  for (const stale of menu.querySelectorAll(`.${SHIVER_MENU_ITEM}`)) stale.remove();
-
-  addMenuItem(menu, isMuted ? 'Unmute in Shiver' : 'Mute in Shiver', toggle);
-}
-
-const pressEscape = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+/** Presses Escape in the page, which closes Sharkord's topmost menu or dialog. */
+export const pressEscape = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
 /** Closes the topmost of Sharkord's open dialogs (its settings among them) as Escape does; true when one was open. */
 export function closeDialog() {
@@ -346,26 +323,4 @@ export function closeDialog() {
   pressEscape();
 
   return true;
-}
-
-/** Appends one of Shiver's items to a Sharkord menu, styled as Sharkord's own. */
-export function addMenuItem(menu: HTMLElement, label: string, run: () => void) {
-  const sibling = menu.querySelector<HTMLElement>(`[role="menuitem"]:not(.${SHIVER_MENU_ITEM})`);
-  const item = document.createElement('div');
-
-  item.setAttribute('role', 'menuitem');
-  item.tabIndex = -1;
-  item.className = `${sibling?.className ?? ''} ${SHIVER_MENU_ITEM}`.trim();
-  item.textContent = label;
-
-  item.addEventListener('mouseenter', () => item.focus());
-  item.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    run();
-    // lets Sharkord close its menu as it would for any item
-    pressEscape();
-  });
-
-  menu.appendChild(item);
 }

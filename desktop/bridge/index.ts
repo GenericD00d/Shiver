@@ -3,23 +3,20 @@
  * own scripts. It is handed only this entry's config. Pages have no IPC, so it queues what it sees
  * and the core collects it through `__SHIVER_DRAIN__`; the core calls in through the other
  * `__SHIVER_*__` hooks. It reads Sharkord rather than driving it, except for opening a DM, voice
- * controls and the channel menu's mute item, which all use the page's own controls.
+ * controls and the channel menu's items, which all use the page's own controls.
  */
 
-import { defineHook, ensureStyle, installExternalLinks, onDomSettled, openMenuOnScreen, addedMenu, touched, whenDocumentReady } from '../../shared/web/bridge/dom';
+import { channelPressed, installChannelMenu, requestChannelMenu } from '../../shared/web/bridge/channel-menu';
+import { defineHook, ensureStyle, installExternalLinks, onDomSettled, touched, whenDocumentReady } from '../../shared/web/bridge/dom';
 import {
   installAttachmentCards,
-  installRoleColors,
   installSidePanels,
   installSoundVolume,
-  installStatusButton,
   installVoiceColors
 } from '../../shared/web/bridge/features';
 import { pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
 import {
-  addMuteItem,
   CHANNEL_ITEM,
-  channelOfRow,
   closeDialog,
   COMPOSE_EDITOR,
   CONNECT_FORM,
@@ -40,7 +37,6 @@ import {
   SIDE_PANEL,
   SIDEBAR,
   sharkordStore,
-  type SharkordChannel,
   type SharkordState,
   watchStore
 } from '../../shared/web/bridge/sharkord';
@@ -98,6 +94,8 @@ declare global {
       notifications: QueuedNotification[];
       dms: DmChannel[] | null;
       mutes: QueuedMute[];
+      /** "Mark all as read" was chosen in the channel menu, which marked Sharkord's side already */
+      markAllRead: boolean;
       /** the plugin's reconciled mute list, sent once */
       syncedMutes: number[] | null;
       /** the conversation Shiver asked for could not be opened (the core knows which it asked for) */
@@ -164,6 +162,7 @@ function install(shiver: ShiverConfig) {
   let dmsSignature = '';
   let syncedMutes: number[] | null = null;
   let openDmFailed = false;
+  let markAllRead = false;
   let notify = shiver.notify;
   /** set when the level changes on a loaded page, whose Sharkord read its switches at load */
   let notifyChangedLive = false;
@@ -205,6 +204,7 @@ function install(shiver: ShiverConfig) {
     const drained = {
       notifications: resolveDmChannels(queue, state).splice(0),
       mutes: muteQueue.splice(0),
+      markAllRead,
       dms,
       syncedMutes,
       open: openQueue.splice(0),
@@ -220,10 +220,12 @@ function install(shiver: ShiverConfig) {
     dms = null;
     syncedMutes = null;
     openDmFailed = false;
+    markAllRead = false;
 
     const { notifications, mutes, open, ready, signedOut, fullscreen, voice, viewingChannelId } = drained;
     const now = JSON.stringify([ready, signedOut, fullscreen, voice, viewingChannelId]);
-    const queued = notifications.length || mutes.length || open.length || drained.dms || drained.syncedMutes || drained.openDmFailed;
+    const queued =
+      notifications.length || mutes.length || open.length || drained.markAllRead || drained.dms || drained.syncedMutes || drained.openDmFailed;
 
     // a signed-out page keeps saying so: recovery retries on those reports
     if (!full && !queued && !signedOut && now === reported) return null;
@@ -292,9 +294,19 @@ function install(shiver: ShiverConfig) {
       }
     });
 
-    installRoleColors();
-    watchChannelContextMenu(() => muted, muteQueue);
-    installStatusButton(false);
+    installChannelMenu({
+      mutes: {
+        has: (channelId) => muted.has(channelId),
+        // the core stores it and hands the page its new list
+        toggle: (channelId) => muteQueue.push({ channelId, muted: !muted.has(channelId) })
+      },
+      markAllRead: () => {
+        markAllChannelsRead();
+        markAllRead = true;
+      },
+      touch: false
+    });
+    installChannelRightClick();
 
     void syncMutesWithPlugin([...muted]).then((merged) => {
       if (!merged) return;
@@ -734,66 +746,18 @@ function showVoiceNotice() {
   }, 4000);
 }
 
-/** How long Shiver waits for Sharkord's own channel menu before drawing its own. */
-const SHARKORD_MENU_GRACE_MS = 250;
-/** How long after a right-click a newly added menu is taken to belong to it. */
-const SHARKORD_MENU_WINDOW_MS = 2000;
-const OWN_MENU_ID = 'shiver-channel-menu';
-
-/**
- * Right-click on a channel: adds "Mute in Shiver" to Sharkord's menu, or, for users Sharkord gives
- * no menu (it has one only for channel managers), draws Shiver's own one-item menu after a short
- * grace. A late Sharkord menu still gets the item and replaces Shiver's.
- */
-function watchChannelContextMenu(getMuted: () => Set<number>, muteQueue: QueuedMute[]) {
-  let pending: SharkordChannel | null = null;
-  let fallback = 0;
-  /** what the last right-click was on, kept past `settle` for late menus */
-  let lastChannel: SharkordChannel | null = null;
-  let lastAt = 0;
+/** Right-click on a sidebar channel opens the channel menu (`channel-menu.ts`), not the browser's. */
+function installChannelRightClick() {
   let cancelNativeFor: Event | null = null;
 
-  const toggleFor = (channel: SharkordChannel) => () => muteQueue.push({ channelId: channel.id, muted: !getMuted().has(channel.id) });
-
-  const settle = () => {
-    window.clearTimeout(fallback);
-    fallback = 0;
-    pending = null;
-  };
-
-  // capture: the bookkeeping has to happen before Radix renders its menu during React's dispatch
+  // capture: the press has to be noted before Radix renders its own menu during React's dispatch
   document.addEventListener(
     'contextmenu',
     (event) => {
-      settle();
-      closeOwnMenu();
-      cancelNativeFor = null;
+      const row = (event.target as Element | null)?.closest?.(CHANNEL_ITEM) ?? null;
 
-      const row = (event.target as Element | null)?.closest?.(CHANNEL_ITEM);
-
-      pending = row ? channelOfRow(row) : null;
-
-      if (!pending) return;
-
-      lastChannel = pending;
-      lastAt = Date.now();
-      cancelNativeFor = event;
-
-      const { clientX, clientY } = event;
-
-      fallback = window.setTimeout(() => {
-        const channel = pending;
-
-        settle();
-
-        if (!channel) return;
-
-        // Radix moves an already-open menu rather than adding one, so the observer never sees it
-        const open = openMenuOnScreen();
-
-        if (open) addMuteItem(open, getMuted().has(channel.id), toggleFor(channel));
-        else openOwnMenu(clientX, clientY, getMuted().has(channel.id), toggleFor(channel));
-      }, SHARKORD_MENU_GRACE_MS);
+      channelPressed(row);
+      cancelNativeFor = row && requestChannelMenu(row, event.clientX, event.clientY) ? event : null;
     },
     true
   );
@@ -805,79 +769,6 @@ function watchChannelContextMenu(getMuted: () => Set<number>, muteQueue: QueuedM
     cancelNativeFor = null;
     event.preventDefault();
   });
-
-  new MutationObserver((records) => {
-    if (!lastChannel || Date.now() - lastAt >= SHARKORD_MENU_WINDOW_MS) return;
-
-    const menu = addedMenu(records);
-
-    if (!menu) return;
-
-    addMuteItem(menu, getMuted().has(lastChannel.id), toggleFor(lastChannel));
-    settle();
-    closeOwnMenu();
-  }).observe(document.body, { childList: true, subtree: true });
-}
-
-const closeOwnMenu = () => document.getElementById(OWN_MENU_ID)?.remove();
-
-/**
- * Shiver's one-item channel menu, in a closed shadow root. It closes on a press outside it (not
- * any press, or the item's own click would never land), a scroll or Escape.
- */
-function openOwnMenu(x: number, y: number, isMuted: boolean, toggle: () => void) {
-  closeOwnMenu();
-
-  const host = document.createElement('div');
-  const root = host.attachShadow({ mode: 'closed' });
-  const menu = document.createElement('div');
-  const item = document.createElement('button');
-
-  host.id = OWN_MENU_ID;
-  root.innerHTML = `<style>
-:host { position: fixed; inset: 0; z-index: 2147483646; }
-.menu { position: absolute; min-width: 180px; padding: 4px; border-radius: 8px;
-  border: 1px solid rgb(255 255 255 / 12%); background: #1f1f1f; color: #fafafa;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 55%); font: 500 13px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif; }
-.item { display: block; width: 100%; padding: 8px 10px; border: none; border-radius: 6px;
-  background: none; color: inherit; font: inherit; text-align: left; cursor: default; }
-.item:hover { background: #333333; }
-</style>`;
-
-  item.className = 'item';
-  item.type = 'button';
-  item.textContent = isMuted ? 'Unmute in Shiver' : 'Mute in Shiver';
-  menu.className = 'menu';
-  menu.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
-  menu.style.top = `${Math.min(y, window.innerHeight - 60)}px`;
-  menu.append(item);
-  root.append(menu);
-  document.body.append(host);
-
-  const dismiss = () => {
-    closeOwnMenu();
-    document.removeEventListener('mousedown', onMouseDown, true);
-    document.removeEventListener('scroll', dismiss, true);
-    document.removeEventListener('keydown', onKey, true);
-  };
-
-  // events from the closed shadow root are retargeted to the host
-  const onMouseDown = (event: MouseEvent) => {
-    if (!(event.target instanceof Node && host.contains(event.target))) dismiss();
-  };
-
-  const onKey = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') dismiss();
-  };
-
-  item.addEventListener('click', () => {
-    toggle();
-    dismiss();
-  });
-
-  document.addEventListener('mousedown', onMouseDown, true);
-  document.addEventListener('scroll', dismiss, true);
-  document.addEventListener('keydown', onKey, true);
 }
 
 let windowHidden = false;

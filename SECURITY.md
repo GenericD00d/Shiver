@@ -28,9 +28,12 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   still treats as that server, reach another server's data, or reach Shiver's own core.
 - **Credentials.** A session or a password reaching a file, a log, another origin, or a host the
   user did not name.
-- **The companion plugin.** It is optional and server-side. The endpoint it fetches is supplied by
-  a user, so anything that gets this server to make a request it should not is in scope — see
-  the push section of `plugin/server/index.js`, which is where that check lives.
+- **The companion plugin.** It is optional. Its server half runs on the Sharkord server, and the
+  endpoint it fetches is supplied by a user, so anything that gets this server to make a request it
+  should not is in scope — see the push section of `plugin/server/index.js`, which is where that
+  check lives. Its client half runs in the page of everyone on that server, browser users included,
+  and draws what users and admins wrote (statuses, role colours): anything that turns that into
+  script, or into another user's data, is in scope too.
 - **The updater.** Anything that would get code onto a user's machine without a signature that
   verifies against the key built into the binary.
 - **The bridge.** It is injected into every Sharkord page and is the only Shiver code that runs on

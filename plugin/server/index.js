@@ -1,6 +1,7 @@
 /**
- * Shiver companion plugin, server half: registers the actions the client relay calls, migrates the
- * settings file older versions kept, and wires message events to push.
+ * Shiver companion plugin, server half: registers the actions the client half calls (for itself and
+ * as the bridge's relay) and the admin's page options, migrates the settings file older versions
+ * kept, and wires message events to push.
  *
  * Every action acts on `invoker.userId` from the session, never an id in the payload, and every
  * write is rate limited per user.
@@ -197,6 +198,35 @@ const createSettings = (rows, onChange = () => undefined) => ({
     return { ok: true };
   }
 });
+
+/* ── page options ── */
+
+/**
+ * Server-wide switches for what the client half draws into everyone's page, set by an admin in the
+ * plugin's settings tab. Read once by each page, and pushed to every page when an admin changes one.
+ */
+export const OPTION_SETTINGS = [
+  {
+    key: 'roleColors',
+    name: 'Colour usernames by role',
+    description:
+      "Draws names in messages, replies, mentions and the member list in the colour of each user's role, for everyone on this server.",
+    type: 'boolean',
+    defaultValue: true
+  }
+];
+
+export const createOptions = async (ctx) => {
+  const settings = await ctx.settings.register(OPTION_SETTINGS);
+  const read = () => ({ roleColors: settings.get('roleColors') !== false });
+
+  /** Tells every page about a switch an admin just changed. */
+  const onSet = ({ key }) => {
+    if (OPTION_SETTINGS.some((setting) => setting.key === key)) ctx.push.toAll({ kind: 'options', ...read() });
+  };
+
+  return { read, onSet };
+};
 
 /* ── statuses ── */
 
@@ -800,6 +830,7 @@ const onLoad = async (ctx) => {
 
   const push = createPush(ctx, rows);
   const statuses = createStatuses(ctx, rows);
+  const options = await createOptions(ctx);
   const settings = createSettings(rows, push.rowChanged);
 
   await primeFromUserRows(ctx, [push.adopt, statuses.adopt]);
@@ -818,6 +849,7 @@ const onLoad = async (ctx) => {
   };
 
   const actions = {
+    getOptions: ["What this server's admin turned on for everyone's page", rationed(() => options.read())],
     setStatus: ['Set your own status line', (user, payload) => statuses.set(user, payload?.status)],
     getStatuses: ['Everyone who has a status set', rationed(() => statuses.all())],
     getOwnStatus: ['Your own status line', rationed((user) => statuses.own(user))],
@@ -849,6 +881,7 @@ const onLoad = async (ctx) => {
   stop = [
     installFileNaming(ctx),
     ctx.events.on('message:created', (message) => void push.onMessage(message)),
+    ctx.events.on('setting:set', options.onSet),
     ctx.events.on('user:deleted', ({ userId }) => {
       statuses.forget(userId);
       push.forgetUser(userId);

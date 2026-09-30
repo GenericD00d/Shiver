@@ -129,34 +129,6 @@ export function whenDocumentReady(run: () => void) {
   }
 }
 
-/** Sharkord's open (Radix) menu, if one is on screen; closed menus can linger in the document. */
-export function openMenuOnScreen(): HTMLElement | null {
-  for (const menu of document.querySelectorAll<HTMLElement>('[role="menu"]')) {
-    if (menu.dataset.state === 'closed') continue;
-
-    const box = menu.getBoundingClientRect();
-
-    if (box.width > 0 && box.height > 0) return menu;
-  }
-
-  return null;
-}
-
-/** The `[role="menu"]` a mutation added, if any. */
-export function addedMenu(records: MutationRecord[]): HTMLElement | null {
-  for (const record of records) {
-    for (const node of record.addedNodes) {
-      if (!(node instanceof HTMLElement)) continue;
-
-      const menu = node.matches('[role="menu"]') ? node : node.querySelector<HTMLElement>('[role="menu"]');
-
-      if (menu) return menu;
-    }
-  }
-
-  return null;
-}
-
 const CONTROL = 'button, input, select, textarea, label, [role="button"], [contenteditable]';
 
 /**

@@ -5,14 +5,13 @@
  * this page (`home.ts`), and the core polls the hooks in `types.ts`. The session was served from memory since document start (`document-start.ts`).
  */
 
+import { closeChannelMenu } from '../../shared/web/bridge/channel-menu';
 import { defineHook, isTopFrame, onDomSettled, touched } from '../../shared/web/bridge/dom';
 import {
   closeSidePanel,
   installAttachmentCards,
-  installRoleColors,
   installSidePanels,
   installSoundVolume,
-  installStatusButton,
   installVoiceColors
 } from '../../shared/web/bridge/features';
 import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, waitForPlugin } from '../../shared/web/bridge/plugin';
@@ -22,9 +21,8 @@ import { installSessionShim, takeSeedFromLocation } from '../../shared/web/sessi
 import { installRailSwipe, openRail, setHome } from './home';
 import { installAutoReconnect, installQuietReconnect } from './reconnect';
 import {
-  closeChannelMenu,
-  installChannelMenu,
   installImageZoom,
+  installLongPress,
   installReactionNames,
   installReturnMakesALine,
   installTouchStyles,
@@ -48,11 +46,9 @@ function install(shiver: ShiverConfig) {
   installAttachmentCards(shiver.minimiseAttachments);
   installVoiceColors();
   installSidePanels();
-  installRoleColors();
   installReactionNames();
   installImageZoom();
   installReturnMakesALine();
-  installStatusButton(true);
   installAutoReconnect(shiver.session, shiver.entryId);
   installQuietReconnect();
 
@@ -60,7 +56,7 @@ function install(shiver: ShiverConfig) {
   const paint = () => paintMuted(muted);
 
   defineHook('__SHIVER_MUTED__', () => [...muted]);
-  installChannelMenu({
+  installLongPress({
     has: (channelId) => muted.has(channelId),
     toggle: (channelId) => {
       if (!muted.delete(channelId)) muted.add(channelId);

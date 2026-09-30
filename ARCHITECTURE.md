@@ -27,7 +27,8 @@ mobile/plugins/            tauri-plugin-shiver-push (UnifiedPush), tauri-plugin-
 plugin/                    Sharkord companion plugin (server/ + client/, plain JS, node tests)
 scripts/check-version.py   checks the workspace and tauri.conf.json versions agree
 scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys, classes and conventions the bridges
-                           match (`SHARKORD_REF`, the commit last checked against; `--latest` for its default branch)
+                           and the plugin's client half match (`SHARKORD_REF`, the commit last checked against;
+                           `--latest` for its default branch)
 .github/workflows/checks.yml  CI; sharkord.yml: the Sharkord check against its latest, weekly
 ```
 
@@ -150,10 +151,11 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 | `colors.ts` | `automaticTextColor`, `lift` |
 | `theme.ts` | `applyTheme` (`--shiver-*` vars on Shiver's own pages) |
 | `session.ts` | `installSessionShim`, `takeSeedFromLocation`, `AUTO_LOGIN*` (session kept off disk) |
-| `bridge/dom.ts` | `ensureStyle`, `defineHook`, `onDomSettled` (hands callbacks what changed), `touched`, `isTopFrame`, `whenDocumentReady`, `openMenuOnScreen`, `addedMenu`, `installExternalLinks` |
-| `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, pure store reads (`notificationTarget`/`NotificationTarget`: a notification's author and channel from its title, `dmPartnerId`, `findDmChannelIdByUserName`, `readDms`/`DmChannel`, `fileUrl`; tested in `sharkord.test.ts`), `notificationFlags` (Sharkord's own notification switches for a level), `notifyAllows`, `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `addMuteItem`, `addMenuItem`, `closeDialog` (Sharkord's topmost open dialog, as Escape), `IMAGE_VIEWER`, `RECONNECTING_OVERLAY`, `SIDE_PANEL`, `NARROW`, `SHIVER_PLUGIN_ID` |
+| `bridge/dom.ts` | `ensureStyle`, `defineHook`, `onDomSettled` (hands callbacks what changed), `touched`, `isTopFrame`, `whenDocumentReady`, `installExternalLinks` |
+| `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, pure store reads (`notificationTarget`/`NotificationTarget`: a notification's author and channel from its title, `dmPartnerId`, `findDmChannelIdByUserName`, `readDms`/`DmChannel`, `fileUrl`; tested in `sharkord.test.ts`), `notificationFlags` (Sharkord's own notification switches for a level), `notifyAllows`, `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `pressEscape`, `closeDialog` (Sharkord's topmost open dialog, as Escape), `IMAGE_VIEWER`, `RECONNECTING_OVERLAY`, `SIDE_PANEL`, `NARROW`, `SHIVER_PLUGIN_ID` |
 | `bridge/plugin.ts` | `callPlugin`, `waitForPlugin`, `syncMutesWithPlugin`, `pushMutesToPlugin`, `storeReadFloor` |
-| `bridge/features.ts` | `installSoundVolume`, `installAttachmentCards`, `installVoiceColors`, `installRoleColors`, `installStatusButton`, `installSidePanels` (Sharkord's voice chat and thread panels cover a narrow page instead of staying hidden), `closeSidePanel` |
+| `bridge/channel-menu.ts` | the channel menu both bridges open (right-click, long press): mute or unmute, mark all as read; Shiver's items join Sharkord's own menu when it opens, else Shiver draws its own. `installChannelMenu` (`ChannelMenuSetup`, `ChannelMutes`), `channelPressed`, `requestChannelMenu`, `closeChannelMenu`, `isInChannelMenu` |
+| `bridge/features.ts` | `installSoundVolume`, `installAttachmentCards`, `installVoiceColors`, `installSidePanels` (Sharkord's voice chat and thread panels cover a narrow page instead of staying hidden), `closeSidePanel` |
 | `bridge/theme.ts` | `ShiverTheme`, `applyPageTheme` |
 
 ## Frontends
@@ -165,14 +167,14 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
   `VoiceTile`, `UpdateNotice`, `icons`.
 - **desktop/bridge/index.ts**: one file: session seeding, DM list (`openDmChannelId`, `resolveDmChannels`), conversation mode (`showConversation`; an open dialog such as
   Sharkord's settings is closed first, as for a clicked notification's channel), voice read/control/lock,
-  channel menu mute, notification capture (filtered by the server's `NotifyLevel`: Sharkord's switches seeded to match by `applyNotifyLevel`, which marks the level it wrote in `shiver-notify-level`; `__SHIVER_SET_NOTIFY__` for a change), drain queue.
+  the channel menu on right-click (`installChannelRightClick`; its mutes and "Mark all as read" go to the core through the drain), notification capture (filtered by the server's `NotifyLevel`: Sharkord's switches seeded to match by `applyNotifyLevel`, which marks the level it wrote in `shiver-notify-level`; `__SHIVER_SET_NOTIFY__` for a change), drain queue.
 - **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits after `#home` (the quick rail's Shiver tile); `#open=` opens one; `__SHIVER_BACK__` reopens the last), `api.ts`, `types.ts`, `components/`:
   `Boot` (confirms rail menu actions; after `#home`, a button back to the server left; counts down a wait for a join), `Rail` (`RailRef`), `ServerList` (a notification level per server), `AddServer`, `SignInServer`,
   `SettingsScreen`, `BackgroundNotifications`, `Sessions` (+`TrustedLinks`), `DirectMessages`, `UpdateNotice`, `icons`.
 - **mobile/bridge**: `index.ts` (install, `seedSession`), `home.ts` (`setHome`, `goHome`, `openRail` and `installRailSwipe`: back (after closing a menu or
   side panel) and a swipe past the drawer ask for the rail, which the core draws over the page), `touch.ts` (`installTouchStyles`, `installReturnMakesALine`, `installReactionNames`, `installImageZoom` (pinch, pan and
   double tap in Sharkord's full-screen picture, which only knows the mouse),
-  channel menu with mark all read: `installChannelMenu`, `closeChannelMenu`; `drawerIsOpen`, `openConversation`), `reconnect.ts` (`installAutoReconnect`; `installQuietReconnect`: Sharkord's own reconnecting dialog hidden, an accent spinner above the chat box while it retries), `document-start.ts` (seed,
+  `installLongPress`: a held message shows Sharkord's toolbar, a held channel opens the channel menu; `drawerIsOpen`, `openConversation`), `reconnect.ts` (`installAutoReconnect`; `installQuietReconnect`: Sharkord's own reconnecting dialog hidden, an accent spinner above the chat box while it retries), `document-start.ts` (seed,
   `__SHIVER_OPEN__`, theme), `types.ts` (`ShiverConfig`).
 
 ## plugin (Sharkord companion)
@@ -183,11 +185,17 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
   - file names: `installFileNaming`, `uniqueName` (a random suffix, separators and control characters
     replaced), `splitName`
   - settings: `createSettings`, `mutedFrom`, `floorFrom` (mutes, unread floor)
+  - page options: `OPTION_SETTINGS`, `createOptions` (the admin's switches for what the client half
+    draws, pushed to every page when one changes: `roleColors`)
   - statuses: `createStatuses`, `statusFrom` (custom statuses)
   - push: `createPush`, `endpointsFrom`, `normaliseEndpoint`, `deliver` (UnifiedPush delivery); SSRF
     vetting: `isPrivateAddress`, `vetEndpoint`, `REFUSED`
-  - loading: `onLoad` registers actions `setStatus`, `getStatuses`, `getOwnStatus`, `getMutedChannels`,
+  - loading: `onLoad` registers actions `getOptions`, `setStatus`, `getStatuses`, `getOwnStatus`, `getMutedChannels`,
     `setMutedChannels`, `setReadFloor`, `setPushEndpoint`, `clearPushEndpoint` (reads and writes rate
     limited per user); `onUnload`, `adoptOldStore`, `primeFromUserRows`.
-- `client/index.js`: client half: announces itself as `__SHIVER_PLUGIN__` (`{version}`), relays the bridge's calls to
-  server actions (`callPlugin`), plus custom-status UI. Tests: `plugin/test/plugin.test.js`.
+- `client/index.js`: client half, in everyone's page (Shiver or a browser): announces itself as `__SHIVER_PLUGIN__`
+  (`{version}`), relays the bridge's calls to server actions (`callPlugin`); custom statuses (member list, profile
+  card and user settings slots, and a button beside the settings gear); usernames in their role colour
+  (`MemberColor` in the member list by id; message headers, replies and mentions by name) unless the admin turned
+  `roleColors` off. The newest copy in a page (an update imports another) answers and draws. Tests:
+  `plugin/test/plugin.test.js`.
