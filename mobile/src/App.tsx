@@ -57,6 +57,13 @@ const EMPTY: Registry = {
   }
 };
 
+/**
+ * How long Shiver's page may be on its way to a server before its rail is drawn. The quick rail is
+ * the one seen over a server, so a page only passing through (launch, a server chosen on the quick
+ * rail) shows none; one that stays that long is slow, and the rail lets the user go elsewhere.
+ */
+const PASSING_THROUGH_MS = 2000;
+
 const TITLES: Record<Exclude<Screen, 'boot'>, string> = {
   add: 'Add a server',
   settings: 'Settings',
@@ -379,27 +386,43 @@ export const App = () => {
 
   const handleSettings = useCallback((settings: Settings) => void change(() => api.updateSettings(settings)), [change]);
 
+  // on its way to a server (a wait for a join is a stay, not a pass)
+  const passingThrough =
+    screen === 'boot' && (boot.kind === 'waiting' || (boot.kind === 'connecting' && !boot.until));
+  const [slow, setSlow] = useState(false);
+
+  useEffect(() => {
+    setSlow(false);
+
+    if (!passingThrough) return;
+
+    const timer = window.setTimeout(() => setSlow(true), PASSING_THROUGH_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [passingThrough]);
+
   return (
     <div className="app">
-      <Rail
-        servers={servers}
-        activeId={null}
-        screen={screen}
-        unread={unread}
-        onOpen={openById}
-        onOpenDms={() => setScreen('dms')}
-        onAdd={() => setScreen('add')}
-        onSettings={() => setScreen('settings')}
-        onRefresh={(id) => void change(() => api.refreshServerInfo(id)).then(loadIcons)}
-        onAsk={handleAsk}
-        onReorder={(ordered: RailRef[]) => void change(() => api.reorderRail(ordered))}
-        folders={registry.folders}
-        onSetFolder={(id, folderId) => void change(() => api.setServerFolder(id, folderId))}
-        onCreateFolder={(memberIds) => void change(() => api.createFolderWith('New folder', memberIds))}
-        onRenameFolder={(id, name) => void change(() => api.renameFolder(id, name))}
-        onDeleteFolder={(id) => void change(() => api.deleteFolder(id))}
-        onToggleFolder={(id, expanded) => void change(() => api.setFolderExpanded(id, expanded))}
-      />
+      {passingThrough && !slow ? null : (
+        <Rail
+          servers={servers}
+          screen={screen}
+          unread={unread}
+          onOpen={openById}
+          onOpenDms={() => setScreen('dms')}
+          onAdd={() => setScreen('add')}
+          onSettings={() => setScreen('settings')}
+          onRefresh={(id) => void change(() => api.refreshServerInfo(id)).then(loadIcons)}
+          onAsk={handleAsk}
+          onReorder={(ordered: RailRef[]) => void change(() => api.reorderRail(ordered))}
+          folders={registry.folders}
+          onSetFolder={(id, folderId) => void change(() => api.setServerFolder(id, folderId))}
+          onCreateFolder={(memberIds) => void change(() => api.createFolderWith('New folder', memberIds))}
+          onRenameFolder={(id, name) => void change(() => api.renameFolder(id, name))}
+          onDeleteFolder={(id) => void change(() => api.deleteFolder(id))}
+          onToggleFolder={(id, expanded) => void change(() => api.setFolderExpanded(id, expanded))}
+        />
+      )}
 
       <div className="main">
         {screen === 'boot' ? null : (

@@ -7,9 +7,7 @@ import { byPosition, initials, membersOf } from '../../../shared/web/rail';
 
 type Props = {
   servers: ServerEntry[];
-  /** the server whose tile is marked, or null on Shiver's own screens */
-  activeId: string | null;
-  /** which of Shiver's own screens is up, so its tile can be marked the same way */
+  /** which of Shiver's own screens is up, so its tile can be marked */
   screen: 'boot' | 'add' | 'settings' | 'signIn' | 'dms';
   /** unread per server id; a server missing from it has none */
   unread: Record<string, number>;
@@ -154,7 +152,6 @@ const useLongPress = (
 /** The server rail, on Shiver's own page (a server's page is shown nothing of it). */
 export const Rail = ({
   servers,
-  activeId,
   screen,
   unread,
   onOpen,
@@ -416,9 +413,9 @@ export const Rail = ({
           else tiles.current.delete(key);
         }}
         type="button"
-        className={`rail-item${server.id === activeId ? ' active' : ''}${
-          press.lifted() === key ? ' lifted' : ''
-        }${inFolder ? ' in-folder' : ''}${onto === key ? ' drop-onto' : ''}`}
+        className={`rail-item${press.lifted() === key ? ' lifted' : ''}${inFolder ? ' in-folder' : ''}${
+          onto === key ? ' drop-onto' : ''
+        }`}
         title={count > 0 ? `${server.name} — ${count} unread` : server.name}
         onClick={() => {
           // the press that opened a menu, or moved a tile, is not also a tap on it

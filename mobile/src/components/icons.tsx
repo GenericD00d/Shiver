@@ -1,4 +1,7 @@
-/** The rail's icons: the desktop client's paths at the same size, also drawn by the bridge's rail. */
+/**
+ * The rail's icons: the desktop client's paths at the same size. The Android quick rail draws the
+ * same paths (`tauri-plugin-shiver-rail`'s drawables).
+ */
 
 type Props = {
   className?: string;
