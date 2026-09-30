@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, errorMessage } from './api';
-import { AddServer } from './components/AddServer';
 import { BackgroundNotifications } from './components/BackgroundNotifications';
 import { Boot, type BootState, type ConfirmAction } from './components/Boot';
 import { DirectMessages } from './components/DirectMessages';
-import { UpdateNotice } from './components/UpdateNotice';
 import type { SettingsSection } from './components/SettingsScreen';
 import { Rail, type RailRef } from './components/Rail';
 import { ServerList } from './components/ServerList';
 import { Sessions, TrustedLinks } from './components/Sessions';
-import { SignInServer } from './components/SignInServer';
 import { SettingsScreen } from './components/SettingsScreen';
+import { AddServerForm } from '../../shared/web/components/AddServerForm';
+import { SignInForm } from '../../shared/web/components/SignInForm';
+import { UpdateNotice } from '../../shared/web/components/UpdateNotice';
 import { applyTheme } from '../../shared/web/theme';
 import {
   DEFAULT_ACCENT_COLOR,
@@ -64,10 +64,9 @@ const EMPTY: Registry = {
  */
 const PASSING_THROUGH_MS = 2000;
 
-const TITLES: Record<Exclude<Screen, 'boot'>, string> = {
-  add: 'Add a server',
+/** The screens with a bar across the top; the others are a card with its own title and Cancel. */
+const TITLES: Partial<Record<Screen, string>> = {
   settings: 'Settings',
-  signIn: 'Sign in',
   dms: 'Direct messages'
 };
 
@@ -121,6 +120,22 @@ export const App = () => {
   const [boot, setBoot] = useState<BootState>({ kind: 'waiting' });
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
+  /** a newer release on offer, until turned down or put off */
+  const [update, setUpdate] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .updateAvailable()
+      .then(setUpdate)
+      .catch(() => undefined);
+
+    // found after launch, by the core's own check
+    const stop = api.onUpdate(setUpdate);
+
+    return () => {
+      void stop.then((unlisten) => unlisten());
+    };
+  }, []);
 
   const [icons, setIcons] = useState<Record<string, string>>({});
   const loadIcons = useCallback(() => void api.serverIcons().then(setIcons, () => undefined), []);
@@ -402,7 +417,7 @@ export const App = () => {
   }, [passingThrough]);
 
   return (
-    <div className="app">
+    <div className="app touch">
       {passingThrough && !slow ? null : (
         <Rail
           servers={servers}
@@ -425,7 +440,7 @@ export const App = () => {
       )}
 
       <div className="main">
-        {screen === 'boot' ? null : (
+        {!TITLES[screen] ? null : (
           <header className="bar">
             {screen === 'settings' ? (
               <button
@@ -447,10 +462,18 @@ export const App = () => {
           </header>
         )}
 
-        {error ? <p className="error">{error}</p> : null}
+        {error ? <p className="error app-error">{error}</p> : null}
 
         <main className="content">
-          <UpdateNotice />
+          {/* Shiver cannot install packages itself (that would need `REQUEST_INSTALL_PACKAGES`), so
+              "Get it" opens the releases page */}
+          <UpdateNotice
+            version={update}
+            takeLabel="Get it"
+            onTake={api.openReleases}
+            onLater={() => setUpdate(null)}
+            onSkip={api.skipUpdate}
+          />
 
           {screen === 'boot' ? (
             <Boot
@@ -461,22 +484,61 @@ export const App = () => {
             />
           ) : null}
 
-          {screen === 'add' ? <AddServer onAdded={handleAdded} /> : null}
+          {screen === 'add' ? (
+            <div className="modal-backdrop">
+              <AddServerForm
+                hint={
+                  <>
+                    Shiver signs in for you, so the server opens straight into the app. Your password goes only to
+                    this server, and both it and the session are kept in Android's encrypted store, under a key the
+                    phone's Keystore holds — so Shiver can sign you in again when the session runs out, which
+                    Sharkord makes it do every seven days. Take it back whenever you like by holding the server in
+                    the rail.
+                  </>
+                }
+                check={api.checkServer}
+                add={async ({ origin, identity, password, accountLabel }) => {
+                  await api.addServer(origin, identity, password, accountLabel, !!password);
+                  await handleAdded();
+                }}
+                onCancel={servers.length > 0 ? () => void resume(registry) : null}
+              />
+            </div>
+          ) : null}
 
           {screen === 'dms' ? (
             <DirectMessages onOpen={openById} />
           ) : null}
 
           {screen === 'signIn' && signingInServer ? (
-            <SignInServer
-              server={signingInServer}
-              remembered={remembered.includes(signingInServer.id)}
-              onDone={() => {
-                readSessions();
-                setScreen('settings');
-              }}
-              onCancel={() => setScreen('settings')}
-            />
+            <div className="modal-backdrop">
+              <SignInForm
+                key={signingInServer.id}
+                serverName={signingInServer.name}
+                identity={signingInServer.identity}
+                hint={
+                  <>
+                    Sharkord expires a session after seven days and offers no way to renew one, so Shiver's watch of{' '}
+                    {signingInServer.origin.replace(/^https?:\/\//, '')} ends with it. Signing in gives Shiver a fresh
+                    session.
+                  </>
+                }
+                rememberHint={
+                  <>
+                    Shiver keeps the password and signs in again by itself, so this server never goes quiet. Stored
+                    encrypted under a key the phone's Keystore holds and Shiver cannot read out. Left unticked, you sign
+                    in here again when the session next expires.
+                  </>
+                }
+                remembered={remembered.includes(signingInServer.id)}
+                onSubmit={async (identity, password, remember) => {
+                  await api.signInServer(signingInServer.id, identity, password, remember);
+                  readSessions();
+                  setScreen('settings');
+                }}
+                onCancel={() => setScreen('settings')}
+              />
+            </div>
           ) : null}
 
           {screen === 'settings' ? (

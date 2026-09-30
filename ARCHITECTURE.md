@@ -154,7 +154,15 @@ settings pinned at the bottom), its back press and animations; icons in `android
 | `rail.ts` | `initials`, `byPosition`, `membersOf`, `railOrder` (every server as the rail shows them) |
 | `dms.ts` | `DmRow` (a conversation as either client lists it), `dmKey`, `filterDms` (person or server), `dmMeta`, `dmInitial`; tested in `dms.test.ts` |
 | `time.ts` | `relativeTime` ("5m ago": the feed and the DM list) |
+| `errors.ts` | `errorMessage` (a rejected call as words worth showing; re-exported by each app's `api.ts`) |
 | `components/DmList.tsx` | `DmList`: the DM list both clients draw (search, rows with avatar, account · server, time; `touch` sizes it for a finger), styled by `components/dm-list.css` |
+| `components/ui.css` | the look both clients share (fields, buttons, the dialog `card`, the server preview, the update bar, the connecting screen), the desktop client's; a `.touch` ancestor (mobile's root) sizes it for a finger. Imported first by each app's `main.tsx` |
+| `components/icons.tsx` | inline `currentColor` icons: `BellIcon`, `MessagesIcon`, `SettingsIcon`, `PlusIcon`, the voice set |
+| `components/UpdateNotice.tsx` | `UpdateNotice`: a newer release (take it: install or download, per app; Later; Skip this version) |
+| `components/AddServerForm.tsx` | `AddServerForm` (`NewServer`): check the address, then sign in and add, or add for signing in on the server's own page; account label |
+| `components/SignInForm.tsx` | `SignInForm`: sign a server in again, keeping the password if asked |
+| `components/Confirm.tsx` | `Confirm`: a question as a dialog card; `armMs` holds the button back from the touch that opened it |
+| `components/Connecting.tsx` | `Connecting`: a spinner while a server comes up (with the countdown of a wait for a join), or the failure with a retry |
 | `colors.ts` | `automaticTextColor`, `lift` |
 | `theme.ts` | `applyTheme` (`--shiver-*` vars on Shiver's own pages) |
 | `session.ts` | `installSessionShim`, `takeSeedFromLocation`, `AUTO_LOGIN*` (session kept off disk) |
@@ -169,15 +177,16 @@ settings pinned at the bottom), its back press and animations; icons in `android
 
 - **desktop/src**: `main.tsx` (label → `App` | `Bell` | `NotificationsPopup`; drops refused wherever the rail does not take them, so none navigates a chrome webview), `api.ts` (`api.*` invoke
   wrappers, `errorMessage`), `events.ts` (`EVENTS`, `useCoreEvent`; `App` answers `shortcut` in rail order), `types.ts` (`*_PAGES_KEPT`), `sounds.ts` (`playNotificationSound`), `components/`:
-  `ServerRail`, `AddServerPanel`, `SignInPanel`, `SettingsPanel`, `HotkeyField`, `DirectMessagesPanel` (the shared `DmList` in a sidebar),
-  `NotificationList`, `RenameFolderPanel`, `RemoveServerPanel`, `ConnectingPanel`, `WelcomePanel`,
-  `VoiceTile`, `UpdateNotice`, `icons`.
+  `ServerRail`, `SettingsPanel`, `HotkeyField`, `DirectMessagesPanel` (the shared `DmList` in a sidebar),
+  `NotificationList`, `RenameFolderPanel`, `WelcomePanel`, `VoiceTile`. `App` draws the shared `AddServerForm`,
+  `SignInForm`, `Confirm` (removing a server), `Connecting` and `UpdateNotice`.
 - **desktop/bridge/index.ts**: one file: session seeding, DM list (`openDmChannelId`, `resolveDmChannels`), conversation mode (`showConversation`; an open dialog such as
   Sharkord's settings is closed first, as for a clicked notification's channel), voice read/control/lock,
   the channel menu on right-click (`installChannelRightClick`; its mutes and "Mark all as read" go to the core through the drain), notification capture (filtered by the server's `NotifyLevel`: Sharkord's switches seeded to match by `applyNotifyLevel`, which marks the level it wrote in `shiver-notify-level`; `__SHIVER_SET_NOTIFY__` for a change), drain queue.
 - **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits after `#home` (the quick rail could not be drawn); `#open=` opens one; `#dms`, `#add`, `#settings` (`RAIL_SCREENS`, from the quick rail) open that screen; its own rail is not drawn while the page only passes through to a server, unless that takes `PASSING_THROUGH_MS`; `__SHIVER_BACK__` reopens the last), `api.ts`, `types.ts`, `components/`:
-  `Boot` (confirms rail menu actions; after `#home`, a button back to the server left; counts down a wait for a join), `Rail` (`RailRef`), `ServerList` (a notification level per server), `AddServer`, `SignInServer`,
-  `SettingsScreen`, `BackgroundNotifications`, `Sessions` (+`TrustedLinks`), `DirectMessages` (the shared `DmList`, `touch`), `UpdateNotice`, `icons`.
+  `Boot` (the shared `Confirm` for rail menu actions and `Connecting`; after `#home`, a button back to the server left), `Rail` (`RailRef`), `ServerList` (a notification level per server),
+  `SettingsScreen`, `BackgroundNotifications`, `Sessions` (+`TrustedLinks`), `DirectMessages` (the shared `DmList`, `touch`). `App` draws the shared
+  `AddServerForm`, `SignInForm` and `UpdateNotice`.
 - **mobile/bridge**: `index.ts` (install, `seedSession`), `home.ts` (`setHome`, `goHome`, `openRail` and `installRailSwipe`: back (after closing a menu or
   side panel) and a swipe past the drawer ask for the rail, which the core draws over the page), `touch.ts` (`installTouchStyles`, `installReturnMakesALine`, `installReactionNames`, `installImageZoom` (pinch, pan and
   double tap in Sharkord's full-screen picture, which only knows the mouse),

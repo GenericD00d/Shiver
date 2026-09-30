@@ -145,24 +145,6 @@ body {
   gap: 16px;
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-/* every text-like field, so adding one does not silently arrive unstyled */
-.field input[type="text"],
-.field input[type="password"],
-.field input[type="url"] {
-  padding: 12px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 10px;
-  background: var(--shiver-surface);
-  color: var(--shiver-text);
-  font: inherit;
-}
-
 .field input[type="color"] {
   width: 100%;
   height: 44px;
@@ -193,90 +175,8 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.preview {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 12px;
-}
-
-.preview img {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  object-fit: cover;
-}
-
-.preview p {
-  margin: 4px 0 0;
-  font-size: 14px;
-  color: var(--shiver-text-dim);
-}
-
-/* The initial where the server has no logo, sized to the space the logo would have taken so the
-   row does not change height depending on whether one was set. */
-.preview .fallback {
-  display: grid;
-  place-items: center;
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: var(--shiver-surface-hover, #333333);
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.preview-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-/* the address under the name, ellipsised rather than wrapped: it is confirmation, not reading */
-.preview-text small {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--shiver-text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 button {
   cursor: pointer;
-}
-
-/* comfortably tappable rather than merely clickable */
-.primary,
-.ghost {
-  padding: 12px 16px;
-  border-radius: 10px;
-  font: inherit;
-  font-weight: 600;
-  min-height: 44px;
-}
-
-.primary {
-  border: none;
-  background: var(--shiver-accent);
-  color: var(--shiver-on-accent);
-}
-
-.ghost {
-  border: 1px solid var(--shiver-border);
-  background: transparent;
-  color: var(--shiver-text);
-}
-
-.ghost.small {
-  min-height: 0;
-  padding: 8px 10px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--shiver-text-dim);
 }
 
 .wide {
@@ -288,9 +188,9 @@ button {
   color: var(--shiver-text-dim);
 }
 
-.error {
-  margin: 0 16px;
-  color: var(--shiver-danger);
+/* a failure the screen itself reports, between the bar and the content */
+.app-error {
+  margin: 12px 16px 0;
 }
 
 :disabled {
@@ -496,41 +396,6 @@ button {
   font-weight: 600;
 }
 
-/* The "a newer Shiver exists" notice. Stacked rather than in a row: three buttons and a sentence do
-   not fit across a phone, and shrinking them to fit would make them harder to hit. */
-.update-notice {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 16px;
-  padding: 12px 14px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 12px;
-  background: var(--shiver-surface);
-}
-
-.update-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-/* The same verdict on the add screen, where it sits under the server's address. */
-.preview-text .has-plugin {
-  margin-top: 4px;
-  color: #4ade80;
-}
-
-.preview-text .no-plugin {
-  margin-top: 4px;
-  color: #f87171;
-}
-
-.preview-text .plugin-unknown {
-  margin-top: 4px;
-  color: var(--shiver-text-dim);
-}
-
 /* The companion-plugin verdict. Colour is the quick read and the tick or cross is the reliable
    one — roughly one man in twelve cannot separate these two hues, and neither can a screen
    reader, so the glyph is in the text rather than implied by the colour. */
@@ -578,25 +443,6 @@ button {
   font-size: 12px;
   line-height: 1.35;
   white-space: normal;
-}
-
-.checkbox {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.checkbox input {
-  margin-top: 3px;
-}
-
-.checkbox small {
-  display: block;
-  margin-top: 4px;
-  color: var(--shiver-text-dim);
-  font-size: 13px;
-  line-height: 1.4;
 }
 
 .rail-item.drop-onto {
@@ -705,34 +551,6 @@ button {
   justify-content: center;
   gap: 16px;
   text-align: center;
-}
-
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--shiver-border);
-  border-top-color: var(--shiver-accent);
-  border-radius: 50%;
-  animation: shiver-spin 900ms linear infinite;
-}
-
-@keyframes shiver-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* a phone in a pocket is not a place to animate for ever */
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation-duration: 2400ms;
-  }
-}
-
-.boot-failed {
-  margin: 0;
-  color: var(--shiver-danger);
-  font-weight: 600;
 }
 
 .section {

@@ -2,16 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, errorMessage } from './api';
 import { EVENTS, useCoreEvent } from './events';
-import { AddServerPanel } from './components/AddServerPanel';
-import { UpdateNotice } from './components/UpdateNotice';
-import { ConnectingPanel } from './components/ConnectingPanel';
 import { DirectMessagesPanel } from './components/DirectMessagesPanel';
-import { RemoveServerPanel } from './components/RemoveServerPanel';
 import { RenameFolderPanel } from './components/RenameFolderPanel';
 import { ServerRail } from './components/ServerRail';
 import { SettingsPanel } from './components/SettingsPanel';
-import { SignInPanel } from './components/SignInPanel';
 import { WelcomePanel } from './components/WelcomePanel';
+import { AddServerForm } from '../../shared/web/components/AddServerForm';
+import { Confirm } from '../../shared/web/components/Confirm';
+import { Connecting as ConnectingView } from '../../shared/web/components/Connecting';
+import { SignInForm } from '../../shared/web/components/SignInForm';
+import { UpdateNotice } from '../../shared/web/components/UpdateNotice';
 import { applyTheme } from '../../shared/web/theme';
 import {
   DEFAULT_ACCENT_COLOR,
@@ -89,6 +89,8 @@ export const App = () => {
   const [connecting, setConnecting] = useState<Connecting | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  /** a newer release on offer; "Later" holds until a newer one is found (the bell keeps the offer) */
+  const [update, setUpdate] = useState<string | null>(null);
 
   /**
    * The server being waited on, in a ref so the once-registered ready listener sees the current
@@ -289,6 +291,16 @@ export const App = () => {
 
     boot();
   }, [openServer, refresh, refreshFeed]);
+
+  useEffect(() => {
+    api
+      .availableUpdate()
+      .then(setUpdate)
+      .catch(() => undefined);
+  }, []);
+
+  // found after launch, by the core's own check
+  useCoreEvent<string>(EVENTS.update, setUpdate);
 
   const refreshVoice = useCallback(async () => {
     setVoice(await api.voiceStatus().catch(() => null));
@@ -516,6 +528,9 @@ export const App = () => {
     applyTheme(registry.settings);
   }, [registry.settings]);
 
+  const removingServer = registry.servers.find((server) => server.id === removing);
+  const signingInServer = registry.servers.find((server) => server.id === signingIn);
+
   const showWelcome = ready && panel === 'server' && !activeId && !error;
 
   return (
@@ -539,7 +554,15 @@ export const App = () => {
       <div className="main">
         <div className="content">
           {/* over the top of whatever is on screen, so it is seen on the launch it was found */}
-          <UpdateNotice />
+          <UpdateNotice
+            version={update}
+            takeLabel="Install"
+            busyLabel="Downloading…"
+            // on success the installer takes over and this process ends, so only a failure comes back
+            onTake={api.installUpdate}
+            onLater={() => setUpdate(null)}
+            onSkip={api.skipUpdate}
+          />
 
           {error ? (
             <div className="panel">
@@ -548,11 +571,31 @@ export const App = () => {
           ) : null}
 
           {panel === 'add' ? (
-            <AddServerPanel
-              onAdded={handleAdded}
-              onCancel={closePanel}
-              canCancel={servers.length > 0}
-            />
+            <div className="modal-backdrop">
+              <AddServerForm
+                hint={
+                  <>
+                    Shiver signs in for you so the server opens straight into the app. Your password goes only to
+                    this server, and Shiver keeps it in your operating system's credential store so it can sign you
+                    in again when the session runs out — Sharkord's last a week and cannot be renewed. Take it back
+                    whenever you like from the server's own menu.
+                  </>
+                }
+                check={api.checkServer}
+                add={async ({ origin, identity, password, accountLabel }) => {
+                  const entry = await api.addServer(
+                    origin,
+                    identity ?? undefined,
+                    password ?? undefined,
+                    accountLabel ?? undefined,
+                    !!password
+                  );
+
+                  await handleAdded(entry.id);
+                }}
+                onCancel={servers.length > 0 ? closePanel : null}
+              />
+            </div>
           ) : null}
 
           {panel === 'settings' ? (
@@ -563,12 +606,31 @@ export const App = () => {
             />
           ) : null}
 
-          {panel === 'signin' ? (
-            <SignInPanel
-              server={registry.servers.find((server) => server.id === signingIn)}
-              onSignIn={handleSignIn}
-              onCancel={closePanel}
-            />
+          {panel === 'signin' && signingInServer ? (
+            <div className="modal-backdrop">
+              <SignInForm
+                key={signingInServer.id}
+                serverName={signingInServer.name}
+                identity={signingInServer.identity}
+                hint={
+                  <>
+                    Shiver keeps the session in your device&apos;s keychain and signs you in, so this server opens
+                    straight into the app instead of its login page. Your password is kept only if you ask below.
+                  </>
+                }
+                rememberHint={
+                  <>
+                    Stored in your operating system&apos;s credential store, so Shiver can sign in again by itself
+                    when the session expires — which it does every seven days. Left unticked, Shiver keeps only the
+                    session and asks you again when it runs out.
+                  </>
+                }
+                // off unless the user says so, the same opt-in the add form has
+                remembered={false}
+                onSubmit={(identity, password, remember) => handleSignIn(signingInServer.id, identity, password, remember)}
+                onCancel={closePanel}
+              />
+            </div>
           ) : null}
 
           {panel === 'folder' ? (
@@ -579,19 +641,25 @@ export const App = () => {
             />
           ) : null}
 
-          {panel === 'remove' ? (
-            <RemoveServerPanel
-              server={registry.servers.find((server) => server.id === removing)}
-              onRemove={(id) => void handleRemove(id)}
-              onCancel={closePanel}
-            />
+          {/* asked first: the rail's menu removes a server, and everything Shiver keeps for it, in one click */}
+          {panel === 'remove' && removingServer ? (
+            <div className="modal-backdrop">
+              <Confirm
+                question={`Remove ${removingServer.name}?`}
+                hint="Shiver forgets its sign-in, saved password, notifications and page storage. Nothing changes on the server."
+                action="Remove"
+                onConfirm={() => void handleRemove(removingServer.id)}
+                onCancel={closePanel}
+              />
+            </div>
           ) : null}
 
+          {/* the page is covered meanwhile */}
           {panel === 'connecting' && connecting ? (
-            <ConnectingPanel
+            <ConnectingView
               serverName={connecting.serverName}
               failed={connecting.failed}
-              onRetry={() => openServer(connecting.entryId)}
+              onRetry={() => void openServer(connecting.entryId)}
             />
           ) : null}
 

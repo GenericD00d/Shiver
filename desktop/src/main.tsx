@@ -5,6 +5,8 @@ import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import { Bell } from './Bell';
 import { NotificationsPopup } from './NotificationsPopup';
+// the look both clients share, first, so each app's own styles can build on it
+import '../../shared/web/components/ui.css';
 import './styles.css';
 
 /** One bundle serves the shell, the bell and the feed; the webview label picks which. */

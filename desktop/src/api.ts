@@ -13,6 +13,8 @@ import type {
   VoiceStatus
 } from './types';
 
+export { errorMessage } from '../../shared/web/errors';
+
 /**
  * Every call into the rust core. The core owns the server list, the webviews and the credential
  * store, so the shell never touches a server's origin directly.
@@ -151,7 +153,3 @@ export const api = {
 
   refreshServerInfo: (id: string) => invoke<ServerEntry>('refresh_server_info', { id })
 };
-
-/** Tauri rejects with the rust error's user-facing message, which is already worth showing. */
-export const errorMessage = (error: unknown) =>
-  typeof error === 'string' ? error : error instanceof Error ? error.message : 'Something went wrong';

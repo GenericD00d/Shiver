@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 
 import { api } from '../api';
-import { MessagesIcon, PlusIcon, SettingsIcon } from './icons';
+import { MessagesIcon, PlusIcon, SettingsIcon } from '../../../shared/web/components/icons';
 import { VoiceTile } from './VoiceTile';
 import type { Folder, ServerEntry, ServerStatus, VoiceStatus } from '../types';
 import { byPosition, initials, membersOf } from '../../../shared/web/rail';

@@ -1,7 +1,7 @@
 /**
  * Inline icons rather than emoji: emoji are rendered by the system font in their own colours (the
  * bell comes out gold), which cannot be themed. These inherit `currentColor`, so they follow Shiver's
- * text colour and the user's accent.
+ * text colour and the user's accent. Both clients draw these.
  */
 
 type Props = {

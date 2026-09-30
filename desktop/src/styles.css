@@ -480,11 +480,6 @@ body {
   font-size: 12px;
 }
 
-button.small {
-  padding: 4px 10px;
-  font-size: 12px;
-}
-
 /* The DM inbox mirrors Sharkord's own per-server DM list: same 288px column (w-72), same p-2
    container. The list itself (search and rows) is shared with the mobile client:
    shared/web/components/dm-list.css. */
@@ -558,46 +553,6 @@ button.small {
   overflow-y: auto;
 }
 
-/* a server webview is native and paints over any html, so Shiver's "modal" is only ever shown with
-   the active server hidden. the backdrop is what makes it read as a dialog rather than a page. */
-.modal-backdrop {
-  height: 100%;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: var(--shiver-bg);
-  overflow-y: auto;
-}
-
-.card {
-  width: 100%;
-  max-width: 420px;
-  padding: 24px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 12px;
-  background: var(--shiver-rail);
-  box-shadow: 0 16px 48px rgb(0 0 0 / 0.45);
-}
-
-.card h1 {
-  margin: 0 0 4px;
-  font-size: 18px;
-}
-
-.card p.hint {
-  margin: 0 0 20px;
-  color: var(--shiver-text-dim);
-  font-size: 13px;
-}
-
-.card .field:last-of-type {
-  margin-bottom: 20px;
-}
-
-.card .actions {
-  justify-content: flex-end;
-}
-
 .panel h1 {
   margin: 0 0 4px;
   font-size: 20px;
@@ -606,36 +561,6 @@ button.small {
 .panel p.hint {
   margin: 0 0 24px;
   color: var(--shiver-text-dim);
-}
-
-.field {
-  display: block;
-  margin-bottom: 16px;
-  max-width: 420px;
-}
-
-.field span {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--shiver-text-dim);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.field input[type='text'] {
-  width: 100%;
-  padding: 9px 12px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 8px;
-  background: var(--shiver-surface);
-  color: var(--shiver-text);
-  font: inherit;
-}
-
-.field input[type='text']:focus {
-  outline: 2px solid var(--shiver-accent);
-  outline-offset: -1px;
 }
 
 .field-row {
@@ -676,73 +601,6 @@ button.small {
 .feed-item.update .fallback {
   background: var(--shiver-accent);
   color: var(--shiver-bg);
-}
-
-.checkbox {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  max-width: 520px;
-  margin-bottom: 16px;
-}
-
-.checkbox input {
-  margin-top: 3px;
-}
-
-.checkbox small {
-  display: block;
-  color: var(--shiver-text-dim);
-}
-
-button.primary,
-button.ghost {
-  padding: 9px 16px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  font: inherit;
-  cursor: pointer;
-}
-
-button.primary {
-  background: var(--shiver-accent);
-  color: var(--shiver-on-accent);
-  font-weight: 600;
-}
-
-button.ghost {
-  background: transparent;
-  border-color: var(--shiver-border);
-  color: var(--shiver-text);
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 8px;
-}
-
-.error {
-  color: var(--shiver-danger);
-  margin: 0 0 16px;
-  max-width: 420px;
-}
-
-.preview {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  max-width: 420px;
-  margin-bottom: 20px;
-  padding: 12px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 10px;
-  background: var(--shiver-surface);
 }
 
 /* Settings, laid out the way Sharkord's own server settings are: the sections down one side and the
@@ -791,71 +649,6 @@ button:disabled {
   flex: 1 1 auto;
   min-width: 0;
   max-width: 520px;
-}
-
-/* The "a newer Shiver exists" bar. Across the top of the content area rather than over it: it must
-   be noticed without covering the thing somebody opened Shiver to read. */
-.update-notice {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
-  padding: 10px 14px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 10px;
-  background: var(--shiver-surface);
-}
-
-.update-text {
-  display: flex;
-  flex-direction: column;
-  margin-right: auto;
-  min-width: 0;
-}
-
-.update-error {
-  margin-top: 2px;
-  color: #f87171;
-}
-
-/* The companion-plugin verdict under the server's address. The tick and cross carry the meaning as
-   well as the colour does, so it still reads where the two hues are hard to tell apart. */
-.preview .has-plugin {
-  display: block;
-  margin-top: 4px;
-  color: #4ade80;
-}
-
-.preview .no-plugin {
-  display: block;
-  margin-top: 4px;
-  color: #f87171;
-}
-
-.preview .plugin-unknown {
-  display: block;
-  margin-top: 4px;
-  color: var(--shiver-text-dim);
-}
-
-.preview img,
-.preview .fallback {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  object-fit: cover;
-  background: var(--shiver-surface-hover);
-  display: grid;
-  place-items: center;
-  font-weight: 600;
-}
-
-.preview strong {
-  display: block;
-}
-
-.preview small {
-  color: var(--shiver-text-dim);
 }
 
 .menu {
@@ -982,52 +775,6 @@ button:disabled {
 .voice-button.leave:hover {
   background: var(--shiver-danger);
   color: #ffffff;
-}
-
-/* ── Connecting: a spinner over a server whose client is not up yet ── */
-
-@keyframes shiver-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.spinner {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  border: 2px solid var(--shiver-border);
-  border-top-color: var(--shiver-accent);
-  border-radius: 50%;
-  animation: shiver-spin 0.8s linear infinite;
-}
-
-.spinner.small {
-  width: 11px;
-  height: 11px;
-  border-width: 1.5px;
-}
-
-/* What Shiver shows while a server comes up, and when it does not answer. A spinner and a sentence:
-   Shiver used to draw the server's last messages here from a local cache, and it was never worth
-   it — every version of it was a partial copy of a client Shiver exists not to reproduce. */
-.connecting {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  color: var(--shiver-text-dim);
-}
-
-.connecting p {
-  margin: 0;
-}
-
-.connecting-failed {
-  color: var(--shiver-text);
-  font-size: 15px;
 }
 
 /* Recording a system-wide shortcut. The field is a button because it is operated by pressing keys

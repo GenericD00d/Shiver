@@ -7,7 +7,7 @@ import {
   MicIcon,
   MicOffIcon,
   PhoneOffIcon
-} from './icons';
+} from '../../../shared/web/components/icons';
 import type { VoiceStatus } from '../types';
 
 type Props = {

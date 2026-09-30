@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ConfirmAction } from './Boot';
-import { MessagesIcon, PlusIcon, SettingsIcon } from './icons';
+import { MessagesIcon, PlusIcon, SettingsIcon } from '../../../shared/web/components/icons';
 import type { Folder, ServerEntry } from '../types';
 import { byPosition, initials, membersOf } from '../../../shared/web/rail';
 

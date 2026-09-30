@@ -77,6 +77,7 @@ pub async fn add_server(
     origin: String,
     identity: Option<String>,
     password: Option<Password>,
+    account_label: Option<String>,
     remember_password: Option<bool>,
 ) -> Result<ServerEntry> {
     let origin = normalize_origin(&origin)?;
@@ -105,12 +106,25 @@ pub async fn add_server(
     };
 
     let entry = store.update(|registry| {
+        let existing = registry
+            .servers
+            .iter()
+            .filter(|server| server.origin == origin)
+            .count();
+        let identity = identity.clone().filter(|_| session.is_some());
+        // a second account on one origin needs a label to be told apart
+        let account_label = account_label
+            .clone()
+            .or_else(|| identity.clone())
+            .or_else(|| (existing > 0).then(|| format!("Account {}", existing + 1)));
+
         let entry = ServerEntry {
             id: Uuid::new_v4().to_string(),
             origin: origin.clone(),
             name: info.name.clone(),
             icon_url: info.icon_url.clone(),
-            identity: identity.clone().filter(|_| session.is_some()),
+            identity,
+            account_label,
             position: registry.next_position(),
             push_token: Some(Uuid::new_v4().simple().to_string()),
             ..Default::default()
