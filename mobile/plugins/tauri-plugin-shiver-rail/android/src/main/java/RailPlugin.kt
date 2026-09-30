@@ -35,9 +35,10 @@ import org.json.JSONObject
  * running (and connected) behind it. Views, not a page: the server's page shares a script world
  * with anything drawn inside it, and must never see what else is on the rail.
  *
- * The core hands over what to draw (`show`, `refresh`) and hears what the user chose through the
- * event channel: another server, Shiver's own page, or back to the page behind. Commands arrive on
- * the core's thread and are drawn on the UI thread before they answer.
+ * Laid out as Shiver's own rail: direct messages, the servers and a tile to add one, with settings
+ * kept at the bottom. The core hands over what to draw (`show`, `refresh`) and hears what the user
+ * chose through the event channel: a server, one of Shiver's own screens, or back to the page
+ * behind. Commands arrive on the core's thread and are drawn on the UI thread before they answer.
  */
 
 /** the rail's width, as on Shiver's own page (`--shiver-rail-width`) */
@@ -46,6 +47,7 @@ private const val TILE_DP = 48
 private const val FOLDER_TILE_DP = 40
 private const val GAP_DP = 8
 private const val BADGE_DP = 18
+private const val ICON_DP = 20
 /** a logo is decoded no larger than a tile needs at the densest screens */
 private const val LOGO_PX = 160
 private const val SLIDE_MS = 180L
@@ -65,7 +67,10 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
     private val logos = HashMap<String, Pair<String, Bitmap?>>()
 
     private var overlay: FrameLayout? = null
-    private var panel: ScrollView? = null
+    /** the rail itself: `list` scrolls above `footer` */
+    private var panel: LinearLayout? = null
+    private var list: ScrollView? = null
+    private var footer: LinearLayout? = null
     private var back: OnBackPressedCallback? = null
     /** the server whose page is behind the rail */
     private var current: String? = null
@@ -135,14 +140,28 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
             setOnClickListener { choose("closed", null) }
         }
 
-        val scroll = ScrollView(activity).apply {
+        val rail = LinearLayout(activity).apply {
             layoutParams = FrameLayout.LayoutParams(dp(RAIL_DP), ViewGroup.LayoutParams.MATCH_PARENT)
-            isVerticalScrollBarEnabled = false
+            orientation = LinearLayout.VERTICAL
             // a tap on the rail between tiles is not a tap beside it
             isClickable = true
         }
 
-        root.addView(scroll)
+        val scroll = ScrollView(activity).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            isVerticalScrollBarEnabled = false
+        }
+
+        val bottom = LinearLayout(activity).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, 0, 0, dp(10))
+        }
+
+        rail.addView(scroll)
+        rail.addView(bottom)
+        root.addView(rail)
         content.addView(root)
 
         // added after the activity's own, so it is asked first while the rail is up
@@ -156,7 +175,9 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
         }
 
         overlay = root
-        panel = scroll
+        panel = rail
+        list = scroll
+        footer = bottom
 
         return root
     }
@@ -164,23 +185,22 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
     private fun render(view: JSONObject, missing: JSArray) {
         overlay()
 
-        val scroll = panel ?: return
+        val rail = panel ?: return
+        val scroll = list ?: return
+        val bottom = footer ?: return
         val palette = Palette(view)
 
         current = view.optString("current").takeIf { it.isNotEmpty() && !view.isNull("current") }
-        scroll.setBackgroundColor(palette.rail)
+        rail.setBackgroundColor(palette.rail)
 
         val column = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, dp(10) - dp(GAP_DP), 0, dp(10))
+            setPadding(0, dp(10) - dp(GAP_DP), 0, dp(GAP_DP))
         }
 
-        column.addView(homeTile(palette))
-        column.addView(View(activity).apply {
-            setBackgroundColor(palette.divider)
-            layoutParams = LinearLayout.LayoutParams(dp(32), 1).apply { topMargin = dp(GAP_DP) }
-        })
+        column.addView(iconTile(R.drawable.shiver_rail_messages, "Direct messages", palette.text, palette) { choose("dms", null) })
+        column.addView(divider(palette))
 
         val rows = view.optJSONArray("rows") ?: JSONArray()
 
@@ -193,28 +213,39 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
             }
         }
 
+        column.addView(iconTile(R.drawable.shiver_rail_add, "Add a server", palette.accent, palette) { choose("add", null) })
+
         scroll.removeAllViews()
         scroll.addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        // settings stays in reach however long the list of servers grows
+        bottom.removeAllViews()
+        bottom.addView(divider(palette))
+        bottom.addView(iconTile(R.drawable.shiver_rail_settings, "Shiver settings", palette.text, palette) { choose("settings", null) })
     }
 
-    /** Shiver's own page: messages, settings and servers to add. */
-    private fun homeTile(palette: Palette): View {
+    private fun divider(palette: Palette) = View(activity).apply {
+        setBackgroundColor(palette.divider)
+        layoutParams = LinearLayout.LayoutParams(dp(32), 1).apply { topMargin = dp(GAP_DP) }
+    }
+
+    /** One of Shiver's own screens: its icon, tinted `color`, on a tile like a server's. */
+    private fun iconTile(icon: Int, label: String, color: Int, palette: Palette, onTap: () -> Unit): View {
         val frame = FrameLayout(activity).apply {
             layoutParams = LinearLayout.LayoutParams(dp(TILE_DP), dp(TILE_DP)).apply { topMargin = dp(GAP_DP) }
-            contentDescription = "Shiver: messages, settings and servers"
+            background = rounded(palette.surface, dp(16).toFloat())
+            contentDescription = label
             isClickable = true
             isFocusable = true
-            setOnClickListener { choose("home", null) }
+            setOnClickListener { onTap() }
         }
 
-        val face = ImageView(activity).apply {
-            setImageDrawable(activity.packageManager.getApplicationIcon(activity.applicationInfo))
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            background = rounded(palette.surface, dp(16).toFloat())
-            clipToOutline = true
+        val image = ImageView(activity).apply {
+            setImageDrawable(activity.getDrawable(icon)?.mutate()?.apply { setTint(color) })
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
 
-        frame.addView(face, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        frame.addView(image, FrameLayout.LayoutParams(dp(ICON_DP), dp(ICON_DP), Gravity.CENTER))
 
         return frame
     }
@@ -354,13 +385,13 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
 
     private fun slideIn() {
         val root = overlay ?: return
-        val scroll = panel ?: return
+        val rail = panel ?: return
 
         root.visibility = View.VISIBLE
         root.alpha = 0f
         root.animate().alpha(1f).setDuration(SLIDE_MS).start()
-        scroll.translationX = -dp(RAIL_DP).toFloat()
-        scroll.animate().translationX(0f).setDuration(SLIDE_MS).setInterpolator(DecelerateInterpolator()).start()
+        rail.translationX = -dp(RAIL_DP).toFloat()
+        rail.animate().translationX(0f).setDuration(SLIDE_MS).setInterpolator(DecelerateInterpolator()).start()
         back?.isEnabled = true
     }
 
@@ -370,7 +401,10 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
         back?.isEnabled = false
     }
 
-    /** Closes the rail and tells the core what was chosen: `closed`, `home`, or `open` with an entry id. */
+    /**
+     * Closes the rail and tells the core what was chosen: `closed`, `open` with an entry id, or one of
+     * Shiver's own screens (`dms`, `add`, `settings`).
+     */
     private fun choose(kind: String, entryId: String?) {
         dismiss()
 

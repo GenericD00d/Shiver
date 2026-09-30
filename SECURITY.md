@@ -115,8 +115,9 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   those), and the full one is on Shiver's own page. A server's page is handed its own entry's
   settings, mutes, session and push endpoint, and the address of Shiver's page (asking for the rail
   is a navigation there, which the core turns into the quick rail); nothing about other servers. It
-  can navigate to Shiver's page, whose fragment can only ask for the rail, or open a server (or say
-  it failed) by id; nothing is changed from a URL. The core's events (unread counts, push, updates)
+  can navigate to Shiver's page, whose fragment can only ask for the rail or one of Shiver's screens
+  (direct messages, adding a server, settings), or open a server (or say it failed) by id; nothing
+  is changed from a URL. The core's events (unread counts, push, updates)
   are sent only while Shiver's page is up, because the one webview keeps that page's event
   listeners after it navigates to a server.
 - **The plugin's push delivery is pinned.** The endpoint is resolved once, every address is

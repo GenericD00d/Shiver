@@ -72,8 +72,9 @@ will serve you perfectly well.
 
 **Android** (8.0 or newer: older versions no longer get WebView security updates)
 
-- **Two-level swipe** — Sharkord's channel drawer, then on past it to Shiver's rail, drawn over the
-  server so that going back to it is instant: the page never unloads, so it never reconnects
+- **Two-level swipe** — Sharkord's channel drawer, then on past it to Shiver's rail (direct
+  messages, your servers, settings), drawn over the server so that going back to it is instant: the
+  page never unloads, so it never reconnects
 - **Push notifications while Shiver is closed**, over UnifiedPush (ntfy or another distributor), per
   server and off by default. Needs the companion plugin on that server
 

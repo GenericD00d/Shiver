@@ -6,7 +6,9 @@
 //! the page instead, which keeps running (and connected) behind it. Being native, it is out of the
 //! page's reach: a server's page never sees what else is on the rail.
 //!
-//! The core hands it what to draw ([`RailView`]) and hears back what the user chose ([`RailEvent`]).
+//! It is laid out as Shiver's own rail: direct messages, the servers and a tile to add one, and
+//! settings at the bottom. The core hands it what to draw ([`RailView`]) and hears back what the
+//! user chose ([`RailEvent`]).
 //! Logos travel once: a tile names its logo by a key, and carries the logo itself only when the
 //! core has not sent that key before; the rail reports the keys it lacks.
 
@@ -70,8 +72,12 @@ pub enum RailEvent {
         #[serde(rename = "entryId")]
         entry_id: String,
     },
-    /// Shiver's own page (messages, settings, adding a server)
-    Home,
+    /// Shiver's direct messages
+    Dms,
+    /// Shiver's screen for adding a server
+    Add,
+    /// Shiver's settings
+    Settings,
     /// back to the page behind
     Closed,
 }
@@ -198,8 +204,11 @@ mod tests {
                 entry_id: "a".into()
             })
         );
-        assert_eq!(read(r#"{"kind":"home"}"#), Some(RailEvent::Home));
+        assert_eq!(read(r#"{"kind":"dms"}"#), Some(RailEvent::Dms));
+        assert_eq!(read(r#"{"kind":"add"}"#), Some(RailEvent::Add));
+        assert_eq!(read(r#"{"kind":"settings"}"#), Some(RailEvent::Settings));
         assert_eq!(read(r#"{"kind":"closed"}"#), Some(RailEvent::Closed));
+        assert_eq!(read(r#"{"kind":"home"}"#), None);
         assert_eq!(read(r#"{"kind":"open"}"#), None);
         assert_eq!(read(r#"{"kind":"elsewhere"}"#), None);
     }
