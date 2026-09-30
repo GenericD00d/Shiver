@@ -1,10 +1,11 @@
-//! The quick rail: the servers, drawn natively over the server page on screen
-//! (`tauri-plugin-shiver-rail`), so reaching them no longer unloads the page. Coming back to the
-//! same server is closing the rail; the page never stopped, so it never joins the server again.
+//! The quick rail: direct messages, the servers and settings, drawn natively over the server page on
+//! screen (`tauri-plugin-shiver-rail`), so reaching them no longer unloads the page. Coming back to
+//! the same server is closing the rail; the page never stopped, so it never joins the server again.
 //!
 //! A server's page asks for the rail the only way it can, by navigating to Shiver's page with
 //! `#home` (a swipe past the drawer, or back); that navigation is cancelled and the rail drawn
-//! instead. Choosing another server, or Shiver's own page, leaves through Shiver's page as before.
+//! instead. Choosing another server, or one of Shiver's own screens, leaves through Shiver's page
+//! as before (`#open=<id>`, `#dms`, `#add`, `#settings`).
 
 use std::{
     collections::HashMap,
@@ -78,7 +79,9 @@ pub fn chosen(app: &AppHandle, event: RailEvent) {
 
     match event {
         RailEvent::Closed => {}
-        RailEvent::Home => webview::go_home(app, Some("home")),
+        RailEvent::Dms => webview::go_home(app, Some("dms")),
+        RailEvent::Add => webview::go_home(app, Some("add")),
+        RailEvent::Settings => webview::go_home(app, Some("settings")),
         RailEvent::Open { entry_id } => {
             let known = app.state::<Store>().registry().server(&entry_id).is_some();
 
@@ -104,7 +107,7 @@ fn draw(app: &AppHandle, reveal: bool) {
         Err(error) => {
             eprintln!("[shiver] could not draw the rail: {error}");
 
-            // the swipe still reaches the servers, the old way
+            // the swipe still reaches the servers, the old way: Shiver's page, with its own rail
             if reveal {
                 webview::go_home(app, Some("home"));
             }

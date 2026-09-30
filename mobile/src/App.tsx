@@ -22,8 +22,16 @@ import {
 } from './types';
 import { byPosition } from '../../shared/web/rail';
 
-/** Shiver's own screens. `boot` opens the last server used, or waits after `#home` (the quick rail's Shiver tile). */
+/**
+ * Shiver's own screens. `boot` opens the last server used, or waits after `#home` (the quick rail
+ * could not be drawn, so the swipe that asked for it lands here).
+ */
 type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms';
+
+/** The screens the quick rail can open, each by the fragment of the same name. */
+const RAIL_SCREENS = ['dms', 'add', 'settings'] as const;
+
+type RailScreen = (typeof RAIL_SCREENS)[number];
 
 /** The settings sections, in the order they are listed. */
 const SETTINGS_SECTIONS: { id: SettingsSection | 'servers'; label: string }[] = [
@@ -57,11 +65,16 @@ const TITLES: Record<Exclude<Screen, 'boot'>, string> = {
 };
 
 /**
- * What a fragment on Shiver's own URL may ask for: to stay here (the quick rail's Shiver tile), a
- * server to open (chosen on the quick rail, or its page reconnecting) or one that failed (the core). Any page can navigate here, so
- * ids are looked up in the registry and nothing else is taken from the URL.
+ * What a fragment on Shiver's own URL may ask for: one of Shiver's screens (chosen on the quick
+ * rail), to stay here (the quick rail could not be drawn), a server to open (chosen on the quick
+ * rail, or its page reconnecting) or one that failed (the core). Any page can navigate here, so ids
+ * are looked up in the registry and nothing else is taken from the URL.
  */
-type Intent = { kind: 'open' | 'failed'; id: string } | { kind: 'home' } | null;
+type Intent =
+  | { kind: 'open' | 'failed'; id: string }
+  | { kind: 'home' }
+  | { kind: 'screen'; screen: RailScreen }
+  | null;
 
 const decode = (text: string) => {
   try {
@@ -76,6 +89,10 @@ const readIntent = (hash: string): Intent => {
 
   if (value.startsWith('open=')) return { kind: 'open', id: decode(value.slice('open='.length)) };
   if (value.startsWith('failed=')) return { kind: 'failed', id: decode(value.slice('failed='.length)) };
+
+  const screen = RAIL_SCREENS.find((candidate) => candidate === value);
+
+  if (screen) return { kind: 'screen', screen };
 
   return value === 'home' ? { kind: 'home' } : null;
 };
@@ -213,6 +230,12 @@ export const App = () => {
         return;
       }
 
+      if (intent?.kind === 'screen') {
+        setScreen(intent.screen);
+
+        return;
+      }
+
       if (intent?.kind === 'home') {
         const left = lastUsed(next);
 
@@ -225,7 +248,8 @@ export const App = () => {
         return;
       }
 
-      const named = next.servers.find((server) => server.id === intent?.id);
+      const namedId = intent?.kind === 'open' || intent?.kind === 'failed' ? intent.id : null;
+      const named = next.servers.find((server) => server.id === namedId);
 
       if (named) {
         if (intent?.kind === 'failed') setBoot({ kind: 'failed', server: named });

@@ -23,7 +23,8 @@ mobile/src-tauri/          Android core (crate `shiver-mobile`); capabilities/: 
 mobile/src/                Android UI (React)
 mobile/bridge/             mobile bridge (inside server pages; knows only that server); document-start.ts runs first
 mobile/plugins/            tauri-plugin-shiver-push (UnifiedPush), tauri-plugin-shiver-secrets (Keystore),
-                           tauri-plugin-shiver-rail (the quick rail, native views over the server page)
+                           tauri-plugin-shiver-rail (the quick rail: direct messages, servers, add, settings;
+                           native views over the server page)
 plugin/                    Sharkord companion plugin (server/ + client/, plain JS, node tests)
 scripts/check-version.py   checks the workspace and tauri.conf.json versions agree
 scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys, classes and conventions the bridges
@@ -127,7 +128,7 @@ Page hooks (desktop bridge ↔ core): `__SHIVER_DRAIN__` (page→core queue) and
 | `model` | `ServerEntry` (+`push_token`, `retired_push_endpoints`), `Settings`, `Registry` (`registry!` helpers, `entry_for_push_token`, `ensure_push_tokens`) |
 | `store` | as desktop |
 | `icons` | logos as files (`icons/<entry id>`, a `data:` uri each): `save` (none deletes), `load`, `load_one`, `key` (names the file's contents by size and time, unread), `restore` (prune the gone, fetch the missing) |
-| `rail` | the quick rail over the server page: `QuickRail` (whether it is up, the logo keys it holds), `wanted` (a page's `#home`), `open`, `refresh` (unread changed), `close`, `chosen` (another server or Shiver's page leave through `#open=`/`#home`; the same server just closes it) |
+| `rail` | the quick rail over the server page: `QuickRail` (whether it is up, the logo keys it holds), `wanted` (a page's `#home`), `open`, `refresh` (unread changed), `close`, `chosen` (another server or one of Shiver's screens leave through `#open=`, `#dms`, `#add`, `#settings`; the same server just closes it; a rail that cannot be drawn falls back to `#home`) |
 | `inbox` | core sockets for servers not on screen + secret storage: `Inbox` (tokens, problems, plugins, dms, unread, signed_out, baselines), `sync` (each server left goes unwatched for `WATCH_GRACE`, one timer for all), `set_background` (the server on screen is watched by the core after `WATCH_GRACE` in the background), `restart`, `restore` (holds back the socket of the server about to open), `session_for` (renews a due session in the background, an expired one first), `remember_session`, `remember_password`, `forget_password`, `forget_everywhere`, `Watch` (each connection takes a join place first), `harvest_token` (never over a session that outlasts it), `replace_mutes`, `watch_mutes` (not in the background), `collect_dms`, `DmEntry`, `INBOX_EVENT` |
 | `webview` | the single webview (`main_window`): `Showing` (home, current server and whether it loaded, a stray page from history, pending DM user, when each server was left, whether Shiver is in the background; `at_home`, `just_left`, `hold_back`, `begin_opening`/`still_opening`, `set_background`, `in_background`, `kept_by_page`), `show_server`, `show_failed` (back to Shiver's page with `#failed=<id>`), `go_home`, `emit_home` (events only while Shiver's page is up), `without_seed`, `install_bridge`/`PageContext` (that entry's own config only), `read_mutes` (the page's mutes and outside links), navigation guard (`is_allowed`, `navigation_allowed`; allows only, since Android also asks it for frames and cancelled navigations), arrival on load (`is_home`, `landed_home`), `background_color`, `document_start` (bundle wrapped with the per-launch seed secret; `seed_key_for` derives each origin's key), `Openings` |
 | `push` | UnifiedPush per chosen server: `Push`, `start`, `register_wanted`, `set_wanted` (turning off retires the endpoint; the page clears it with the plugin), `unregister`, `migrate_tokens`, `PUSH_EVENT` |
@@ -139,7 +140,8 @@ Page hooks (mobile): `__SHIVER__` (config), `__SHIVER_MUTED__`, `__SHIVER_OPEN__
 Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unregister`, `on_event`,
 `PushEvent`); `SecretsExt` (`set`, `get`, `remove`, `keys`, `wipe_origin`: that origin's webview storage and camera/mic consent);
 `RailExt` (`show`, `refresh`: a `RailView` of `Row`s and `Tile`s, answering the logo keys it lacks; `hide`; `on_event` → `RailEvent`
-{Open, Home, Closed}; Kotlin `RailPlugin`: the overlay, its back press and animations). Kotlin in `android/src/main/java`.
+{Open, Dms, Add, Settings, Closed}; Kotlin `RailPlugin`: the overlay laid out as Shiver's rail (direct messages, servers, add,
+settings pinned at the bottom), its back press and animations; icons in `android/src/main/res/drawable`). Kotlin in `android/src/main/java`.
 
 ## shared/web (TS)
 
@@ -168,7 +170,7 @@ Android plugins: `PushExt` (`distributors`, `set_distributor`, `register`, `unre
 - **desktop/bridge/index.ts**: one file: session seeding, DM list (`openDmChannelId`, `resolveDmChannels`), conversation mode (`showConversation`; an open dialog such as
   Sharkord's settings is closed first, as for a clicked notification's channel), voice read/control/lock,
   the channel menu on right-click (`installChannelRightClick`; its mutes and "Mark all as read" go to the core through the drain), notification capture (filtered by the server's `NotifyLevel`: Sharkord's switches seeded to match by `applyNotifyLevel`, which marks the level it wrote in `shiver-notify-level`; `__SHIVER_SET_NOTIFY__` for a change), drain queue.
-- **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits after `#home` (the quick rail's Shiver tile); `#open=` opens one; `__SHIVER_BACK__` reopens the last), `api.ts`, `types.ts`, `components/`:
+- **mobile/src**: `App.tsx` (screens; `boot` opens last server, or waits after `#home` (the quick rail could not be drawn); `#open=` opens one; `#dms`, `#add`, `#settings` (`RAIL_SCREENS`, from the quick rail) open that screen; `__SHIVER_BACK__` reopens the last), `api.ts`, `types.ts`, `components/`:
   `Boot` (confirms rail menu actions; after `#home`, a button back to the server left; counts down a wait for a join), `Rail` (`RailRef`), `ServerList` (a notification level per server), `AddServer`, `SignInServer`,
   `SettingsScreen`, `BackgroundNotifications`, `Sessions` (+`TrustedLinks`), `DirectMessages`, `UpdateNotice`, `icons`.
 - **mobile/bridge**: `index.ts` (install, `seedSession`), `home.ts` (`setHome`, `goHome`, `openRail` and `installRailSwipe`: back (after closing a menu or
