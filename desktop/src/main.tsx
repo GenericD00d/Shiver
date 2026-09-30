@@ -25,8 +25,8 @@ const views: Record<string, () => React.ReactElement> = {
 
 const View = views[label] ?? App;
 
-// A link or file dropped where nothing takes it would navigate this webview to it. Only the rail's
-// own reorder targets take drops (they cancel the events themselves, before these run).
+// A link or file dropped where nothing takes it would navigate this webview to it, and nothing here
+// takes drops: the rail's own drag is made of pointer events.
 window.addEventListener('dragover', (event) => {
   if (event.defaultPrevented) return;
 

@@ -13,6 +13,8 @@ import type {
   VoiceStatus
 } from './types';
 
+import type { MenuEntry } from '../../shared/web/menus';
+
 export { errorMessage } from '../../shared/web/errors';
 
 /**
@@ -71,7 +73,15 @@ export const api = {
   setChannelMuted: (entryId: string, channelId: number, muted: boolean) =>
     invoke<void>('set_channel_muted', { entryId, channelId, muted }),
 
-  showServerMenu: (id: string) => invoke<void>('show_server_menu', { id }),
+  /** what a server's menu says beyond its entry */
+  serverMenuFacts: (id: string) =>
+    invoke<{ hasPassword: boolean; pluginChecked: boolean; plugin: string | null; tooLarge: boolean }>(
+      'server_menu_facts',
+      { id }
+    ),
+
+  /** a rail menu as a native menu at the pointer; the chosen item comes back as `EVENTS.menu` */
+  showMenu: (entries: MenuEntry[]) => invoke<void>('show_menu', { entries }),
 
   togglePopup: () => invoke<boolean>('toggle_popup'),
 
@@ -97,8 +107,6 @@ export const api = {
 
   createFolderWith: (name: string, memberIds: string[]) =>
     invoke<Folder>('create_folder_with', { name, memberIds }),
-
-  showFolderMenu: (id: string) => invoke<void>('show_folder_menu', { id }),
 
   setServerFolder: (id: string, folderId: string | null) =>
     invoke<void>('set_server_folder', { id, folderId }),

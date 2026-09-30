@@ -3,12 +3,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, errorMessage } from './api';
 import { EVENTS, useCoreEvent } from './events';
 import { DirectMessagesPanel } from './components/DirectMessagesPanel';
-import { RenameFolderPanel } from './components/RenameFolderPanel';
-import { ServerRail } from './components/ServerRail';
+import { VoiceTile } from './components/VoiceTile';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WelcomePanel } from './components/WelcomePanel';
 import { AddServerForm } from '../../shared/web/components/AddServerForm';
 import { Confirm } from '../../shared/web/components/Confirm';
+import { Rail } from '../../shared/web/components/Rail';
+import { RenameFolderForm } from '../../shared/web/components/RenameFolderForm';
 import { Connecting as ConnectingView } from '../../shared/web/components/Connecting';
 import { SignInForm } from '../../shared/web/components/SignInForm';
 import { UpdateNotice } from '../../shared/web/components/UpdateNotice';
@@ -25,7 +26,8 @@ import {
   type VoiceStatus
 } from './types';
 import { dmKey } from '../../shared/web/dms';
-import { byPosition, railOrder } from '../../shared/web/rail';
+import { folderMenu, readMenuId, serverMenu } from '../../shared/web/menus';
+import { byPosition, type RailRef, type RailStep, railOrder } from '../../shared/web/rail';
 
 /**
  * Which Shiver surface owns the content area. Anything other than `server` means the active server's
@@ -490,44 +492,109 @@ export const App = () => {
     }
   });
 
-  // the rail's context menu is a native os menu, so its result comes back as an event
-  useCoreEvent<{ action: string; entryId: string }>(EVENTS.menu, ({ action, entryId }) => {
-    // ids are `action:id`, the id being a folder's for folder actions
-    const actions: Record<string, (id: string) => Promise<unknown>> = {
-      open: openServer,
-      remove: async (id) => {
-        setRemoving(id);
+  // the rail's menus are native os menus, so the item chosen comes back as an event
+  useCoreEvent<string>(EVENTS.menu, (id) => {
+    const chosen = readMenuId(id);
+
+    if (!chosen) return;
+
+    const { action, target } = chosen;
+    const actions: Record<typeof action, () => Promise<unknown>> = {
+      open: () => openServer(target),
+      remove: async () => {
+        setRemoving(target);
         await openPanel('remove');
       },
-      signin: async (id) => {
-        setSigningIn(id);
+      signin: async () => {
+        setSigningIn(target);
         await openPanel('signin');
       },
-      'rename-folder': async (id) => {
-        setRenamingFolder(id);
+      'rename-folder': async () => {
+        setRenamingFolder(target);
         await openPanel('folder');
       },
-      markread: (id) => api.markServerRead(id).then(refreshFeed),
-      forgetpw: api.forgetPassword,
+      markread: () => api.markServerRead(target).then(refreshFeed),
+      forgetpw: () => api.forgetPassword(target),
       // two actions rather than a toggle: the menu knew which way the server is set
-      anysize: (id) => api.setAcceptAnySize(id, true),
-      normalsize: (id) => api.setAcceptAnySize(id, false),
-      'notify-all': (id) => api.setNotifyLevel(id, 'all').then(refresh),
-      'notify-mentions': (id) => api.setNotifyLevel(id, 'mentions').then(refresh),
-      'notify-dms': (id) => api.setNotifyLevel(id, 'dms').then(refresh),
-      logout: (id) => api.logOutServer(id).then(refresh),
-      refresh: (id) => api.refreshServerInfo(id).then(refresh),
-      unfolder: (id) => api.setServerFolder(id, null).then(refresh),
-      'delete-folder': (id) => api.deleteFolder(id).then(refresh)
+      anysize: () => api.setAcceptAnySize(target, true),
+      normalsize: () => api.setAcceptAnySize(target, false),
+      'notify-all': () => api.setNotifyLevel(target, 'all').then(refresh),
+      'notify-mentions': () => api.setNotifyLevel(target, 'mentions').then(refresh),
+      'notify-dms': () => api.setNotifyLevel(target, 'dms').then(refresh),
+      logout: () => api.logOutServer(target).then(refresh),
+      refresh: () => api.refreshServerInfo(target).then(refresh),
+      move: () => {
+        const [serverId, folderId] = target.split(':');
+
+        return api.setServerFolder(serverId, folderId).then(refresh);
+      },
+      unfolder: () => api.setServerFolder(target, null).then(refresh),
+      'delete-folder': () => api.deleteFolder(target).then(refresh),
+      plugin: async () => undefined
     };
 
-    if (Object.hasOwn(actions, action)) void actions[action](entryId).catch(() => undefined);
+    void actions[action]().catch(() => undefined);
   });
+
+  /** A server's or folder's menu, from the item model both clients share. */
+  const showMenu = useCallback(
+    async (target: RailRef) => {
+      if (target.kind === 'folder') {
+        await api.showMenu(folderMenu(target.id));
+
+        return;
+      }
+
+      const server = registry.servers.find((candidate) => candidate.id === target.id);
+
+      if (!server) return;
+
+      const facts = await api.serverMenuFacts(server.id);
+
+      await api.showMenu(
+        serverMenu(server, {
+          folders: registry.folders,
+          hasPassword: facts.hasPassword,
+          plugin: facts.pluginChecked ? facts.plugin : undefined,
+          tooLarge: facts.tooLarge,
+          canMarkRead: true
+        })
+      );
+    },
+    [registry.folders, registry.servers]
+  );
+
+  /** A drag's calls, in order; the rail is redrawn from the registry either way. */
+  const applyDrop = useCallback(
+    async (steps: RailStep[]) => {
+      try {
+        for (const step of steps) {
+          if (step.op === 'setFolder') await api.setServerFolder(step.serverId, step.folderId);
+          if (step.op === 'createFolder') await api.createFolderWith('New folder', step.memberIds);
+          if (step.op === 'reorder') await api.reorderRail(step.ordered);
+          if (step.op === 'reorderInFolder') await api.reorderServers(step.ids);
+        }
+      } finally {
+        await refresh().catch(() => undefined);
+      }
+    },
+    [refresh]
+  );
 
   useEffect(() => {
     applyTheme(registry.settings);
   }, [registry.settings]);
 
+  const railServers = useMemo(
+    () => servers.map((server) => ({ ...server, icon: server.iconUrl })),
+    [servers]
+  );
+  const offline = useMemo(
+    () => Object.keys(statuses).filter((id) => statuses[id] === 'offline'),
+    [statuses]
+  );
+
+  const renaming = registry.folders.find((folder) => folder.id === renamingFolder);
   const removingServer = registry.servers.find((server) => server.id === removing);
   const signingInServer = registry.servers.find((server) => server.id === signingIn);
 
@@ -535,21 +602,28 @@ export const App = () => {
 
   return (
     <div className="app">
-      <ServerRail
-        servers={servers}
+      <Rail
+        servers={railServers}
         folders={registry.folders}
         activeId={activeId}
+        screen={panel === 'dms' || panel === 'settings' || panel === 'add' ? panel : null}
         unread={unread}
-        statuses={statuses}
-        settingsOpen={panel === 'settings'}
-        dmsOpen={panel === 'dms'}
-        voice={voice}
-        onSelect={openServer}
-        onAdd={() => openPanel('add')}
-        onOpenSettings={() => openPanel('settings')}
-        onOpenDms={openDmPanel}
-        onRefresh={refresh}
-      />
+        offline={offline}
+        onOpen={(id) => void openServer(id)}
+        onOpenDms={() => void openDmPanel()}
+        onAdd={() => void openPanel('add')}
+        onSettings={() => void openPanel('settings')}
+        onToggleFolder={(id, expanded) =>
+          void api
+            .setFolderExpanded(id, expanded)
+            .catch(() => undefined)
+            .then(refresh)
+        }
+        onDrop={(steps) => void applyDrop(steps)}
+        onMenu={(target) => void showMenu(target).catch(() => undefined)}
+      >
+        {voice ? <VoiceTile status={voice} onOpenServer={openServer} /> : null}
+      </Rail>
 
       <div className="main">
         <div className="content">
@@ -633,12 +707,15 @@ export const App = () => {
             </div>
           ) : null}
 
-          {panel === 'folder' ? (
-            <RenameFolderPanel
-              folder={registry.folders.find((folder) => folder.id === renamingFolder)}
-              onSave={handleRenameFolder}
-              onCancel={closePanel}
-            />
+          {panel === 'folder' && renaming ? (
+            <div className="modal-backdrop">
+              <RenameFolderForm
+                key={renaming.id}
+                name={renaming.name}
+                onSave={(name) => void handleRenameFolder(renaming.id, name)}
+                onCancel={closePanel}
+              />
+            </div>
           ) : null}
 
           {/* asked first: the rail's menu removes a server, and everything Shiver keeps for it, in one click */}

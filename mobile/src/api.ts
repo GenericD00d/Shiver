@@ -45,6 +45,8 @@ export const api = {
 
   reorderRail: (ordered: { kind: 'server' | 'folder'; id: string }[]) =>
     invoke<void>('reorder_rail', { ordered }),
+  /** the servers of one folder, in their new order */
+  reorderServers: (orderedIds: string[]) => invoke<void>('reorder_servers', { orderedIds }),
   createFolderWith: (name: string, memberIds: string[]) =>
     invoke<Folder>('create_folder_with', { name, memberIds }),
   setServerFolder: (id: string, folderId: string | null) =>

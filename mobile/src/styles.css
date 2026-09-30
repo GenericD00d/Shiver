@@ -5,7 +5,7 @@
   --shiver-on-accent: #171717;
   --shiver-surface: #262626;
   --shiver-surface-hover: #333333;
-  /* between the rail and a tile on it: what a folder and the rail's menu sit on */
+  /* what the settings drawer sits on */
   --shiver-surface-dim: #1f1f1f;
   --shiver-border: rgb(255 255 255 / 10%);
   --shiver-text: #fafafa;
@@ -13,7 +13,7 @@
   --shiver-danger: #ff6467;
   /* the rail's own two, matching the desktop client token for token */
   --shiver-rail: #171717;
-  --shiver-rail-width: 68px;
+  --shiver-rail-width: 72px;
 
   color-scheme: dark;
 }
@@ -171,122 +171,10 @@ button {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* ── the rail ── */
+/* the rail (shared/web/components/rail.css) reaching under the status bar and the gesture area,
+   which the activity already insets */
 .rail {
-  /* the long-press menu is positioned against this */
-  position: relative;
-  width: var(--shiver-rail-width);
-  flex: 0 0 var(--shiver-rail-width);
-  height: 100%;
-  background: var(--shiver-rail);
-  border-right: 1px solid var(--shiver-border);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  /* the activity already insets the system bars */
   padding: calc(10px + env(safe-area-inset-top)) 0 calc(10px + env(safe-area-inset-bottom));
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-width: none;
-}
-
-.rail::-webkit-scrollbar {
-  display: none;
-}
-
-/* A folder wears its contents. Its servers are inset a little when it is open, so the group reads
-   as a group rather than as more of the rail. */
-.rail-folder {
-  background: var(--shiver-surface-dim);
-  padding: 4px;
-}
-
-/* Open, the folder shrinks to a marker and its servers appear below it, boxed. */
-.rail-folder.open {
-  height: 20px;
-  flex: 0 0 20px;
-  border-radius: 10px;
-  padding: 0;
-}
-
-.folder-open {
-  width: 16px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--shiver-text-dim, #8a8a8a);
-}
-
-/* No background of its own: the rail is already the darker surface here, and a darker box around a
-   single tile reads as a black oval drawn round the icon rather than as a group. */
-.folder-contents {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-}
-
-/* The rows are stated as well as the columns on purpose: left to the count, a single member
-   stretches to fill the tile and reads as a server whose icon has been cut in half. */
-.folder-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  gap: 2px;
-  width: 100%;
-  height: 100%;
-}
-
-.folder-cell {
-  border-radius: 5px;
-  font-weight: 700;
-  background: var(--shiver-surface-hover);
-  color: var(--shiver-text);
-  display: grid;
-  place-items: center;
-  font-size: 9px;
-  overflow: hidden;
-}
-
-.folder-cell img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  pointer-events: none;
-  -webkit-user-drag: none;
-}
-
-.rail-item.in-folder {
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
-  border-radius: 13px;
-  font-size: 14px;
-}
-
-/* Renaming happens in the menu itself rather than in a dialog, so the folder being renamed stays
-   on screen next to the field. */
-.menu-rename {
-  display: flex;
-  gap: 6px;
-  padding: 6px;
-}
-
-.menu-rename input {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 8px;
-  background: var(--shiver-input, #2a2a2a);
-  color: inherit;
-  font: inherit;
-}
-
-.menu-rename .menu-item {
-  width: auto;
-  flex: 0 0 auto;
 }
 
 /* The tile a held one would join. Ringed rather than moved: nothing has happened yet, and a tile
@@ -409,101 +297,6 @@ button {
   white-space: normal;
 }
 
-.rail-item.drop-onto {
-  box-shadow: 0 0 0 2px var(--shiver-accent, #e5e5e5);
-}
-
-.rail-item.lifted {
-  transform: scale(1.12);
-  box-shadow: 0 8px 20px rgb(0 0 0 / 55%);
-  opacity: 0.92;
-  transition: transform 120ms ease;
-  /* carried over its neighbours rather than through them */
-  z-index: 2;
-}
-
-.rail-item {
-  /* a long press here is a gesture, never a text selection */
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
-  position: relative;
-  width: 48px;
-  height: 48px;
-  flex: 0 0 48px;
-  border: none;
-  padding: 0;
-  border-radius: 16px;
-  background: var(--shiver-surface);
-  color: var(--shiver-text);
-  display: grid;
-  place-items: center;
-  font-size: 16px;
-  font-weight: 600;
-  transition: border-radius 120ms ease, background 120ms ease;
-}
-
-/* no hover on a touch screen: the press is the only feedback there is */
-.rail-item:active {
-  border-radius: 14px;
-  background: var(--shiver-surface-hover);
-}
-
-.rail-item.active {
-  border-radius: 14px;
-  box-shadow: inset 0 0 0 2px var(--shiver-accent);
-}
-
-.rail-item img {
-  /* decoration only; the touch belongs to the tile, and the platform's image drag must not take it */
-  pointer-events: none;
-  -webkit-user-drag: none;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  /* the icon rounds itself, so the tile can clip nothing and the unread badge is free to overhang
-     it — the desktop rail learned this the hard way, where `overflow: hidden` on the tile hid every
-     badge it was meant to show */
-  border-radius: inherit;
-}
-
-.rail-badge {
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  /* a fixed circle whatever the count (capped at 99+) */
-  min-width: 18px;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border-radius: 50%;
-  text-align: center;
-  background: var(--shiver-text, #fafafa);
-  color: var(--shiver-rail, #171717);
-  font-size: 9px;
-  line-height: 18px;
-  font-weight: 700;
-  pointer-events: none;
-  /* the same hairline as the desktop badge, against the rail behind it */
-  box-shadow: 0 0 0 1px var(--shiver-rail);
-}
-
-.rail-add {
-  color: var(--shiver-accent);
-}
-
-.rail-spacer {
-  flex: 1 1 auto;
-  min-height: 8px;
-}
-
-.rail-divider {
-  width: 32px;
-  height: 1px;
-  flex: 0 0 1px;
-  background: var(--shiver-border);
-}
-
 /* ── the boot screen ──
    Shiver's own front page, which the user should barely see: it exists to hold a spinner while the
    last server answers, and to say so when it does not. */
@@ -526,45 +319,3 @@ button {
   color: var(--shiver-text-dim);
 }
 
-/* ── the rail's long-press menu ── */
-.rail-menu {
-  position: absolute;
-  left: calc(var(--shiver-rail-width) + 8px);
-  min-width: 200px;
-  padding: 6px;
-  border-radius: 12px;
-  border: 1px solid var(--shiver-border);
-  background: var(--shiver-surface-dim);
-  color: var(--shiver-text);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 55%);
-  z-index: 2;
-}
-
-.menu-item {
-  display: block;
-  width: 100%;
-  padding: 11px 12px;
-  border: none;
-  border-radius: 8px;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-
-.menu-item:active {
-  background: var(--shiver-surface-hover);
-}
-
-.menu-divider {
-  height: 1px;
-  margin: 6px 4px;
-  background: var(--shiver-border);
-}
-
-/* catches the tap that dismisses the menu, over the whole app rather than the rail alone */
-.menu-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 1;
-}

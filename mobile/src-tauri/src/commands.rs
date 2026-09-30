@@ -547,6 +547,12 @@ pub async fn reorder_rail(
     store.update(|registry| Ok(registry.rail().reorder(&ordered)?))
 }
 
+/// Numbers servers in the given order, within the folder they share (a drag inside a folder).
+#[tauri::command]
+pub async fn reorder_servers(store: State<'_, Store>, ordered_ids: Vec<String>) -> Result<()> {
+    store.update(|registry| Ok(registry.rail().reorder_servers(&ordered_ids)?))
+}
+
 /// Creates a folder holding `member_ids`, at the first member's place, in one step.
 #[tauri::command]
 pub async fn create_folder_with(

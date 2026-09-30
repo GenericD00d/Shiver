@@ -1,0 +1,68 @@
+/* The rail's menu as drawn in a page (Menu.tsx): the desktop client's menu surface. `.touch` makes
+   its rows a finger's height. */
+
+.menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 180px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 8px;
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+}
+
+.menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--shiver-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu button:disabled {
+  color: var(--shiver-text-dim);
+  opacity: 1;
+  cursor: default;
+}
+
+.menu button:not(:disabled):hover,
+.menu button:not(:disabled):active {
+  background: var(--shiver-surface-hover);
+}
+
+.menu hr {
+  margin: 4px 6px;
+  border: none;
+  border-top: 1px solid var(--shiver-border);
+}
+
+.menu-submenu {
+  justify-content: space-between;
+}
+
+.menu-nested {
+  padding-left: 10px;
+}
+
+/* a fixed column, so checked and unchecked labels line up */
+.menu-check {
+  width: 12px;
+  flex: 0 0 12px;
+}
+
+.touch .menu button {
+  min-height: 44px;
+  padding: 10px 12px;
+}

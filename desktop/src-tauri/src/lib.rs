@@ -158,7 +158,7 @@ pub fn run() {
             commands::mark_notifications_read,
             commands::clear_notifications,
             commands::set_channel_muted,
-            commands::show_server_menu,
+            commands::server_menu_facts,
             commands::toggle_popup,
             commands::close_popup,
             commands::dismiss_popup,
@@ -168,7 +168,7 @@ pub fn run() {
             commands::exit_dm_split,
             commands::reorder_rail,
             commands::create_folder_with,
-            commands::show_folder_menu,
+            commands::show_menu,
         ]))
         .setup(|app| {
             let handle = app.handle();
@@ -212,18 +212,13 @@ pub fn run() {
             Ok(())
         })
         .on_menu_event(|app, event| {
-            // native menu item ids are `action:entry`; the shell performs the action
+            // a rail menu's item ids are `action:target` (`commands::show_menu`); the shell performs
+            // the action. The tray's own items have no colon and are handled by the tray.
             let id = event.id().0.as_str();
 
-            let Some((action, entry_id)) = id.split_once(':') else {
-                return;
-            };
-
-            let _ = app.emit_to(
-                webviews::SHELL_WEBVIEW,
-                "shiver://server-menu",
-                serde_json::json!({ "action": action, "entryId": entry_id }),
-            );
+            if id.contains(':') {
+                let _ = app.emit_to(webviews::SHELL_WEBVIEW, "shiver://server-menu", id);
+            }
         })
         .build(tauri::generate_context!())
         .unwrap_or_else(|error| report_failed_start(error))

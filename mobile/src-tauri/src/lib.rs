@@ -65,6 +65,7 @@ pub fn run() {
             commands::update_settings,
             commands::forget_trusted_links,
             commands::reorder_rail,
+            commands::reorder_servers,
             commands::create_folder_with,
             commands::set_server_folder,
             commands::rename_folder,

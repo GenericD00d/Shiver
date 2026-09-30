@@ -5,11 +5,13 @@ import { BackgroundNotifications } from './components/BackgroundNotifications';
 import { Boot, type BootState, type ConfirmAction } from './components/Boot';
 import { DirectMessages } from './components/DirectMessages';
 import type { SettingsSection } from './components/SettingsScreen';
-import { Rail, type RailRef } from './components/Rail';
 import { ServerList } from './components/ServerList';
 import { Sessions, TrustedLinks } from './components/Sessions';
 import { SettingsScreen } from './components/SettingsScreen';
 import { AddServerForm } from '../../shared/web/components/AddServerForm';
+import { Menu } from '../../shared/web/components/Menu';
+import { Rail } from '../../shared/web/components/Rail';
+import { RenameFolderForm } from '../../shared/web/components/RenameFolderForm';
 import { SignInForm } from '../../shared/web/components/SignInForm';
 import { UpdateNotice } from '../../shared/web/components/UpdateNotice';
 import { applyTheme } from '../../shared/web/theme';
@@ -20,13 +22,14 @@ import {
   type ServerEntry,
   type Settings
 } from './types';
-import { byPosition } from '../../shared/web/rail';
+import { folderMenu, type MenuEntry, readMenuId, serverMenu } from '../../shared/web/menus';
+import { byPosition, type RailRef, type RailStep } from '../../shared/web/rail';
 
 /**
  * Shiver's own screens. `boot` opens the last server used, or waits after `#home` (the quick rail
  * could not be drawn, so the swipe that asked for it lands here).
  */
-type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms';
+type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms' | 'folder';
 
 /** The screens the quick rail can open, each by the fragment of the same name. */
 const RAIL_SCREENS = ['dms', 'add', 'settings'] as const;
@@ -117,6 +120,10 @@ export const App = () => {
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   /** the server the sign-in screen is for */
   const [signingIn, setSigningIn] = useState<string | null>(null);
+  /** the folder the rename screen is for */
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  /** the rail's menu, while it is open */
+  const [menu, setMenu] = useState<{ entries: MenuEntry[]; at: { x: number; y: number } } | null>(null);
   const [boot, setBoot] = useState<BootState>({ kind: 'waiting' });
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
@@ -143,7 +150,7 @@ export const App = () => {
   useEffect(loadIcons, [loadIcons]);
 
   const servers = useMemo(
-    () => byPosition(registry.servers).map((server) => ({ ...server, icon: icons[server.id] })),
+    () => byPosition(registry.servers).map((server) => ({ ...server, icon: icons[server.id] ?? null })),
     [registry.servers, icons]
   );
 
@@ -401,6 +408,107 @@ export const App = () => {
 
   const handleSettings = useCallback((settings: Settings) => void change(() => api.updateSettings(settings)), [change]);
 
+  /** A server's or folder's menu, from the item model both clients share. */
+  const openMenu = useCallback(
+    (target: RailRef, at: { x: number; y: number }) => {
+      if (target.kind === 'folder') {
+        setMenu({ entries: folderMenu(target.id), at });
+
+        return;
+      }
+
+      const server = servers.find((candidate) => candidate.id === target.id);
+
+      if (!server) return;
+
+      setMenu({
+        entries: serverMenu(server, {
+          folders: registry.folders,
+          hasPassword: remembered.includes(server.id),
+          plugin: server.id in plugins ? plugins[server.id] : undefined,
+          // a problem watching it is what the size limit raises; the settings list offers the same
+          tooLarge: server.id in problems,
+          canMarkRead: false
+        }),
+        at
+      });
+    },
+    [plugins, problems, registry.folders, remembered, servers]
+  );
+
+  const chooseFromMenu = useCallback(
+    (id: string) => {
+      const chosen = readMenuId(id);
+
+      if (!chosen) return;
+
+      const { action, target } = chosen;
+
+      switch (action) {
+        case 'open':
+          openById(target);
+          break;
+        case 'refresh':
+          void change(() => api.refreshServerInfo(target)).then(loadIcons);
+          break;
+        case 'notify-all':
+        case 'notify-mentions':
+        case 'notify-dms':
+          void change(() => api.setNotifyLevel(target, action === 'notify-all' ? 'all' : action === 'notify-dms' ? 'dms' : 'mentions'));
+          break;
+        case 'anysize':
+        case 'normalsize':
+          void change(() => api.setAcceptAnySize(target, action === 'anysize'));
+          break;
+        case 'forgetpw':
+        case 'logout':
+        case 'remove':
+          handleAsk(action, target);
+          break;
+        case 'signin':
+          setSigningIn(target);
+          setScreen('signIn');
+          break;
+        case 'move': {
+          const [serverId, folderId] = target.split(':');
+
+          void change(() => api.setServerFolder(serverId, folderId));
+          break;
+        }
+        case 'unfolder':
+          void change(() => api.setServerFolder(target, null));
+          break;
+        case 'rename-folder':
+          setRenamingFolder(target);
+          setScreen('folder');
+          break;
+        case 'delete-folder':
+          void change(() => api.deleteFolder(target));
+          break;
+        case 'markread':
+        case 'plugin':
+          break;
+      }
+    },
+    [change, handleAsk, loadIcons, openById]
+  );
+
+  /** A drag's calls, in order, then the registry read again (which redraws the rail). */
+  const applyDrop = useCallback(
+    (steps: RailStep[]) =>
+      void change(async () => {
+        for (const step of steps) {
+          if (step.op === 'setFolder') await api.setServerFolder(step.serverId, step.folderId);
+          if (step.op === 'createFolder') await api.createFolderWith('New folder', step.memberIds);
+          if (step.op === 'reorder') await api.reorderRail(step.ordered);
+          if (step.op === 'reorderInFolder') await api.reorderServers(step.ids);
+        }
+      }),
+    [change]
+  );
+
+  const renaming = registry.folders.find((folder) => folder.id === renamingFolder);
+
   // on its way to a server (a wait for a join is a stay, not a pass)
   const passingThrough =
     screen === 'boot' && (boot.kind === 'waiting' || (boot.kind === 'connecting' && !boot.until));
@@ -421,21 +529,17 @@ export const App = () => {
       {passingThrough && !slow ? null : (
         <Rail
           servers={servers}
-          screen={screen}
+          folders={registry.folders}
+          activeId={null}
+          screen={screen === 'dms' || screen === 'add' || screen === 'settings' ? screen : null}
           unread={unread}
           onOpen={openById}
           onOpenDms={() => setScreen('dms')}
           onAdd={() => setScreen('add')}
           onSettings={() => setScreen('settings')}
-          onRefresh={(id) => void change(() => api.refreshServerInfo(id)).then(loadIcons)}
-          onAsk={handleAsk}
-          onReorder={(ordered: RailRef[]) => void change(() => api.reorderRail(ordered))}
-          folders={registry.folders}
-          onSetFolder={(id, folderId) => void change(() => api.setServerFolder(id, folderId))}
-          onCreateFolder={(memberIds) => void change(() => api.createFolderWith('New folder', memberIds))}
-          onRenameFolder={(id, name) => void change(() => api.renameFolder(id, name))}
-          onDeleteFolder={(id) => void change(() => api.deleteFolder(id))}
           onToggleFolder={(id, expanded) => void change(() => api.setFolderExpanded(id, expanded))}
+          onDrop={applyDrop}
+          onMenu={openMenu}
         />
       )}
 
@@ -482,6 +586,17 @@ export const App = () => {
               onAdd={() => setScreen('add')}
               onConfirm={(confirmed) => void confirmAction(confirmed)}
             />
+          ) : null}
+
+          {screen === 'folder' && renaming ? (
+            <div className="modal-backdrop">
+              <RenameFolderForm
+                key={renaming.id}
+                name={renaming.name}
+                onSave={(name) => void change(() => api.renameFolder(renaming.id, name)).then(() => resume(registry))}
+                onCancel={() => void resume(registry)}
+              />
+            </div>
           ) : null}
 
           {screen === 'add' ? (
@@ -632,6 +747,8 @@ export const App = () => {
           ) : null}
         </main>
       </div>
+
+      {menu ? <Menu entries={menu.entries} at={menu.at} onChoose={chooseFromMenu} onClose={() => setMenu(null)} /> : null}
     </div>
   );
 };
