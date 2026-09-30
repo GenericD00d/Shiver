@@ -38,6 +38,42 @@
   outline-offset: -1px;
 }
 
+/* a field's controls side by side: a colour and its value, a slider and its reading */
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.field-row input[type='color'] {
+  width: 44px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid var(--shiver-border);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.field-row input[type='text'] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.field-row input[type='range'] {
+  flex: 1;
+  max-width: 260px;
+  accent-color: var(--shiver-accent);
+}
+
+/* fixed width so the row does not shuffle as the number goes from 5% to 250% */
+.volume-readout {
+  min-width: 46px;
+  color: var(--shiver-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* A choice with its reasoning under it. */
 .checkbox {
   display: flex;
@@ -301,6 +337,26 @@ button:disabled {
   padding: 11px 12px;
   /* Android zooms into a field whose text is under 16px */
   font-size: 16px;
+}
+
+/* a row of buttons too wide for a phone goes onto more lines, rather than squeezing their words */
+.touch .actions {
+  flex-wrap: wrap;
+}
+
+.touch .actions > button {
+  white-space: nowrap;
+}
+
+/* tall enough to be a thumb target rather than a mouse one */
+.touch .field-row input[type='range'] {
+  height: 32px;
+  max-width: none;
+}
+
+.touch .field-row input[type='color'] {
+  width: 48px;
+  height: 40px;
 }
 
 .touch .checkbox input {

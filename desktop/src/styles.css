@@ -563,35 +563,6 @@ body {
   color: var(--shiver-text-dim);
 }
 
-.field-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.field-row input[type='color'] {
-  width: 44px;
-  height: 32px;
-  padding: 0;
-  border: 1px solid var(--shiver-border);
-  border-radius: 6px;
-  background: none;
-  cursor: pointer;
-}
-
-.field-row input[type='range'] {
-  flex: 1;
-  max-width: 260px;
-  accent-color: var(--shiver-accent);
-}
-
-/* fixed width so the row does not shuffle as the number goes from 5% to 250% */
-.volume-readout {
-  min-width: 46px;
-  color: var(--shiver-text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
 /* Shiver's own entry in the feed, so it does not read as a message from a server nobody recognises */
 .feed-item.update {
   border-left: 2px solid var(--shiver-accent);

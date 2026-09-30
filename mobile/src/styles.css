@@ -139,42 +139,6 @@ body {
   color: var(--shiver-text-dim);
 }
 
-.panel {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.field input[type="color"] {
-  width: 100%;
-  height: 44px;
-  padding: 0;
-  border: 1px solid var(--shiver-border);
-  border-radius: 10px;
-  background: var(--shiver-surface);
-}
-
-.field-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-/* tall enough to be a thumb target rather than a mouse one */
-.field-row input[type="range"] {
-  flex: 1;
-  height: 32px;
-  accent-color: var(--shiver-accent);
-}
-
-/* fixed width so the row does not shuffle as the number goes from 5% to 250% */
-.volume-readout {
-  min-width: 48px;
-  text-align: right;
-  color: var(--shiver-text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
 button {
   cursor: pointer;
 }
