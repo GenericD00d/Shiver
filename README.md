@@ -46,7 +46,7 @@ will serve you perfectly well.
 - **HTTPS only.** Shiver refuses to add a server, sign in to one, or open a socket over `http://`,
   with no exemption for localhost or a private address.
 - **Unread badges per server**, cleared by opening it, with per-channel mutes excluded
-- **A direct message inbox across servers**, ordered by when the last message arrived and labelled
+- **A direct message inbox across servers**, ordered by its latest message, sent or received, and labelled
   with the server it is on. It lives on Shiver's own screen rather than inside a server's page,
   which is what keeps one server from being handed the name of everyone you talk to on the others
 - **Per-channel mute** — dimmed in the channel list, no notification, no sound

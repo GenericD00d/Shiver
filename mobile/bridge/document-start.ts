@@ -15,9 +15,13 @@
  */
 
 import { defineHook, installExternalLinks, isTopFrame } from '../../shared/web/bridge/dom';
+import { watchNewMessages } from '../../shared/web/bridge/messages';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
 
 declare const SHIVER_SEED_KEY: string;
+
+/** The most channels the page holds message times for between the core's reads. */
+const MAX_SEEN = 100;
 
 const hex = (digest: ArrayBuffer) => Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 
@@ -41,9 +45,26 @@ try {
 
     defineHook('__SHIVER_OPEN__', () => queue.splice(0));
     installExternalLinks((href) => queue.push(href));
+
+    // each channel's latest message, sent or received, until the core reads it (the DM list's order)
+    const seen = new Map<number, number>();
+
+    defineHook('__SHIVER_SEEN__', () => {
+      const taken = [...seen];
+
+      seen.clear();
+
+      return taken;
+    });
+    watchNewMessages((channelId, at) => {
+      seen.set(channelId, Math.max(at, seen.get(channelId) ?? 0));
+
+      // the core reads every second; a burst across more channels than this keeps the newest
+      if (seen.size > MAX_SEEN) seen.delete(seen.keys().next().value as number);
+    });
   }
 } catch {
-  // the page then opens nothing outside
+  // the page then opens nothing outside, and its messages move nothing up the DM list
 }
 
 const chosenTheme = () => {

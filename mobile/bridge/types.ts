@@ -32,6 +32,8 @@ declare global {
     __SHIVER_MUTED__?: () => number[];
     /** polled by the core: links to open in the browser (handed over once) */
     __SHIVER_OPEN__?: () => string[];
+    /** each channel's latest message time since the last read, as `[channel id, ms]` */
+    __SHIVER_SEEN__?: () => [number, number][];
     /** asked by the activity on a back press; true when the page used it */
     __SHIVER_BACK__?: () => boolean;
   }

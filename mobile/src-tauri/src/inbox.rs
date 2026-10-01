@@ -199,15 +199,17 @@ impl Inbox {
         self.with(|state| state.remembered.contains(entry_id))
     }
 
-    /// A message arrived in one of an entry's conversations, which moves it up the list; returns
-    /// whether that conversation is known.
+    /// A message was sent or received in one of an entry's conversations, which moves it up the
+    /// list (never past now, whatever time it came with); returns whether that conversation is known.
     fn dm_active(&self, entry_id: &str, channel_id: i64, at: u64) -> bool {
+        let at = at.min(now_ms());
+
         self.with(|state| {
             state
                 .dms
                 .get_mut(entry_id)
                 .and_then(|dms| dms.iter_mut().find(|dm| dm.channel_id == channel_id))
-                .map(|dm| dm.last_message_at = Some(at))
+                .map(|dm| dm.last_message_at = dm.last_message_at.max(Some(at)))
                 .is_some()
         })
     }
@@ -736,6 +738,21 @@ fn update_read_states(
 }
 
 /// Replaces an entry's mutes with what its page reports (bounded), and recounts.
+/// The most channels taken from one read of the page.
+const MAX_SEEN: usize = 100;
+
+/// Messages the page on screen saw sent or received: they move its known conversations up. A page's
+/// claim, so only conversations the core already knows for this entry move, and never past now.
+pub fn messages_seen(app: &AppHandle, entry_id: &str, seen: &[(i64, f64)]) {
+    let inbox = app.state::<Inbox>();
+
+    for &(channel_id, at) in seen.iter().take(MAX_SEEN) {
+        if at.is_finite() && at >= 0.0 {
+            inbox.dm_active(entry_id, channel_id, at as u64);
+        }
+    }
+}
+
 pub fn replace_mutes(app: &AppHandle, entry_id: &str, channels: &[i64]) {
     let store = app.state::<Store>();
     let next = shiver_core::model::normalized_mutes(channels.iter().copied());
@@ -956,6 +973,28 @@ mod tests {
             vec!["Ash", "Robin", "Sam", "Wren"]
         );
         assert!(collect_dms(&[entry("c", 0)], &dms).is_empty());
+    }
+
+    #[test]
+    fn a_conversation_moves_up_only_and_never_past_now() {
+        let inbox = Inbox::default();
+
+        inbox.with(|state| {
+            state
+                .dms
+                .insert("a".into(), vec![conversation(3, "Robin", Some(5_000))])
+        });
+
+        let time = || inbox.dms()["a"][0].last_message_at;
+
+        assert!(inbox.dm_active("a", 3, 4_000));
+        assert_eq!(time(), Some(5_000));
+        assert!(inbox.dm_active("a", 3, 6_000));
+        assert_eq!(time(), Some(6_000));
+        assert!(inbox.dm_active("a", 3, u64::MAX));
+        assert!(time() <= Some(now_ms()));
+        assert!(!inbox.dm_active("a", 4, 6_000));
+        assert!(!inbox.dm_active("b", 3, 6_000));
     }
 
     #[test]

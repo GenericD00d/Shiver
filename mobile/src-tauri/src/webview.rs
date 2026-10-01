@@ -333,13 +333,16 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
 /// departure would be torn down by the navigation before it answered).
 const READ_SCRIPT: &str = "JSON.stringify({ \
     muted: window.__SHIVER_MUTED__ ? window.__SHIVER_MUTED__() : null, \
-    open: window.__SHIVER_OPEN__ ? window.__SHIVER_OPEN__() : null })";
+    open: window.__SHIVER_OPEN__ ? window.__SHIVER_OPEN__() : null,     seen: window.__SHIVER_SEEN__ ? window.__SHIVER_SEEN__() : null })";
 
 #[derive(Default, Deserialize)]
 struct PageState {
     muted: Option<Vec<i64>>,
     #[serde(default, deserialize_with = "null_as_default")]
     open: Vec<String>,
+    /// `[channel id, time]` of the latest message the page's connection heard in each channel
+    #[serde(default, deserialize_with = "null_as_default")]
+    seen: Vec<(i64, f64)>,
 }
 
 fn null_as_default<'de, D: serde::Deserializer<'de>, T: Default + Deserialize<'de>>(
@@ -397,6 +400,8 @@ fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
     if let Some(channels) = state.muted {
         inbox::replace_mutes(app, entry_id, &channels);
     }
+
+    inbox::messages_seen(app, entry_id, &state.seen);
 }
 
 /// Whether the webview may navigate to `target`; records home on the very first navigation (which

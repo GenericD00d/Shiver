@@ -329,6 +329,7 @@ impl Feed {
         origin: Option<&str>,
         channels: Vec<DmChannel>,
     ) {
+        let now = now_ms();
         let mut state = self.0.locked();
         // A page knows only the messages it has seen arrive, and the socket only those up to its
         // join, so a newer list keeps the latest time either has given for a conversation.
@@ -350,8 +351,10 @@ impl Feed {
                     channel: DmChannel {
                         name: clamp(channel.name, MAX_AUTHOR),
                         icon_url: channel.icon_url.and_then(|url| safe_icon_url(&url, origin)),
+                        // a page's claim: never past now, so no server can pin itself on top
                         last_message_at: channel
                             .last_message_at
+                            .map(|at| at.min(now))
                             .max(known.get(&channel.channel_id).copied()),
                         ..channel
                     },
@@ -683,5 +686,10 @@ mod tests {
         assert!(time(&feed) > Some(1_000));
         assert!(!feed.dm_active("a", 4));
         assert!(!feed.dm_active("b", 3));
+
+        // a page cannot put its conversations ahead of everything with a time to come
+        feed.set_dms("b", "Other", "me", None, vec![dm(Some(u64::MAX))]);
+
+        assert!(feed.dms()[1].channel.last_message_at <= Some(now_ms()));
     }
 }
