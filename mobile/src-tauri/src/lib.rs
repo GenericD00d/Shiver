@@ -3,6 +3,7 @@ mod error;
 mod icons;
 mod inbox;
 mod model;
+mod notify;
 mod push;
 mod rail;
 pub use sharkord_client as sharkord;
@@ -91,6 +92,7 @@ pub fn run() {
             app.manage(Showing::default());
             app.manage(sharkord::CheckedSessions::default());
             app.manage(Inbox::default());
+            app.manage(notify::Notices::default());
             app.manage(shiver_core::jwt::Renewals::default());
             app.manage(shiver_core::limit::Joins::default());
             app.manage(rail::QuickRail::default());

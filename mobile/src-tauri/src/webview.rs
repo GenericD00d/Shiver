@@ -1,13 +1,10 @@
 //! The one webview, and what it is showing.
 //!
 //! Android gives a window a single webview, so Shiver is a switcher: the webview shows either
-//! Shiver's own pages or one server's client, and opening a server is a navigation. The server's
-//! session travels in a `#shiver-seed=<key>.<token>` fragment that the document-start script takes
-//! out of the URL before the page's scripts run and serves from memory (see `shared/web/session.ts`),
-//! so it is never written to the webview's storage. The key is SHA-256 of a per-launch secret, which
-//! lives only in that script's closure, and the page's origin, so one server's key is no use on
-//! another. The bridge runs after load; anything it reads back out of a page is a request, never
-//! trusted state.
+//! Shiver's own pages or one server's client, and opening a server is a navigation. The session
+//! travels in a `#shiver-seed=` fragment the document-start script removes before page scripts run
+//! (see `mobile/bridge/document-start.ts`). The bridge runs after load; anything it reads back out
+//! of a page is a request, never trusted state.
 
 use std::{
     collections::HashMap,
@@ -325,7 +322,11 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
         "session": page.session,
     });
 
-    let _ = window.eval(format!("window.__SHIVER__ = {config};\n{BRIDGE_SOURCE}"));
+    // checked again in the page: the webview may have moved on since the load this answers
+    let _ = window.eval(format!(
+        "if (location.origin === {}) {{\nwindow.__SHIVER__ = {config};\n{BRIDGE_SOURCE}\n}}",
+        json!(page.entry.origin)
+    ));
 }
 
 /// Polled by `inbox::watch_mutes`: reads the page's mutes and queued outside links (a read on

@@ -1,17 +1,13 @@
 //! Camera, microphone and downloads for server pages.
 //!
-//! On Windows only the page on screen may start a download (a hidden one cannot drop files in the
-//! Downloads folder), and Shiver answers WebView2's camera and microphone requests itself: only the
-//! page on screen may ask, and it
-//! gets them once the user says yes to that server in a native dialog (the page cannot draw over
-//! it). The page holding the call may also have the microphone again while hidden, as a call can
-//! ask anew (a reconnect, another device). The yes is kept on the entry until the user logs out of
-//! the server, removes it or forgets every yes here. WebView2 is told to remember nothing, since an
-//! answer it remembers can be given without asking, past this gate.
+//! On Windows only the page on screen may start a download, and Shiver answers WebView2's camera and
+//! microphone requests itself: only the page on screen may ask (or the one holding the call, which
+//! can ask anew while hidden), and only once the user has said yes to that server in a native dialog
+//! the page cannot draw over. The yes lasts until the user logs out of or removes the server, or
+//! forgets every yes; WebView2 is told to remember nothing, since its own memory would bypass this.
 //!
-//! Elsewhere the platform answers camera and microphone requests: macOS allows every one, WebKitGTK
-//! refuses them. Downloads are gated there through Tauri's download hook instead (`gate_downloads`),
-//! since WebKitGTK would otherwise save whatever any page asks for into the Downloads folder.
+//! Elsewhere the platform answers camera and microphone (macOS allows, WebKitGTK refuses), and
+//! downloads go through Tauri's download hook (`gate_downloads`), since WebKitGTK would save any.
 
 use tauri::{AppHandle, Manager};
 

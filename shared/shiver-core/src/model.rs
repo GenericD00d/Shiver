@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 /// Sharkord's own dark theme (`--background` and `--primary`), so a stock Shiver restyles nothing.
 pub const DEFAULT_THEME_COLOR: &str = "#0a0a0a";
 pub const DEFAULT_ACCENT_COLOR: &str = "#e5e5e5";
-/// `shared/web/settings.ts`).
-pub const DEFAULT_RAIL_COLOR: &str = "#171717";
 
 /// The longest account label kept; a longer one is cut, not refused.
 const MAX_ACCOUNT_LABEL: usize = 64;
