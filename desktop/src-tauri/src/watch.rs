@@ -478,14 +478,21 @@ fn announce(
     joined: &sharkord::Joined,
     message: &sharkord::NewMessage,
 ) {
-    if message.is_own(joined) {
-        return;
-    }
-
     if app
         .get_webview(&webviews::webview_label(entry_id))
         .is_some()
     {
+        return;
+    }
+
+    // the user's own messages count too: the list is ordered by the latest in each conversation
+    if joined.dm_channels.contains(&message.channel_id)
+        && app.state::<Feed>().dm_active(entry_id, message.channel_id)
+    {
+        drain::notify_feed_changed(app);
+    }
+
+    if message.is_own(joined) {
         return;
     }
 

@@ -65,12 +65,18 @@ pub struct DmEntry {
     pub avatar_url: Option<String>,
 }
 
-/// Every server's conversations, newest first (ties by name), independent of rail order.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64)
+}
+
+/// Every server's conversations (the list orders them: `sortDms` in `shared/web/dms.ts`).
 pub fn collect_dms(
     servers: &[crate::model::ServerEntry],
     dms: &HashMap<String, Vec<sharkord::DirectMessage>>,
 ) -> Vec<DmEntry> {
-    let mut collected: Vec<DmEntry> = servers
+    servers
         .iter()
         .flat_map(|server| {
             dms.get(&server.id)
@@ -86,14 +92,7 @@ pub fn collect_dms(
                     avatar_url: dm.avatar_url.clone(),
                 })
         })
-        .collect();
-
-    collected.sort_by(|a, b| {
-        b.last_message_at
-            .cmp(&a.last_message_at)
-            .then_with(|| a.user_name.cmp(&b.user_name))
-    });
-    collected
+        .collect()
 }
 
 #[derive(Default)]
@@ -198,6 +197,19 @@ impl Inbox {
 
     pub fn has_password(&self, entry_id: &str) -> bool {
         self.with(|state| state.remembered.contains(entry_id))
+    }
+
+    /// A message arrived in one of an entry's conversations, which moves it up the list; returns
+    /// whether that conversation is known.
+    fn dm_active(&self, entry_id: &str, channel_id: i64, at: u64) -> bool {
+        self.with(|state| {
+            state
+                .dms
+                .get_mut(entry_id)
+                .and_then(|dms| dms.iter_mut().find(|dm| dm.channel_id == channel_id))
+                .map(|dm| dm.last_message_at = Some(at))
+                .is_some()
+        })
     }
 
     fn set_unread(&self, entry_id: &str, count: u32) -> bool {
@@ -630,6 +642,15 @@ impl sharkord::Watcher for Watch {
                 })
             }
             sharkord::Event::Posted(message) => {
+                // the user's own messages count too: the list is ordered by the latest in each
+                if joined.dm_channels.contains(&message.channel_id)
+                    && app
+                        .state::<Inbox>()
+                        .dm_active(entry_id, message.channel_id, now_ms())
+                {
+                    webview::emit_home(app, INBOX_EVENT, app.state::<Inbox>().unread());
+                }
+
                 crate::notify::announce(app, entry_id, joined, &message)
             }
         }
@@ -907,7 +928,7 @@ mod tests {
     }
 
     #[test]
-    fn conversations_are_newest_first_with_ties_by_name_and_no_timestamp_last() {
+    fn every_servers_conversations_are_collected() {
         let dms = HashMap::from([
             (
                 "a".to_string(),
@@ -921,19 +942,18 @@ mod tests {
         ]);
 
         let names = |servers: &[crate::model::ServerEntry]| {
-            collect_dms(servers, &dms)
+            let mut names: Vec<_> = collect_dms(servers, &dms)
                 .into_iter()
                 .map(|dm| dm.user_name)
-                .collect::<Vec<_>>()
+                .collect();
+
+            names.sort();
+            names
         };
 
         assert_eq!(
             names(&[entry("a", 0), entry("b", 1)]),
-            vec!["Robin", "Ash", "Sam", "Wren"]
-        );
-        assert_eq!(
-            names(&[entry("b", 0), entry("a", 1)]),
-            names(&[entry("a", 0), entry("b", 1)])
+            vec!["Ash", "Robin", "Sam", "Wren"]
         );
         assert!(collect_dms(&[entry("c", 0)], &dms).is_empty());
     }

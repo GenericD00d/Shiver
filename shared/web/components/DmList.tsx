@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 
-import { dmInitial, dmMeta, type DmRow, filterDms } from '../dms';
+import { dmInitial, dmMeta, type DmRow, filterDms, sortDms } from '../dms';
 import { relativeTime } from '../time';
 import './dm-list.css';
 
@@ -19,7 +19,7 @@ type Props = {
  */
 export const DmList = ({ rows, onOpen, selectedKey = null, touch = false }: Props) => {
   const [query, setQuery] = useState('');
-  const filtered = useMemo(() => filterDms(rows, query), [rows, query]);
+  const filtered = useMemo(() => sortDms(filterDms(rows, query)), [rows, query]);
 
   return (
     <div className={touch ? 'dm-list touch' : 'dm-list'}>

@@ -330,20 +330,46 @@ impl Feed {
         channels: Vec<DmChannel>,
     ) {
         let mut state = self.0.locked();
+        // A page knows only the messages it has seen arrive, and the socket only those up to its
+        // join, so a newer list keeps the latest time either has given for a conversation.
+        let known: HashMap<i64, u64> = state
+            .dms
+            .iter()
+            .filter(|dm| dm.entry_id == entry_id)
+            .filter_map(|dm| Some((dm.channel.channel_id, dm.channel.last_message_at?)))
+            .collect();
 
         state.dms.retain(|dm| dm.entry_id != entry_id);
         state
             .dms
-            .extend(channels.into_iter().take(MAX_DMS).map(|channel| DmEntry {
-                entry_id: entry_id.to_string(),
-                server_name: server_name.to_string(),
-                account_label: account_label.to_string(),
-                channel: DmChannel {
-                    name: clamp(channel.name, MAX_AUTHOR),
-                    icon_url: channel.icon_url.and_then(|url| safe_icon_url(&url, origin)),
-                    ..channel
-                },
+            .extend(channels.into_iter().take(MAX_DMS).map(|channel| {
+                DmEntry {
+                    entry_id: entry_id.to_string(),
+                    server_name: server_name.to_string(),
+                    account_label: account_label.to_string(),
+                    channel: DmChannel {
+                        name: clamp(channel.name, MAX_AUTHOR),
+                        icon_url: channel.icon_url.and_then(|url| safe_icon_url(&url, origin)),
+                        last_message_at: channel
+                            .last_message_at
+                            .max(known.get(&channel.channel_id).copied()),
+                        ..channel
+                    },
+                }
             }));
+    }
+
+    /// A message just arrived in one of an entry's conversations; returns whether one was moved up.
+    pub fn dm_active(&self, entry_id: &str, channel_id: i64) -> bool {
+        let now = now_ms();
+
+        self.0
+            .locked()
+            .dms
+            .iter_mut()
+            .find(|dm| dm.entry_id == entry_id && dm.channel.channel_id == channel_id)
+            .map(|dm| dm.channel.last_message_at = Some(now))
+            .is_some()
     }
 
     pub fn notifications(&self) -> Vec<Notification> {
@@ -634,5 +660,28 @@ mod tests {
                 .unwrap()
                 .mark_all_read
         );
+    }
+
+    #[test]
+    fn a_conversations_time_survives_a_list_without_it_and_moves_with_new_messages() {
+        let feed = Feed::default();
+        let dm = |at: Option<u64>| DmChannel {
+            channel_id: 3,
+            name: "friend".into(),
+            icon_url: None,
+            last_message_at: at,
+        };
+        let time = |feed: &Feed| feed.dms()[0].channel.last_message_at;
+
+        // the socket's list, from the join
+        feed.set_dms("a", "Chat", "me", None, vec![dm(Some(1_000))]);
+        // then the page's, which has seen nothing arrive yet
+        feed.set_dms("a", "Chat", "me", None, vec![dm(None)]);
+
+        assert_eq!(time(&feed), Some(1_000));
+        assert!(feed.dm_active("a", 3));
+        assert!(time(&feed) > Some(1_000));
+        assert!(!feed.dm_active("a", 4));
+        assert!(!feed.dm_active("b", 3));
     }
 }

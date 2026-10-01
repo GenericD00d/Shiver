@@ -11,8 +11,7 @@ type Props = {
 };
 
 /**
- * Every server's conversations, newest first (`collect_dms`), in the list the desktop client draws
- * too. Drawn here rather than in a server's page so no server learns who the user talks to
+ * Every server's conversations, newest message first, in the list the desktop client draws too. Drawn here rather than in a server's page so no server learns who the user talks to
  * elsewhere.
  */
 export const DirectMessages = ({ onOpen }: Props) => {

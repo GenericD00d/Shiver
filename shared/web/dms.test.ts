@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { dmInitial, dmKey, dmMeta, filterDms } from './dms';
+import { dmInitial, dmKey, dmMeta, filterDms, sortDms } from './dms';
 import { relativeTime } from './time';
 
 const rows = [
@@ -37,4 +37,16 @@ test('times read as how long ago', () => {
   expect(relativeTime(now - 5 * 60_000, now)).toBe('5m ago');
   expect(relativeTime(now - 3 * 3_600_000, now)).toBe('3h ago');
   expect(relativeTime(now - 2 * 86_400_000, now)).toBe('2d ago');
+});
+
+test('the newest conversation comes first, whichever server it is on; unknown times last, then by name', () => {
+  const listed = sortDms([
+    { name: 'Wren', lastMessageAt: null },
+    { name: 'Sam', lastMessageAt: 2_000 },
+    { name: 'Robin', lastMessageAt: 3_000 },
+    { name: 'Ash', lastMessageAt: 2_000 },
+    { name: 'Bea', lastMessageAt: null }
+  ]);
+
+  expect(listed.map((row) => row.name)).toEqual(['Robin', 'Ash', 'Sam', 'Bea', 'Wren']);
 });

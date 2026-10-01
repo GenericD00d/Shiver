@@ -30,6 +30,15 @@ export const filterDms = <T extends Pick<DmRow, 'name' | 'serverName'>>(rows: re
   return rows.filter((row) => row.name.toLowerCase().includes(needle) || row.serverName.toLowerCase().includes(needle));
 };
 
+/**
+ * Newest message first, across every server; conversations with no known time last; ties by name,
+ * so the list does not reorder under the pointer. Both clients' lists are drawn in this order.
+ */
+export const sortDms = <T extends Pick<DmRow, 'name' | 'lastMessageAt'>>(rows: readonly T[]) =>
+  [...rows].sort(
+    (a, b) => (b.lastMessageAt ?? -1) - (a.lastMessageAt ?? -1) || a.name.localeCompare(b.name)
+  );
+
 /** A row's second line: the account, when there is one, then the server. */
 export const dmMeta = ({ accountLabel, serverName }: Pick<DmRow, 'accountLabel' | 'serverName'>) =>
   accountLabel ? `${accountLabel} · ${serverName}` : serverName;
