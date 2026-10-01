@@ -73,7 +73,7 @@ scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys,
 | `error` | `Error` {InvalidOrigin, Storage, Unreachable, NotSharkord, Refused, InvalidInput, UnknownServer, UnknownFolder}, `Result` |
 | `origin` | `normalize_origin`, `is_same_origin` (the one webview-boundary comparison) |
 | `store` | `Store<R>` (`load`, `registry`→`ReadGuard`, `edit`); `LockExt::locked` (poison-tolerant lock). An edit applies only once written, and one that changes nothing is not written; readers never wait on the disk; atomic writes, owner-only on Unix |
-| `model` | `NotifyLevel` {All, Mentions, Dms} (`allows(is_dm, mentions_me)`; an unreadable value reads as All), `Folder`, `MutedChannel`, `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `MAX_SOUND_VOLUME`, `default_true`, `default_sound_volume`, `sanitised_color`, `sanitised_optional_color`, `rgb`, `theme_payload`, `muted_for`, `normalized_mutes`, `set_muted_for` |
+| `model` | `account_label` (a typed label trimmed and bounded, both apps' `add_server`), `NotifyLevel` {All, Mentions, Dms} (`allows(is_dm, mentions_me)`; an unreadable value reads as All), `Folder`, `MutedChannel`, `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `MAX_SOUND_VOLUME`, `default_true`, `default_sound_volume`, `sanitised_color`, `sanitised_optional_color`, `rgb`, `theme_payload`, `muted_for`, `normalized_mutes`, `set_muted_for` |
 | `rail` | `RailServer` trait + `rail_server!(Type)` macro; `registry!(Registry, Server)` (that plus `server`, `server_mut`, `muted_for`, `set_muted_for`, `next_position`, `rail`); `RailRef {kind: RailKind (Server/Folder), id}`; `next_position`; `Rail {servers, folders}`: `create_folder`, `rename_folder`, `set_folder_expanded`, `delete_folder`, `set_server_folder`, `place`, `reorder` (items left out follow in their old order), `reorder_servers`, `prune_folders` |
 | `http` | `client()` (pooled, no redirects), `bytes_within_limit`, `MAX_BODY` |
 | `login` | `sign_in` (`POST /login` → token) |
@@ -154,8 +154,8 @@ slide-in once the page has drawn, and back press). Kotlin in `android/src/main/j
 |---|---|
 | `types.ts` | `Folder`, `MutedChannel`, `ServerInfo`, `ServerCheck`, `TrustedLink`, `NotifyLevel` (re-exported by each app's `types.ts`) |
 | `settings.ts` | `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `DEFAULT_RAIL_COLOR`, `MAX_SOUND_VOLUME` |
-| `rail.ts` | `initials`, `byPosition`, `membersOf`, `railOrder` (every server as the rail shows them), `RailRef`, `DropZone`, `railDrop`→`RailStep`s (what a drag does, as the calls to make; mirrors `shiver_core::rail`, folders dissolving included); tested in `rail.test.ts` |
-| `menus.ts` | the rail's menus as one item model: `MenuEntry`, `serverMenu` (`MenuServer`, `ServerMenuFacts`: a platform leaves out what it lacks), `folderMenu`, `MenuAction`, `readMenuId` (item ids are `action:target`); tested in `menus.test.ts` |
+| `rail.ts` | `initials`, `byPosition`, `membersOf`, `railOrder` (every server as the rail shows them), `RailRef`, `DropZone`, `railDrop`→`RailStep`s (what a drag does, as the calls to make; mirrors `shiver_core::rail`, folders dissolving included), `runRailSteps` (each client's `RailCalls`); tested in `rail.test.ts` |
+| `menus.ts` | the rail's menus as one item model: `MenuEntry`, `serverMenu` (`MenuServer`, `ServerMenuFacts`: a platform leaves out what it lacks), `folderMenu`, `MenuAction`, `readMenuId` (item ids are `action:target`), `notifyLevelOf`; tested in `menus.test.ts` |
 | `dms.ts` | `DmRow` (a conversation as either client lists it), `dmKey`, `filterDms` (person or server), `dmMeta`, `dmInitial`; tested in `dms.test.ts` |
 | `time.ts` | `relativeTime` ("5m ago": the feed and the DM list) |
 | `errors.ts` | `errorMessage` (a rejected call as words worth showing; re-exported by each app's `api.ts`) |

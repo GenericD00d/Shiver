@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { folderMenu, type MenuEntry, readMenuId, serverMenu } from './menus';
+import { folderMenu, type MenuEntry, notifyLevelOf, readMenuId, serverMenu } from './menus';
 
 const ids = (entries: MenuEntry[]): string[] =>
   entries.flatMap((entry) => (entry.kind === 'item' ? [entry.id] : entry.kind === 'submenu' ? ids(entry.items) : ['---']));
@@ -70,5 +70,10 @@ describe('rail menus', () => {
     expect(readMenuId('quit')).toBeNull();
     expect(readMenuId('open:')).toBeNull();
     expect(readMenuId('toString:s')).toBeNull();
+  });
+
+  test('a notify action names its level', () => {
+    expect(notifyLevelOf('notify-mentions')).toBe('mentions');
+    expect(notifyLevelOf('open')).toBeNull();
   });
 });

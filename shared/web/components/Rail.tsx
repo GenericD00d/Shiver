@@ -79,9 +79,7 @@ const OfflineOverlay = ({ id }: { id: string }) => {
           <circle cx="24" cy="34.5" r="2.75" fill="#000" />
         </mask>
 
-        {/* the icon is dimmed first, and only then reddened. without it the mark is cut out onto
-            whatever the icon happens to be — and on a light or warm icon a red-on-orange
-            exclamation is close to invisible, which is the one thing this must not be. */}
+        {/* dimmed first, so the red mark still shows on a light or warm icon */}
         <rect width="48" height="48" fill="#000" opacity="0.5" />
         <rect width="48" height="48" fill="#ef4444" opacity="0.7" mask={`url(#${maskId})`} />
       </svg>
@@ -134,12 +132,12 @@ export const Rail = ({
   const swallowClick = useRef(0);
   const frame = useRef(0);
 
-  const setHover = (next: Hover) => {
+  const setHover = useCallback((next: Hover) => {
     if (next?.key === hoverRef.current?.key && next?.zone === hoverRef.current?.zone) return;
 
     hoverRef.current = next;
     setHoverState(next);
-  };
+  }, []);
 
   const items = useMemo(
     () =>
@@ -225,7 +223,7 @@ export const Rail = ({
 
     setLifted(null);
     setHover(null);
-  }, []);
+  }, [setHover]);
 
   // a carried tile near either end of the rail scrolls it, for as long as it is held there
   const scrollLoop = useCallback(() => {
@@ -244,7 +242,7 @@ export const Rail = ({
     }
 
     frame.current = window.requestAnimationFrame(scrollLoop);
-  }, [aim, carry]);
+  }, [aim, carry, setHover]);
 
   const lift = useCallback(() => {
     const current = press.current;
@@ -313,9 +311,8 @@ export const Rail = ({
       if (press.current?.pointerId === event.pointerId) release();
     };
 
-    // A lifted tile follows the finger rather than the rail scrolling under it. This listener is
-    // the rail's own and blocking from the start, since a touch decides at its start whether its
-    // moves can be cancelled.
+    // a lifted tile follows the finger instead of the rail scrolling; registered up front, since a
+    // touch decides at its start whether its moves can be cancelled
     const onTouchMove = (event: TouchEvent) => {
       if (press.current?.lifted) event.preventDefault();
     };
@@ -333,7 +330,7 @@ export const Rail = ({
       node?.removeEventListener('touchmove', onTouchMove);
       release();
     };
-  }, [aim, carry, lift, menuAt, release]);
+  }, [aim, carry, lift, menuAt, release, setHover]);
 
   /** What every draggable tile takes: the press, the menu, and the click that is not a press. */
   const handlers = (key: string, onTap: () => void) => ({
@@ -490,8 +487,6 @@ export const Rail = ({
 
       <div className="rail-spacer" />
 
-      {/* above the settings tile, so the call, when there is one, is the last thing the eye reaches on
-          the way down the rail */}
       {children}
 
       <div className="rail-divider" />

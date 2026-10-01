@@ -113,8 +113,7 @@ pub async fn add_server(
             .count();
         let identity = identity.clone().filter(|_| session.is_some());
         // a second account on one origin needs a label to be told apart
-        let account_label = account_label
-            .clone()
+        let account_label = shiver_core::model::account_label(account_label.as_deref())
             .or_else(|| identity.clone())
             .or_else(|| (existing > 0).then(|| format!("Account {}", existing + 1)));
 

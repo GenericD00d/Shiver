@@ -4,6 +4,7 @@ import type {
   DmEntry,
   FeedSummary,
   Folder,
+  MenuFacts,
   Notification,
   NotifyLevel,
   Registry,
@@ -74,11 +75,7 @@ export const api = {
     invoke<void>('set_channel_muted', { entryId, channelId, muted }),
 
   /** what a server's menu says beyond its entry */
-  serverMenuFacts: (id: string) =>
-    invoke<{ hasPassword: boolean; pluginChecked: boolean; plugin: string | null; tooLarge: boolean }>(
-      'server_menu_facts',
-      { id }
-    ),
+  serverMenuFacts: (id: string) => invoke<MenuFacts>('server_menu_facts', { id }),
 
   /** a rail menu as a native menu at the pointer; the chosen item comes back as `EVENTS.menu` */
   showMenu: (entries: MenuEntry[]) => invoke<void>('show_menu', { entries }),

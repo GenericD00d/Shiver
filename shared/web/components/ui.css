@@ -1,7 +1,5 @@
-/* The look both clients share: fields, buttons, the dialog card, the server preview, the update
-   notice and the connecting screen. The desktop client's look; a `.touch` ancestor (the Android
-   client's root) sizes it for a finger without changing it. Colours are the `--shiver-*` variables
-   both clients define. */
+/* The look both clients share, the desktop client's. A `.touch` ancestor (Android's root) sizes it
+   for a finger. */
 
 /* ── fields ── */
 
@@ -133,9 +131,8 @@ button:disabled {
 }
 
 /* ── the dialog card ──
-   On desktop a server webview is native and paints over any html, so Shiver's "modal" is only ever
-   shown with the active server hidden. The backdrop is what makes it read as a dialog rather than a
-   page. `safe` keeps the top of a card taller than the screen scrollable to. */
+   Only ever shown with the server page hidden (a native webview paints over any html); the backdrop
+   makes it read as a dialog. `safe` keeps the top of a tall card reachable. */
 
 .modal-backdrop {
   height: 100%;
@@ -216,8 +213,7 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
-/* The companion-plugin verdict under the server's address. The tick and cross carry the meaning as
-   well as the colour does, so it still reads where the two hues are hard to tell apart. */
+/* the plugin verdict: the tick and cross carry the meaning as well as the colour */
 .preview .has-plugin,
 .preview .no-plugin,
 .preview .plugin-unknown {
@@ -233,9 +229,7 @@ button:disabled {
   color: #f87171;
 }
 
-/* ── the "a newer Shiver exists" bar ──
-   Across the top of the content area rather than over it: it must be noticed without covering the
-   thing somebody opened Shiver to read. */
+/* ── the "a newer Shiver exists" bar, above the content rather than over it ── */
 
 .update-notice {
   display: flex;
@@ -261,10 +255,7 @@ button:disabled {
   color: #f87171;
 }
 
-/* ── connecting: a spinner while a server's client comes up, or the failure with a retry ──
-   A spinner and a sentence: Shiver used to draw the server's last messages here from a local cache,
-   and it was never worth it — every version of it was a partial copy of a client Shiver exists not
-   to reproduce. */
+/* ── connecting: a spinner while a server's client comes up, or the failure with a retry ── */
 
 @keyframes shiver-spin {
   to {

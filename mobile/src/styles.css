@@ -177,11 +177,7 @@ button {
   padding: calc(10px + env(safe-area-inset-top)) 0 calc(10px + env(safe-area-inset-bottom));
 }
 
-/* The tile a held one would join. Ringed rather than moved: nothing has happened yet, and a tile
-   that shifted would read as a reorder. */
-/* A choice with its reasoning under it. The same shape the desktop client uses, because the two
-   settings screens should not disagree about what a checkbox looks like. */
-/* The other half of the problem line: what the user chose to do about it, said quietly. */
+/* the other half of the problem line: what the user chose to do about it, said quietly */
 .server-note {
   display: block;
   margin-top: 4px;
@@ -189,9 +185,8 @@ button {
   font-size: 12px;
 }
 
-/* The settings sections as a drawer, which is what Sharkord's own settings do on a phone: the same
-   list it shows beside the content on a wide screen, slid in from the left over a scrim. Off screen
-   rather than hidden, so it slides rather than appears. */
+/* The settings sections as a drawer over a scrim, as Sharkord's settings are on a phone. Off screen
+   rather than hidden, so it slides in. */
 .settings-drawer {
   position: fixed;
   top: 0;

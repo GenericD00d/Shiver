@@ -26,8 +26,8 @@ import {
   type VoiceStatus
 } from './types';
 import { dmKey } from '../../shared/web/dms';
-import { folderMenu, readMenuId, serverMenu } from '../../shared/web/menus';
-import { byPosition, type RailRef, type RailStep, railOrder } from '../../shared/web/rail';
+import { folderMenu, notifyLevelOf, readMenuId, serverMenu } from '../../shared/web/menus';
+import { byPosition, type RailRef, type RailStep, railOrder, runRailSteps } from '../../shared/web/rail';
 
 /**
  * Which Shiver surface owns the content area. Anything other than `server` means the active server's
@@ -499,6 +499,7 @@ export const App = () => {
     if (!chosen) return;
 
     const { action, target } = chosen;
+    const notify = () => api.setNotifyLevel(target, notifyLevelOf(action) ?? 'all').then(refresh);
     const actions: Record<typeof action, () => Promise<unknown>> = {
       open: () => openServer(target),
       remove: async () => {
@@ -518,9 +519,9 @@ export const App = () => {
       // two actions rather than a toggle: the menu knew which way the server is set
       anysize: () => api.setAcceptAnySize(target, true),
       normalsize: () => api.setAcceptAnySize(target, false),
-      'notify-all': () => api.setNotifyLevel(target, 'all').then(refresh),
-      'notify-mentions': () => api.setNotifyLevel(target, 'mentions').then(refresh),
-      'notify-dms': () => api.setNotifyLevel(target, 'dms').then(refresh),
+      'notify-all': notify,
+      'notify-mentions': notify,
+      'notify-dms': notify,
       logout: () => api.logOutServer(target).then(refresh),
       refresh: () => api.refreshServerInfo(target).then(refresh),
       move: () => {
@@ -566,18 +567,7 @@ export const App = () => {
 
   /** A drag's calls, in order; the rail is redrawn from the registry either way. */
   const applyDrop = useCallback(
-    async (steps: RailStep[]) => {
-      try {
-        for (const step of steps) {
-          if (step.op === 'setFolder') await api.setServerFolder(step.serverId, step.folderId);
-          if (step.op === 'createFolder') await api.createFolderWith('New folder', step.memberIds);
-          if (step.op === 'reorder') await api.reorderRail(step.ordered);
-          if (step.op === 'reorderInFolder') await api.reorderServers(step.ids);
-        }
-      } finally {
-        await refresh().catch(() => undefined);
-      }
-    },
+    (steps: RailStep[]) => void runRailSteps(steps, api).finally(() => void refresh().catch(() => undefined)),
     [refresh]
   );
 
@@ -619,7 +609,7 @@ export const App = () => {
             .catch(() => undefined)
             .then(refresh)
         }
-        onDrop={(steps) => void applyDrop(steps)}
+        onDrop={applyDrop}
         onMenu={(target) => void showMenu(target).catch(() => undefined)}
       >
         {voice ? <VoiceTile status={voice} onOpenServer={openServer} /> : null}

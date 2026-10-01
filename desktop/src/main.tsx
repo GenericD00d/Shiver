@@ -28,8 +28,6 @@ const View = views[label] ?? App;
 // A link or file dropped where nothing takes it would navigate this webview to it, and nothing here
 // takes drops: the rail's own drag is made of pointer events.
 window.addEventListener('dragover', (event) => {
-  if (event.defaultPrevented) return;
-
   event.preventDefault();
 
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';

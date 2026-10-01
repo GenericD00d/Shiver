@@ -22,8 +22,8 @@ import {
   type ServerEntry,
   type Settings
 } from './types';
-import { folderMenu, type MenuEntry, readMenuId, serverMenu } from '../../shared/web/menus';
-import { byPosition, type RailRef, type RailStep } from '../../shared/web/rail';
+import { folderMenu, type MenuEntry, notifyLevelOf, readMenuId, serverMenu } from '../../shared/web/menus';
+import { byPosition, type RailRef, type RailStep, runRailSteps } from '../../shared/web/rail';
 
 /**
  * Shiver's own screens. `boot` opens the last server used, or waits after `#home` (the quick rail
@@ -454,7 +454,7 @@ export const App = () => {
         case 'notify-all':
         case 'notify-mentions':
         case 'notify-dms':
-          void change(() => api.setNotifyLevel(target, action === 'notify-all' ? 'all' : action === 'notify-dms' ? 'dms' : 'mentions'));
+          void change(() => api.setNotifyLevel(target, notifyLevelOf(action) ?? 'all'));
           break;
         case 'anysize':
         case 'normalsize':
@@ -495,15 +495,7 @@ export const App = () => {
 
   /** A drag's calls, in order, then the registry read again (which redraws the rail). */
   const applyDrop = useCallback(
-    (steps: RailStep[]) =>
-      void change(async () => {
-        for (const step of steps) {
-          if (step.op === 'setFolder') await api.setServerFolder(step.serverId, step.folderId);
-          if (step.op === 'createFolder') await api.createFolderWith('New folder', step.memberIds);
-          if (step.op === 'reorder') await api.reorderRail(step.ordered);
-          if (step.op === 'reorderInFolder') await api.reorderServers(step.ids);
-        }
-      }),
+    (steps: RailStep[]) => void change(() => runRailSteps(steps, api)),
     [change]
   );
 

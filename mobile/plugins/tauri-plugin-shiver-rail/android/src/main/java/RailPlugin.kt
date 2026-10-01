@@ -36,16 +36,10 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 
 /*
- * Shiver's quick rail, over the server page on screen, which keeps running (and connected) behind it.
- * The rail is the one both clients draw (shared/web/components/Rail.tsx), built into this plugin's
- * assets (mobile/rail) and shown in a WebView of the plugin's own: never in the server's page, which
- * would share a script world with it and could read what else is on the rail. That WebView loads
- * nothing but the rail's page, from the assets, and talks only to this plugin, through one message
- * channel offered to the page's origin alone.
- *
- * This file is the host: the overlay and its scrim, the slide-in, the back press, and the channel.
- * The core hands over what to draw (`show`, `refresh`); the page answers once it is drawn, and says
- * what the user chose, which goes on to the core through the event channel.
+ * Host for the quick rail: the shared rail's page (mobile/rail, in this plugin's assets) in a WebView
+ * of its own over the server page, never inside it. It loads only that page and talks only to this
+ * plugin, over one channel offered to its origin. Here: the overlay, scrim, slide-in, back press and
+ * the channel; the core sends what to draw (`show`, `refresh`) and hears what was chosen.
  */
 
 /** the rail's width, as on Shiver's own page (`--shiver-rail-width`) */
@@ -135,9 +129,9 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
         val view = invoke.getArgs()
 
         activity.runOnUiThread {
-            val shown = overlay?.visibility == View.VISIBLE && revealing == null
+            val up = overlay?.visibility == View.VISIBLE
 
-            if (!reveal && !shown) return@runOnUiThread invoke.resolve(drawn(JSArray()))
+            if (!reveal && !up) return@runOnUiThread invoke.resolve(drawn(JSArray()))
 
             val root = overlay() ?: return@runOnUiThread invoke.reject("The rail could not be drawn")
             val missing = JSArray()
@@ -146,10 +140,10 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
             takeLogos(view, missing)
             send(JSONObject().put("seq", number).put("view", view).toString())
 
-            if (shown) return@runOnUiThread invoke.resolve(drawn(missing))
+            if (!reveal || (up && revealing == null)) return@runOnUiThread invoke.resolve(drawn(missing))
 
-            // a show that has not landed yet is superseded by this one
-            revealing?.second?.reject("The rail was asked for again")
+            // a show still waiting is answered as drawn: rejecting it would send the core to Shiver's page
+            revealing?.let { it.second.resolve(drawn(it.third)) }
             revealing = Triple(number, invoke, missing)
             prepare(root)
 
@@ -305,12 +299,22 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
             "drawn" -> {
                 val waiting = revealing ?: return
 
-                if (said.optInt("seq") != waiting.first) return
+                // a later view (a refresh meanwhile) being drawn means this one has been too
+                if (said.optInt("seq") < waiting.first) return
 
                 revealing = null
                 slideIn()
                 waiting.second.resolve(drawn(waiting.third))
             }
+            else -> if (showing()) chosen(kind, said)
+        }
+    }
+
+    /** The rail is up and seen: only then can the user have chosen anything on it. */
+    private fun showing() = overlay?.visibility == View.VISIBLE && revealing == null
+
+    private fun chosen(kind: String, said: JSONObject) {
+        when (kind) {
             "open" -> said.optString("entryId").takeIf { ID.matches(it) }?.let { choose("open", it) }
             "folder" -> {
                 val folderId = said.optString("folderId").takeIf { ID.matches(it) } ?: return

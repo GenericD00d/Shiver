@@ -8,6 +8,16 @@ pub const DEFAULT_ACCENT_COLOR: &str = "#e5e5e5";
 /// `shared/web/settings.ts`).
 pub const DEFAULT_RAIL_COLOR: &str = "#171717";
 
+/// The longest account label kept; a longer one is cut, not refused.
+const MAX_ACCOUNT_LABEL: usize = 64;
+
+/// A typed account label: trimmed, invisible marks dropped and bounded; none when blank.
+pub fn account_label(label: Option<&str>) -> Option<String> {
+    let label = crate::text::clamp(label?.trim().to_string(), MAX_ACCOUNT_LABEL);
+
+    (!label.is_empty()).then_some(label)
+}
+
 /// A sound gain above this could hurt someone wearing headphones.
 pub const MAX_SOUND_VOLUME: u16 = 250;
 
@@ -242,5 +252,16 @@ mod tests {
         assert!(!NotifyLevel::Mentions.allows(false, false));
         assert!(!NotifyLevel::Dms.allows(false, true));
         assert!(NotifyLevel::Dms.allows(true, false));
+    }
+
+    #[test]
+    fn an_account_label_is_trimmed_and_bounded() {
+        assert_eq!(account_label(Some("  work  ")).as_deref(), Some("work"));
+        assert_eq!(account_label(Some("   ")), None);
+        assert_eq!(account_label(None), None);
+        assert_eq!(
+            account_label(Some(&"a".repeat(200))).map(|label| label.chars().count()),
+            Some(MAX_ACCOUNT_LABEL + 1)
+        );
     }
 }

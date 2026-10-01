@@ -12,26 +12,7 @@ export type MenuEntry =
   | { kind: 'submenu'; label: string; items: MenuEntry[] };
 
 /** Every action a rail menu can ask for. `move`'s target is `<server id>:<folder id>`. */
-export type MenuAction =
-  | 'open'
-  | 'markread'
-  | 'refresh'
-  | 'notify-all'
-  | 'notify-mentions'
-  | 'notify-dms'
-  | 'forgetpw'
-  | 'plugin'
-  | 'anysize'
-  | 'normalsize'
-  | 'move'
-  | 'unfolder'
-  | 'logout'
-  | 'signin'
-  | 'remove'
-  | 'rename-folder'
-  | 'delete-folder';
-
-const ACTIONS: readonly MenuAction[] = [
+const ACTIONS = [
   'open',
   'markread',
   'refresh',
@@ -49,7 +30,9 @@ const ACTIONS: readonly MenuAction[] = [
   'remove',
   'rename-folder',
   'delete-folder'
-];
+] as const;
+
+export type MenuAction = (typeof ACTIONS)[number];
 
 /** A chosen item's action and what it acts on; null for an id no menu here made. */
 export const readMenuId = (id: string): { action: MenuAction; target: string } | null => {
@@ -71,6 +54,10 @@ const LEVELS: [MenuAction, NotifyLevel, string][] = [
   ['notify-mentions', 'mentions', 'Mentions and direct messages'],
   ['notify-dms', 'dms', 'Direct messages only']
 ];
+
+/** The notification level a `notify-*` action sets; null for any other action. */
+export const notifyLevelOf = (action: MenuAction): NotifyLevel | null =>
+  LEVELS.find(([candidate]) => candidate === action)?.[1] ?? null;
 
 export type MenuServer = {
   id: string;

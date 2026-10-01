@@ -1,11 +1,9 @@
-//! The quick rail: direct messages, the servers and settings, drawn over the server page on screen
-//! (`tauri-plugin-shiver-rail`, in a WebView of its own), so reaching them no longer unloads the page. Coming back to
-//! the same server is closing the rail; the page never stopped, so it never joins the server again.
+//! The quick rail over the server page (`tauri-plugin-shiver-rail`), so reaching Shiver's screens
+//! does not unload it; coming back to the same server only closes the rail.
 //!
-//! A server's page asks for the rail the only way it can, by navigating to Shiver's page with
-//! `#home` (a swipe past the drawer, or back); that navigation is cancelled and the rail drawn
-//! instead. Choosing another server, or one of Shiver's own screens, leaves through Shiver's page
-//! as before (`#open=<id>`, `#dms`, `#add`, `#settings`).
+//! A server's page asks for it by navigating to Shiver's page with `#home` (a swipe past the drawer,
+//! or back); that navigation is cancelled and the rail drawn instead. Another server, or one of
+//! Shiver's screens, is reached through Shiver's page (`#open=<id>`, `#dms`, `#add`, `#settings`).
 
 use std::{
     collections::HashMap,
@@ -75,39 +73,36 @@ pub fn close(app: &AppHandle) {
 
 /// What the user chose. The rail has already closed itself, unless a folder was opened or shut.
 pub fn chosen(app: &AppHandle, event: RailEvent) {
-    if let RailEvent::Folder {
-        folder_id,
-        expanded,
-    } = event
-    {
-        // an unknown folder stores nothing; either way the rail redraws to agree with what is stored
-        let _ = app
+    let screen = match event {
+        RailEvent::Folder {
+            folder_id,
+            expanded,
+        } => {
+            // an unknown folder stores nothing; either way the rail redraws to match the store
+            let _ = app.state::<Store>().update(|registry| {
+                Ok(registry.rail().set_folder_expanded(&folder_id, expanded)?)
+            });
+
+            return refresh(app);
+        }
+        RailEvent::Closed => None,
+        RailEvent::Dms => Some("dms".to_string()),
+        RailEvent::Add => Some("add".to_string()),
+        RailEvent::Settings => Some("settings".to_string()),
+        // opened by Shiver's page, which waits for the server to take another join if need be
+        RailEvent::Open { entry_id } => app
             .state::<Store>()
-            .update(|registry| Ok(registry.rail().set_folder_expanded(&folder_id, expanded)?));
-
-        refresh(app);
-
-        return;
-    }
+            .registry()
+            .server(&entry_id)
+            .map(|_| format!("open={entry_id}")),
+    };
 
     app.state::<QuickRail>()
         .open
         .store(false, Ordering::Release);
 
-    match event {
-        RailEvent::Closed => {}
-        RailEvent::Dms => webview::go_home(app, Some("dms")),
-        RailEvent::Add => webview::go_home(app, Some("add")),
-        RailEvent::Settings => webview::go_home(app, Some("settings")),
-        RailEvent::Open { entry_id } => {
-            let known = app.state::<Store>().registry().server(&entry_id).is_some();
-
-            // opened by Shiver's page, which waits for the server to take another join if need be
-            if known {
-                webview::go_home(app, Some(&format!("open={entry_id}")));
-            }
-        }
-        RailEvent::Folder { .. } => {}
+    if let Some(fragment) = screen {
+        webview::go_home(app, Some(&fragment));
     }
 }
 

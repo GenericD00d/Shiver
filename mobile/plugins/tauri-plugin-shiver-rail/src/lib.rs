@@ -1,16 +1,10 @@
-//! Shiver's quick rail on Android (a no-op elsewhere).
+//! Shiver's quick rail on Android (a no-op elsewhere): the shared rail, drawn over the server page in
+//! a WebView of the plugin's own, so the page keeps running (and connected) behind it and never sees
+//! it. Each load of a server page is a join, which Sharkord allows only a few times a minute.
 //!
-//! Android has one app webview, and Shiver's full rail is on its own page, so reaching it used to
-//! unload the server's page; coming back loaded it again, and each load joins the server, which
-//! Sharkord allows only a few times a minute. This rail is drawn over the page instead, which keeps
-//! running (and connected) behind it, in a WebView of the plugin's own: the rail both clients draw
-//! (`shared/web/components/Rail.tsx`), built into the plugin's assets (`mobile/rail`). A server's page
-//! never sees it: the two share no script world, and the rail's WebView loads nothing but its own
-//! page and talks only to the plugin.
-//!
-//! The core hands it what to draw ([`RailView`]) and hears back what the user chose ([`RailEvent`]).
-//! Logos travel once: a tile names its logo by a key, and carries the logo itself only when the
-//! core has not sent that key before; the rail reports the keys it lacks.
+//! The core hands it what to draw ([`RailView`]) and hears what the user chose ([`RailEvent`]). A
+//! logo travels once: a tile names it by a key and carries it only with a key not sent before; the
+//! rail reports the keys it lacks.
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};

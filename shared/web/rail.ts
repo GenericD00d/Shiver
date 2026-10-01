@@ -136,3 +136,21 @@ export const railDrop = (
 
   return steps;
 };
+
+/** Each client's commands for a drop's steps. */
+export type RailCalls = {
+  setServerFolder: (serverId: string, folderId: string | null) => Promise<unknown>;
+  createFolderWith: (name: string, memberIds: string[]) => Promise<unknown>;
+  reorderRail: (ordered: RailRef[]) => Promise<unknown>;
+  reorderServers: (orderedIds: string[]) => Promise<unknown>;
+};
+
+/** Makes a drop's calls, in order; one that fails stops the rest. */
+export const runRailSteps = async (steps: readonly RailStep[], calls: RailCalls) => {
+  for (const step of steps) {
+    if (step.op === 'setFolder') await calls.setServerFolder(step.serverId, step.folderId);
+    if (step.op === 'createFolder') await calls.createFolderWith('New folder', step.memberIds);
+    if (step.op === 'reorder') await calls.reorderRail(step.ordered);
+    if (step.op === 'reorderInFolder') await calls.reorderServers(step.ids);
+  }
+};
