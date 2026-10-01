@@ -177,7 +177,7 @@ slide-in once the page has drawn, and back press). Kotlin in `android/src/main/j
 | `session.ts` | `installSessionShim`, `takeSeedFromLocation`, `AUTO_LOGIN*` (session kept off disk) |
 | `bridge/dom.ts` | `ensureStyle`, `defineHook`, `onDomSettled` (hands callbacks what changed), `touched`, `isTopFrame`, `whenDocumentReady`, `installExternalLinks` |
 | `bridge/sharkord.ts` | Sharkord store types, test-id selectors (`SIDEBAR`, `CHANNEL_ITEM`, `DM_ITEM`…), `sharkordStore`, `watchStore`, pure store reads (`notificationTarget`/`NotificationTarget`: a notification's author and channel from its title, `dmPartnerId`, `findDmChannelIdByUserName`, `readDms`/`DmChannel`, `fileUrl`; tested in `sharkord.test.ts`), `notificationFlags` (Sharkord's own notification switches for a level), `notifyAllows`, `rowName`, `channelOfRow`, `markAllChannelsRead`, `installMuteStyles`, `paintMuted`, `pressEscape`, `closeDialog` (Sharkord's topmost open dialog, as Escape), `IMAGE_VIEWER`, `RECONNECTING_OVERLAY`, `SIDE_PANEL`, `NARROW`, `SHIVER_PLUGIN_ID` |
-| `bridge/plugin.ts` | `callPlugin`, `waitForPlugin`, `syncMutesWithPlugin`, `pushMutesToPlugin`, `storeReadFloor` |
+| `bridge/plugin.ts` | `callPlugin`, `waitForPlugin`, `syncMutesWithPlugin`, `pushMutesToPlugin`, `storeReadFloor`, `fetchDmTimes` (the caller's DM times, desktop's bridge asks once per conversation) |
 | `bridge/channel-menu.ts` | the channel menu both bridges open (right-click, long press): mute or unmute, mark all as read; Shiver's items join Sharkord's own menu when it opens, else Shiver draws its own. `installChannelMenu` (`ChannelMenuSetup`, `ChannelMutes`), `channelPressed`, `requestChannelMenu`, `closeChannelMenu`, `isInChannelMenu` |
 | `bridge/features.ts` | `installSoundVolume`, `installAttachmentCards`, `installVoiceColors`, `installSidePanels` (Sharkord's voice chat and thread panels cover a narrow page instead of staying hidden), `closeSidePanel` |
 | `bridge/theme.ts` | `ShiverTheme`, `applyPageTheme` |
@@ -213,9 +213,11 @@ slide-in once the page has drawn, and back press). Kotlin in `android/src/main/j
   - page options: `OPTION_SETTINGS`, `createOptions` (the admin's switches for what the client half
     draws, pushed to every page when one changes: `roleColors`)
   - statuses: `createStatuses`, `statusFrom` (custom statuses)
+  - direct messages: `createDmTimes` (the newest message's time in each of the caller's own DMs, for
+    the inbox's order; membership checked, nothing stored)
   - push: `createPush`, `endpointsFrom`, `normaliseEndpoint`, `deliver` (UnifiedPush delivery); SSRF
     vetting: `isPrivateAddress`, `vetEndpoint`, `REFUSED`
-  - loading: `onLoad` registers actions `getOptions`, `setStatus`, `getStatuses`, `getOwnStatus`, `getMutedChannels`,
+  - loading: `onLoad` registers actions `getOptions`, `setStatus`, `getStatuses`, `getOwnStatus`, `getMutedChannels`, `getDmTimes`,
     `setMutedChannels`, `setReadFloor`, `setPushEndpoint`, `clearPushEndpoint` (reads and writes rate
     limited per user); `onUnload`, `adoptOldStore`, `primeFromUserRows`.
 - `client/index.js`: client half, in everyone's page (Shiver or a browser): announces itself as `__SHIVER_PLUGIN__`

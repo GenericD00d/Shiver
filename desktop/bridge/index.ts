@@ -14,7 +14,7 @@ import {
   installSoundVolume,
   installVoiceColors
 } from '../../shared/web/bridge/features';
-import { pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
+import { fetchDmTimes, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
 import {
   CHANNEL_ITEM,
   closeDialog,
@@ -169,9 +169,14 @@ function install(shiver: ShiverConfig) {
   const queue: QueuedNotification[] = [];
   const openQueue: string[] = [];
   const muteQueue: QueuedMute[] = [];
-  /** when a message was last seen per channel (notifications are all the bridge sees of them) */
+  /**
+   * When the last message arrived per channel: from the companion plugin (Sharkord's client keeps
+   * its own DM times to itself), then from the notifications, which are all the bridge sees arrive
+   */
   const lastSeen = new Map<number, number>();
   let lastSeenVersion = 0;
+  /** DM channels whose times the plugin has been asked for */
+  const askedTimes = new Set<number>();
 
   installExternalLinks((href) => openQueue.push(href));
 
@@ -274,10 +279,9 @@ function install(shiver: ShiverConfig) {
 
     let dmInputs: unknown[] = [];
 
-    watchStore((next) => {
-      state = next;
-
-      // the DM list only changes with channels, users or a newly seen message
+    // the DM list only changes with channels, users or a newly seen message
+    const refreshDms = () => {
+      const next = state;
       const inputs = [next.channels, next.users, next.ownUserId, lastSeenVersion];
 
       if (inputs.every((input, index) => input === dmInputs[index])) return;
@@ -285,6 +289,27 @@ function install(shiver: ShiverConfig) {
       dmInputs = inputs;
 
       const list = readDms(shiver.origin, next, lastSeen);
+      const unasked = list.map((dm) => dm.channelId).filter((channelId) => !askedTimes.has(channelId));
+
+      for (const channelId of unasked) askedTimes.add(channelId);
+
+      // once per conversation; what comes back goes through this same path, as a seen message does
+      void fetchDmTimes(unasked).then((times) => {
+        let moved = false;
+
+        for (const [channelId, at] of times ?? []) {
+          if (at > (lastSeen.get(channelId) ?? 0)) {
+            lastSeen.set(channelId, at);
+            moved = true;
+          }
+        }
+
+        if (moved) {
+          lastSeenVersion += 1;
+          refreshDms();
+        }
+      });
+
       // avatar urls carry expiring tokens, so they are left out of the comparison
       const signature = JSON.stringify(list.map(({ channelId, name, lastMessageAt }) => [channelId, name, lastMessageAt]));
 
@@ -292,6 +317,11 @@ function install(shiver: ShiverConfig) {
         dmsSignature = signature;
         dms = list;
       }
+    };
+
+    watchStore((next) => {
+      state = next;
+      refreshDms();
     });
 
     installChannelMenu({

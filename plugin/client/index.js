@@ -32,6 +32,8 @@ const isCurrent = () => window.__SHIVER_PLUGIN_COPY__ === COPY;
 /** Everything the relay will do. Each is a server action on the caller's own row. */
 const ACTIONS = {
   getMutedChannels: (store) => run(store, 'getMutedChannels'),
+  getDmTimes: (store, payload) =>
+    run(store, 'getDmTimes', { channelIds: Array.isArray(payload?.channelIds) ? payload.channelIds : [] }),
   setMutedChannels: (store, payload) =>
     run(store, 'setMutedChannels', {
       mutedChannels: Array.isArray(payload?.mutedChannels) ? payload.mutedChannels : []
@@ -73,9 +75,9 @@ window.addEventListener('message', async (event) => {
 /**
  * Tells the bridge the plugin is here. Version 2: every write is a server action; adds setReadFloor.
  * Version 3: the plugin draws statuses and role colours itself, so the relay no longer sets or reads
- * a status.
+ * a status. Version 4: adds getDmTimes.
  */
-window.__SHIVER_PLUGIN__ = { version: 3 };
+window.__SHIVER_PLUGIN__ = { version: 4 };
 
 /* ── the page ── */
 
