@@ -25,8 +25,12 @@ Needs Sharkord **0.0.25 or newer** (plugin SDK 2). A server on 0.0.24 refuses to
 
 That is the whole install. Nothing else about the server changes.
 
-**Updating:** replace the folder and restart the server. The server half is one file,
-`server/index.js`, so no older copy of a part of it can be left running beside a newer one.
+**Updating:** replace the folder, then restart the server (or turn **Shiver** off and on again in
+Settings → Plugins). Until then the old version keeps running: Sharkord's Plugins page already
+shows the new version, since it reads `manifest.json` from disk, but the version everyone's client
+is told, and so the one Shiver reports when adding a server, is the one loaded. The server half is
+one file, `server/index.js`, so no older copy of a part of it can be left running beside a newer
+one.
 
 ## What it stores
 

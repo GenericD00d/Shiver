@@ -29,7 +29,7 @@ mobile/plugins/            tauri-plugin-shiver-push (UnifiedPush), tauri-plugin-
                            tauri-plugin-shiver-rail (the quick rail: direct messages, servers, add, settings;
                            that page in a WebView of its own over the server page)
 plugin/                    Sharkord companion plugin (server/ + client/, plain JS, node tests)
-scripts/check-version.py   checks the workspace and tauri.conf.json versions agree
+scripts/check-version.py   checks the workspace and tauri.conf.json versions agree, and the plugin's manifest and package.json
 scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys, classes and conventions the bridges
                            and the plugin's client half match (`SHARKORD_REF`, the commit last checked against;
                            `--latest` for its default branch)
