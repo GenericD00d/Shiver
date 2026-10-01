@@ -184,16 +184,6 @@ An admin can turn it off for everyone under **Settings → Plugins → Shiver �
 role**. Open pages follow the change without a reload. Shiver's apps draw no colours of their own, so
 on a server without this plugin names stay Sharkord's plain colour.
 
-## Conversation order
-
-Shiver lists every server's direct messages together, newest message first. A server's page cannot
-read when each conversation last had a message (Sharkord's client keeps that to its own DM list), so
-on desktop, for a server whose page is open, Shiver asks the plugin: the `getDmTimes` action answers
-with the time of the newest message in each of the caller's own conversations. Only DMs the caller
-takes part in are answered (for a DM, Sharkord's channel permission is membership alone, so not
-even an owner can ask about anyone else's), only the time is read, never the message, and nothing
-is stored. Reads are rate limited per user like the plugin's others.
-
 ## Updating while people are connected
 
 Sharkord imports the client half by a url that carries the plugin's version, so after an update a

@@ -87,15 +87,12 @@ Everyone on the server gets statuses and colours, browser users included.
 
 ## Known limitations
 
-- **The DM inbox's order on desktop, without the companion plugin.** A server whose page is open
-  (the one Shiver opens at launch, say) cannot tell Shiver when its older conversations last had a
-  message: Sharkord's client keeps that to itself. Until a message arrives in one, they sit below
-  the rest, by name. With the [companion plugin](plugin/README.md#conversation-order) on that
-  server, Shiver asks it instead and the order is right from the start.
-- **The DM inbox on Android, for the server just left.** Android reads every server's conversations
-  over the core's own connections, and the server on screen has none (its page is connected
-  instead), nor the one left until 30 seconds have passed (going straight back would otherwise
-  connect it twice). Its conversations join the list once that connection is up.
+- **The DM inbox on Android, for the server opened at launch.** Android lists each server's
+  conversations from the core's own connection to it, which waits while that server's page is open
+  (the page is connected instead) and for 30 seconds after you leave it (going straight back would
+  otherwise connect twice). So the server Shiver opens at launch joins the list about 30 seconds
+  after you first leave it. Once listed, a server's conversations stay in order while its page is
+  open, from what the page itself hears.
 
 ## What it deliberately does not do
 

@@ -8,8 +8,8 @@ release can break them without any Shiver test noticing. This checks, against a 
 - every `sharkord-*` storage key Shiver reads or seeds is one the client uses,
 - every class they match with `[class~="..."]` appears in the client's source (or its UI package),
 - and the other conventions named in `CONTRACTS` (notification titles, DM channel names, the
-  plugin store, the image portal, the member-list slot, the new-message subscription and who it
-  reaches, DM permissions).
+  plugin store, the image portal, the member-list slot, the DM list's times, and the new-message
+  subscription and who it reaches).
 
 Usage: check-sharkord.py [SHARKORD_CHECKOUT] [--ref REF | --latest]
 Without a checkout, Sharkord is cloned at `SHARKORD_REF` (or `--ref`, or its default branch with
@@ -63,24 +63,34 @@ CONTRACTS = [
         r"getElementById\('imagePortal'\)",
     ),
     (
-        "new messages on the `messages.onNew` subscription (watchNewMessages)",
+        "every DM conversation's latest message time from `dms.get` (watchDmActivity)",
+        "apps/server/src/db/queries/dms.ts",
+        r"lastMessageAt:\s*max\(messages\.createdAt\)",
+    ),
+    (
+        "`dms.get` routed and asked of the page's own connection after it joins (watchDmActivity)",
+        "apps/server/src/routers/dms/index.ts",
+        r"get:\s*getDirectMessagesRoute",
+    ),
+    (
+        "the client subscribing to new messages only once it has joined (watchDmActivity asks then)",
+        "apps/client/src/features/server/actions.ts",
+        r"joinServer\.query[\s\S]*?initSubscriptions\(\)",
+    ),
+    (
+        "new messages on the `messages.onNew` subscription (watchDmActivity)",
         "apps/server/src/routers/messages/index.ts",
         r"onNew:\s*onMessageRoute",
     ),
     (
-        "a new message published to everyone who can see its channel, its author included (watchNewMessages)",
+        "a new message published to everyone who can see its channel, its author included (watchDmActivity)",
         "apps/server/src/db/publishers.ts",
         r"getAffectedOnlineUserIdsForChannel\([\s\S]*?VIEW_CHANNEL[\s\S]*?publishFor\(affectedUserIds, targetEvent",
     ),
     (
-        "the page's client speaking over one WebSocket (watchNewMessages)",
+        "the page's client speaking over one WebSocket (watchDmActivity)",
         "apps/client/src/lib/trpc.ts",
         r"wsLink\(",
-    ),
-    (
-        "a DM's channel permission being membership alone (the plugin's getDmTimes)",
-        "apps/server/src/db/queries/channels.ts",
-        r"if \(channel\.isDm\) \{\s*return isUserDmParticipant\(",
     ),
     (
         "the member-list slot rendered inside the member's row, after the name (the plugin's MemberColor)",

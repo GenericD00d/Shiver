@@ -13,7 +13,7 @@ declare global {
   }
 }
 
-type PluginResult = { mutedChannels?: number[]; times?: Record<string, unknown> } | null;
+type PluginResult = { mutedChannels?: number[] } | null;
 
 type PluginResponse = { source?: string; id?: string; ok?: boolean; result?: PluginResult };
 
@@ -151,22 +151,4 @@ export async function storeReadFloor(floor: Record<string, number>) {
   } catch {
     // plugin switched off
   }
-}
-
-/**
- * When the newest message in each of these conversations was sent, by channel id, from the
- * companion plugin (version 4 on); null without one. Only the caller's own DMs are answered.
- */
-export async function fetchDmTimes(channelIds: readonly number[]): Promise<Map<number, number> | null> {
-  if (channelIds.length === 0 || !(await waitForPlugin())) return null;
-
-  const times = (await callPlugin('getDmTimes', { channelIds }))?.times;
-
-  if (!times || typeof times !== 'object') return null;
-
-  return new Map(
-    Object.entries(times)
-      .map(([channel, at]) => [Number(channel), at] as const)
-      .filter((entry): entry is [number, number] => Number.isSafeInteger(entry[0]) && typeof entry[1] === 'number' && Number.isFinite(entry[1]))
-  );
 }

@@ -7,7 +7,6 @@ import { test } from 'node:test';
 
 import {
   adoptOldStore,
-  createDmTimes,
   createLimiter,
   createOptions,
   createPush,
@@ -513,34 +512,4 @@ test('the server half is one file, so it cannot be run against stale copies of o
   const source = await readFile(new URL('../server/index.js', import.meta.url), 'utf8');
 
   assert.doesNotMatch(source, /^import .* from '\.{1,2}\//m);
-});
-
-/* ── direct messages ── */
-
-test("conversation times are answered only for the caller's own DMs, bounded", async () => {
-  const channels = { 1: { id: 1, isDm: true }, 2: { id: 2, isDm: true }, 3: { id: 3, isDm: false }, 4: { id: 4, isDm: true } };
-  const members = { 1: [7, 8], 2: [8, 9], 3: [7], 4: [7, 9] };
-  const newest = { 1: 1_000, 3: 3_000 };
-  const listed = [];
-  const ctx = {
-    channels: { get: async (id) => channels[id] },
-    permissions: { userCanInChannel: async (user, id) => members[id]?.includes(user) ?? false },
-    messages: {
-      list: async ({ channelId, limit }) => {
-        listed.push([channelId, limit]);
-
-        return newest[channelId] ? [{ createdAt: newest[channelId] }] : [];
-      }
-    }
-  };
-  const dmTimes = createDmTimes(ctx);
-
-  // 2 is someone else's conversation, 3 is not a DM, 4 has no messages, 99 does not exist
-  assert.deepEqual(await dmTimes(7, [1, 2, 3, 4, 99, 1, 'x', -5]), { times: { 1: 1_000 } });
-  assert.deepEqual(listed, [[1, 1], [4, 1]]);
-  assert.deepEqual(await dmTimes(7, 'not a list'), { times: {} });
-
-  listed.length = 0;
-  await dmTimes(7, Array.from({ length: 500 }, (_, index) => index + 1));
-  assert.ok(listed.length <= 200);
 });

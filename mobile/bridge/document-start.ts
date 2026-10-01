@@ -15,13 +15,13 @@
  */
 
 import { defineHook, installExternalLinks, isTopFrame } from '../../shared/web/bridge/dom';
-import { watchNewMessages } from '../../shared/web/bridge/messages';
+import { watchDmActivity } from '../../shared/web/bridge/messages';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
 
 declare const SHIVER_SEED_KEY: string;
 
-/** The most channels the page holds message times for between the core's reads. */
-const MAX_SEEN = 100;
+/** The most conversations the page holds a time for between the core's reads. */
+const MAX_SEEN = 500;
 
 const hex = (digest: ArrayBuffer) => Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 
@@ -46,7 +46,7 @@ try {
     defineHook('__SHIVER_OPEN__', () => queue.splice(0));
     installExternalLinks((href) => queue.push(href));
 
-    // each channel's latest message, sent or received, until the core reads it (the DM list's order)
+    // each conversation's latest message, sent or received, until the core reads it (the DM list's order)
     const seen = new Map<number, number>();
 
     defineHook('__SHIVER_SEEN__', () => {
@@ -56,11 +56,24 @@ try {
 
       return taken;
     });
-    watchNewMessages((channelId, at) => {
+    const note = (channelId: number, at: number) => {
       seen.set(channelId, Math.max(at, seen.get(channelId) ?? 0));
 
-      // the core reads every second; a burst across more channels than this keeps the newest
-      if (seen.size > MAX_SEEN) seen.delete(seen.keys().next().value as number);
+      // the core reads every second; past the cap, the oldest time goes
+      if (seen.size > MAX_SEEN) {
+        let oldest = channelId;
+
+        seen.forEach((time, channel) => {
+          if (time < (seen.get(oldest) ?? Infinity)) oldest = channel;
+        });
+
+        seen.delete(oldest);
+      }
+    };
+
+    watchDmActivity({
+      onMessage: note,
+      onDmTimes: (times) => times.forEach((at, channelId) => note(channelId, at))
     });
   }
 } catch {

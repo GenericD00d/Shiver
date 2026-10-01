@@ -738,8 +738,8 @@ fn update_read_states(
 }
 
 /// Replaces an entry's mutes with what its page reports (bounded), and recounts.
-/// The most channels taken from one read of the page.
-const MAX_SEEN: usize = 100;
+/// The most conversations taken from one read of the page (as many as it holds).
+const MAX_SEEN: usize = 500;
 
 /// Messages the page on screen saw sent or received: they move its known conversations up. A page's
 /// claim, so only conversations the core already knows for this entry move, and never past now.

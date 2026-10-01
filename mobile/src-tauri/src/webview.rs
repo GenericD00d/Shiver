@@ -669,5 +669,17 @@ mod tests {
         let state: PageState = serde_json::from_str(r#"{"muted":[3]}"#).unwrap();
 
         assert_eq!(state.muted, Some(vec![3]));
+        assert!(state.seen.is_empty());
+
+        // as `__SHIVER_SEEN__` answers in a real Sharkord page (checked against one)
+        let state: PageState = serde_json::from_str(
+            r#"{"muted":null,"open":[],"seen":[[10,1790875224931],[8,1790864397385]]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            state.seen,
+            vec![(10, 1_790_875_224_931.0), (8, 1_790_864_397_385.0)]
+        );
     }
 }
