@@ -3,16 +3,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../api';
 
 import { HotkeyField } from './HotkeyField';
-import { automaticTextColor } from '../../../shared/web/theme';
 import { playNotificationSound } from '../sounds';
-import {
-  DEFAULT_ACCENT_COLOR,
-  DEFAULT_THEME_COLOR,
-  MAX_PAGES_KEPT,
-  MAX_SOUND_VOLUME,
-  MIN_PAGES_KEPT,
-  type Settings
-} from '../types';
+import { AboutSection, AppearanceSection, NotificationsSection } from '../../../shared/web/components/SettingsSections';
+import { MAX_PAGES_KEPT, MAX_SOUND_VOLUME, MIN_PAGES_KEPT, type Settings } from '../types';
 
 type Props = {
   settings: Settings;
@@ -54,46 +47,9 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
     setDraft((current) => ({ ...current, [key]: value }));
   }, []);
 
-  const handleTheme = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => update('themeColor', event.target.value),
-    [update]
-  );
-
-  const handleAccent = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => update('accentColor', event.target.value),
-    [update]
-  );
-
-  const handleText = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => update('textColor', event.target.value),
-    [update]
-  );
-
-  const handleVolume = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) =>
-      update('soundVolume', Number(event.target.value)),
-    [update]
-  );
-
-  // Nobody can judge 180% by reading it, and the setting is saved in another webview from the one
-  // that plays the ping — so the panel plays it here, at the level currently under the thumb.
-  const handleTestSound = useCallback(() => {
-    playNotificationSound(draft.soundVolume);
-  }, [draft.soundVolume]);
-
-  const handleResetColors = useCallback(() => {
-    setDraft((current) => ({
-      ...current,
-      themeColor: DEFAULT_THEME_COLOR,
-      accentColor: DEFAULT_ACCENT_COLOR,
-      textColor: null
-    }));
+  const patch = useCallback((changes: Partial<Settings>) => {
+    setDraft((current) => ({ ...current, ...changes }));
   }, []);
-
-  const isDefaultColors =
-    draft.themeColor.toLowerCase() === DEFAULT_THEME_COLOR &&
-    draft.accentColor.toLowerCase() === DEFAULT_ACCENT_COLOR &&
-    draft.textColor === null;
 
   const handleSubmit = useCallback(
     (event: React.FormEvent) => {
@@ -103,37 +59,6 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
     },
     [draft, onSave]
   );
-
-  const [checking, setChecking] = useState(false);
-  const [checked, setChecked] = useState<string | null>(null);
-  const [newer, setNewer] = useState<string | null>(null);
-
-  const runCheck = useCallback(async () => {
-    setChecking(true);
-    setChecked(null);
-
-    try {
-      const found = await api.checkForUpdate();
-
-      if (found) setNewer(found);
-      else setChecked('You are on the newest version.');
-    } catch (error) {
-      setChecked(errorMessage(error));
-    } finally {
-      setChecking(false);
-    }
-  }, []);
-
-  const handleInstall = useCallback(async () => {
-    setChecked('Downloading…');
-
-    try {
-      await api.installUpdate();
-    } catch (error) {
-      // on success the installer takes over and this process ends, so only a failure comes back
-      setChecked(errorMessage(error));
-    }
-  }, []);
 
   // the result is shown inline, since this panel has nowhere to put a toast
   const [permissionsReset, setPermissionsReset] = useState<string | null>(null);
@@ -180,98 +105,22 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
         </nav>
 
         <div className="settings-content">
-          {section === 'appearance' ? (
-            <>
-              <p className="hint">
-                Applied to Shiver and to every server you open in it. On the defaults Shiver restyles
-                nothing, so servers look exactly as they do in a browser.
-              </p>
-
-              <label className="field">
-                <span>Background colour</span>
-                <div className="field-row">
-                  <input type="color" value={draft.themeColor} onChange={handleTheme} />
-                  <input
-                    type="text"
-                    value={draft.themeColor}
-                    onChange={handleTheme}
-                    spellCheck={false}
-                  />
-                </div>
-              </label>
-
-              <label className="field">
-                <span>Accent colour</span>
-                <div className="field-row">
-                  <input type="color" value={draft.accentColor} onChange={handleAccent} />
-                  <input
-                    type="text"
-                    value={draft.accentColor}
-                    onChange={handleAccent}
-                    spellCheck={false}
-                  />
-                </div>
-              </label>
-
-              <label className="field">
-                <span>Text colour</span>
-                <div className="field-row">
-                  <input
-                    type="color"
-                    value={draft.textColor ?? automaticTextColor(draft.themeColor)}
-                    onChange={handleText}
-                  />
-                  <input
-                    type="text"
-                    value={draft.textColor ?? ''}
-                    placeholder="automatic"
-                    onChange={(event) => update('textColor', event.target.value || null)}
-                    spellCheck={false}
-                  />
-                  <button
-                    type="button"
-                    className="ghost"
-                    disabled={draft.textColor === null}
-                    onClick={() => update('textColor', null)}
-                  >
-                    Automatic
-                  </button>
-                </div>
-                <small className="hint">
-                  Left automatic, text follows the background — dark on light, light on dark.
-                </small>
-              </label>
-
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={draft.minimiseAttachments}
-                  onChange={(event) => update('minimiseAttachments', event.target.checked)}
-                />
-                <span>
-                  Shrink the card under a picture
-                  <small>
-                    A posted image shows up twice, as the picture and as a card naming the file.
-                    Documents and archives keep their card, since there it is all you have to go on.
-                  </small>
-                </span>
-              </label>
-
-              <div className="actions">
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={handleResetColors}
-                  disabled={isDefaultColors}
-                >
-                  Reset colours
-                </button>
-              </div>
-            </>
-          ) : null}
+          {section === 'appearance' ? <AppearanceSection draft={draft} onChange={patch} /> : null}
 
           {section === 'notifications' ? (
-            <>
+            <NotificationsSection
+              draft={draft}
+              onChange={patch}
+              // the setting is saved in another webview from the one that plays the ping, so it plays here
+              onTest={playNotificationSound}
+              volumeHint={
+                <>
+                  Moves Shiver's ping and each server's own sounds together. Goes to {MAX_SOUND_VOLUME}%, for a ping
+                  that has to carry over a call. How loud people are in a call is set per person, in the server's own
+                  controls.
+                </>
+              }
+            >
               <label className="checkbox">
                 <input
                   type="checkbox"
@@ -303,30 +152,7 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
                   </small>
                 </span>
               </label>
-
-              <label className="field">
-                <span>Sound volume</span>
-                <div className="field-row">
-                  <input
-                    type="range"
-                    min={0}
-                    max={MAX_SOUND_VOLUME}
-                    step={5}
-                    value={draft.soundVolume}
-                    onChange={handleVolume}
-                  />
-                  <output className="volume-readout">{draft.soundVolume}%</output>
-                  <button type="button" className="ghost" onClick={handleTestSound}>
-                    Test
-                  </button>
-                </div>
-                <small className="hint">
-                  Moves Shiver's ping and each server's own sounds together. Goes to{' '}
-                  {MAX_SOUND_VOLUME}%, for a ping that has to carry over a call. How loud people are
-                  in a call is set per person, in the server's own controls.
-                </small>
-              </label>
-            </>
+            </NotificationsSection>
           ) : null}
 
           {section === 'voice' ? (
@@ -379,40 +205,15 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
           ) : null}
 
           {section === 'about' ? (
-            <>
-              <p className="hint">
-                {version ? `Shiver ${version}.` : 'Shiver.'} A multi-server client for Sharkord.
-              </p>
-
-              <div className="actions">
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={() => void api.openRepository().catch(() => undefined)}
-                >
-                  View the project on GitHub
-                </button>
-
-                {newer ? (
-                  <button type="button" className="primary" onClick={() => void handleInstall()}>
-                    Install Shiver {newer}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="ghost"
-                    disabled={checking}
-                    onClick={() => void runCheck()}
-                  >
-                    {checking ? 'Checking…' : 'Check for updates'}
-                  </button>
-                )}
-              </div>
-
-              {/* "nothing newer" is a real answer and worth saying: a check that only ever speaks
-                  up with good news leaves you wondering whether it ran at all */}
-              {checked ? <p className="hint">{checked}</p> : null}
-            </>
+            <AboutSection
+              appVersion={api.appVersion}
+              available={api.availableUpdate}
+              checkForUpdate={api.checkForUpdate}
+              openRepository={api.openRepository}
+              takeLabel="Install Shiver"
+              takingNote="Downloading…"
+              onTake={api.installUpdate}
+            />
           ) : null}
 
           {section === 'servers' ? (

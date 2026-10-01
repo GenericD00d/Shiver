@@ -8,7 +8,8 @@ release can break them without any Shiver test noticing. This checks, against a 
 - every `sharkord-*` storage key Shiver reads or seeds is one the client uses,
 - every class they match with `[class~="..."]` appears in the client's source (or its UI package),
 - and the other conventions named in `CONTRACTS` (notification titles, DM channel names, the
-  plugin store, the image portal, the member-list slot).
+  plugin store, the image portal, the member-list slot, the new-message subscription and who it
+  reaches, DM permissions).
 
 Usage: check-sharkord.py [SHARKORD_CHECKOUT] [--ref REF | --latest]
 Without a checkout, Sharkord is cloned at `SHARKORD_REF` (or `--ref`, or its default branch with
@@ -60,6 +61,26 @@ CONTRACTS = [
         "the full-screen image portal `#imagePortal` (IMAGE_VIEWER)",
         "apps/client/src/components/fullscreen-image/content.tsx",
         r"getElementById\('imagePortal'\)",
+    ),
+    (
+        "new messages on the `messages.onNew` subscription (watchNewMessages)",
+        "apps/server/src/routers/messages/index.ts",
+        r"onNew:\s*onMessageRoute",
+    ),
+    (
+        "a new message published to everyone who can see its channel, its author included (watchNewMessages)",
+        "apps/server/src/db/publishers.ts",
+        r"getAffectedOnlineUserIdsForChannel\([\s\S]*?VIEW_CHANNEL[\s\S]*?publishFor\(affectedUserIds, targetEvent",
+    ),
+    (
+        "the page's client speaking over one WebSocket (watchNewMessages)",
+        "apps/client/src/lib/trpc.ts",
+        r"wsLink\(",
+    ),
+    (
+        "a DM's channel permission being membership alone (the plugin's getDmTimes)",
+        "apps/server/src/db/queries/channels.ts",
+        r"if \(channel\.isDm\) \{\s*return isUserDmParticipant\(",
     ),
     (
         "the member-list slot rendered inside the member's row, after the name (the plugin's MemberColor)",

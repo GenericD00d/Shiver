@@ -301,6 +301,40 @@ export const createStatuses = (ctx, rows, { now = () => Date.now() } = {}) => {
   return { adopt, set, all, own, forget };
 };
 
+/* ── direct messages ── */
+
+/** The most conversations one request asks about. */
+const MAX_DM_QUERY = 200;
+
+/**
+ * When the newest message in each of the caller's own conversations was sent. Sharkord's client
+ * keeps that to its own DM list, so a page (Shiver's bridge) cannot read it, and orders the
+ * conversations it shows by it. Answers only for channels that are DMs the caller takes part in:
+ * for a DM, Sharkord's channel permission is membership alone, an owner's included.
+ */
+export const createDmTimes = (ctx) => async (userId, channelIds) => {
+  const ids = [...new Set(Array.isArray(channelIds) ? channelIds : [])]
+    .filter((id) => Number.isSafeInteger(id) && id > 0)
+    .slice(0, MAX_DM_QUERY);
+  const times = {};
+
+  for (const channelId of ids) {
+    const channel = await ctx.channels.get(channelId).catch(() => undefined);
+
+    if (!channel?.isDm) continue;
+
+    const member = await ctx.permissions.userCanInChannel(userId, channelId, 'VIEW_CHANNEL').catch(() => false);
+
+    if (!member) continue;
+
+    const [newest] = await ctx.messages.list({ channelId, limit: 1 });
+
+    if (Number.isFinite(newest?.createdAt)) times[channelId] = newest.createdAt;
+  }
+
+  return { times };
+};
+
 /* ── push ── */
 
 /**
@@ -832,6 +866,7 @@ const onLoad = async (ctx) => {
   const statuses = createStatuses(ctx, rows);
   const options = await createOptions(ctx);
   const settings = createSettings(rows, push.rowChanged);
+  const dmTimes = createDmTimes(ctx);
 
   await primeFromUserRows(ctx, [push.adopt, statuses.adopt]);
 
@@ -854,6 +889,10 @@ const onLoad = async (ctx) => {
     getStatuses: ['Everyone who has a status set', rationed(() => statuses.all())],
     getOwnStatus: ['Your own status line', rationed((user) => statuses.own(user))],
     getMutedChannels: ['Your muted channels', rationed((user) => settings.getMutedChannels(user))],
+    getDmTimes: [
+      'When the newest message in each of your conversations was sent',
+      rationed((user, payload) => dmTimes(user, payload?.channelIds))
+    ],
     setMutedChannels: [
       'Replace your muted channels',
       limited((user, payload) => settings.setMutedChannels(user, payload?.mutedChannels))

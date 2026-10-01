@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
-import { relativeTime } from './NotificationList';
+import { DmList } from '../../../shared/web/components/DmList';
+import { dmKey, type DmRow } from '../../../shared/web/dms';
 import type { DmEntry } from '../types';
 
 type Props = {
@@ -12,21 +13,24 @@ type Props = {
   error: string | null;
 };
 
-/** The unified DM inbox, shaped like Sharkord's own DM list, plus which account each row belongs to. */
+/** The unified DM inbox (the list both clients draw), in a sidebar beside the conversation. */
 export const DirectMessagesPanel = ({ dms, onOpen, onClose, openedKey, error }: Props) => {
-  const [query, setQuery] = useState('');
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-
-    if (!needle) return dms;
-
-    return dms.filter(
-      (dm) =>
-        dm.channel.name.toLowerCase().includes(needle) ||
-        dm.serverName.toLowerCase().includes(needle)
-    );
-  }, [dms, query]);
+  const rows = useMemo(
+    () =>
+      dms.map(
+        ({ entryId, serverName, accountLabel, channel }): DmRow => ({
+          key: dmKey(entryId, channel.channelId),
+          entryId,
+          channelId: channel.channelId,
+          name: channel.name,
+          avatarUrl: channel.iconUrl,
+          serverName,
+          accountLabel,
+          lastMessageAt: channel.lastMessageAt
+        })
+      ),
+    [dms]
+  );
 
   return (
     <div className="dm-layout">
@@ -38,55 +42,9 @@ export const DirectMessagesPanel = ({ dms, onOpen, onClose, openedKey, error }: 
           </button>
         </div>
 
-        <input
-          className="dm-search"
-          type="text"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search"
-          spellCheck={false}
-        />
-
         {error ? <p className="dm-error">{error}</p> : null}
 
-        {filtered.length === 0 ? (
-          <p className="dm-empty">
-            {dms.length === 0 ? 'No conversations yet.' : 'Nothing matches that.'}
-          </p>
-        ) : null}
-
-        <div className="dm-items">
-          {filtered.map((dm) => (
-            <button
-              key={`${dm.entryId}:${dm.channel.channelId}`}
-              type="button"
-              className={
-                openedKey === `${dm.entryId}:${dm.channel.channelId}`
-                  ? 'dm-item selected'
-                  : 'dm-item'
-              }
-              onClick={() => onOpen(dm.entryId, dm.channel.name, dm.channel.channelId)}
-            >
-              {dm.channel.iconUrl ? (
-                <img src={dm.channel.iconUrl} alt="" />
-              ) : (
-                <span className="dm-avatar">{dm.channel.name.slice(0, 1).toUpperCase()}</span>
-              )}
-
-              <span className="dm-item-body">
-                <span className="dm-item-name">{dm.channel.name}</span>
-                <span className="dm-item-meta">
-                  {dm.accountLabel ? `${dm.accountLabel} · ` : ''}
-                  {dm.serverName}
-                </span>
-              </span>
-
-              {dm.channel.lastMessageAt ? (
-                <span className="dm-item-time">{relativeTime(dm.channel.lastMessageAt)}</span>
-              ) : null}
-            </button>
-          ))}
-        </div>
+        <DmList rows={rows} selectedKey={openedKey} onOpen={(row) => onOpen(row.entryId, row.name, row.channelId)} />
       </div>
 
       {/* empty while a conversation is open: the server's own webview covers this region */}

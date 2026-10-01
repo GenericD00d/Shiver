@@ -1,0 +1,365 @@
+/* The look both clients share, the desktop client's. A `.touch` ancestor (Android's root) sizes it
+   for a finger. */
+
+/* ── fields ── */
+
+.field {
+  display: block;
+  margin-bottom: 16px;
+  max-width: 420px;
+}
+
+.field > span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--shiver-text-dim);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* every text-like field, so adding one does not silently arrive unstyled */
+.field input[type='text'],
+.field input[type='password'] {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 8px;
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+  font: inherit;
+}
+
+.field input[type='text']:focus,
+.field input[type='password']:focus {
+  outline: 2px solid var(--shiver-accent);
+  outline-offset: -1px;
+}
+
+/* a field's controls side by side: a colour and its value, a slider and its reading */
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.field-row input[type='color'] {
+  width: 44px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid var(--shiver-border);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.field-row input[type='text'] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.field-row input[type='range'] {
+  flex: 1;
+  max-width: 260px;
+  accent-color: var(--shiver-accent);
+}
+
+/* fixed width so the row does not shuffle as the number goes from 5% to 250% */
+.volume-readout {
+  min-width: 46px;
+  color: var(--shiver-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A choice with its reasoning under it. */
+.checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 520px;
+  margin-bottom: 16px;
+}
+
+.checkbox input {
+  margin-top: 3px;
+}
+
+.checkbox small {
+  display: block;
+  color: var(--shiver-text-dim);
+}
+
+/* ── buttons ── */
+
+button.primary,
+button.ghost {
+  padding: 9px 16px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--shiver-accent);
+  color: var(--shiver-on-accent);
+  font-weight: 600;
+}
+
+button.ghost {
+  background: transparent;
+  border-color: var(--shiver-border);
+  color: var(--shiver-text);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.error {
+  color: var(--shiver-danger);
+  margin: 0 0 16px;
+  max-width: 420px;
+}
+
+/* ── the dialog card ──
+   Only ever shown with the server page hidden (a native webview paints over any html); the backdrop
+   makes it read as a dialog. `safe` keeps the top of a tall card reachable. */
+
+.modal-backdrop {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  place-items: safe center;
+  padding: 24px;
+  background: var(--shiver-bg);
+  overflow-y: auto;
+}
+
+.card {
+  width: 100%;
+  max-width: 420px;
+  padding: 24px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 12px;
+  background: var(--shiver-rail);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.45);
+}
+
+.card h1 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.card p.hint {
+  margin: 0 0 20px;
+  color: var(--shiver-text-dim);
+  font-size: 13px;
+}
+
+.card .field:last-of-type {
+  margin-bottom: 20px;
+}
+
+.card .actions {
+  justify-content: flex-end;
+}
+
+/* ── what a server says about itself, before it is added ── */
+
+.preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  margin-bottom: 20px;
+  padding: 12px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 10px;
+  background: var(--shiver-surface);
+}
+
+.preview img,
+.preview .fallback {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--shiver-surface-hover);
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+}
+
+.preview-text {
+  min-width: 0;
+}
+
+.preview strong {
+  display: block;
+}
+
+.preview small {
+  color: var(--shiver-text-dim);
+  overflow-wrap: anywhere;
+}
+
+/* the plugin verdict: the tick and cross carry the meaning as well as the colour */
+.preview .has-plugin,
+.preview .no-plugin,
+.preview .plugin-unknown {
+  display: block;
+  margin-top: 4px;
+}
+
+.preview .has-plugin {
+  color: #4ade80;
+}
+
+.preview .no-plugin {
+  color: #f87171;
+}
+
+/* ── the "a newer Shiver exists" bar, above the content rather than over it ── */
+
+.update-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 10px;
+  background: var(--shiver-surface);
+}
+
+.update-text {
+  display: flex;
+  flex-direction: column;
+  margin-right: auto;
+  min-width: 0;
+}
+
+.update-error {
+  margin-top: 2px;
+  color: #f87171;
+}
+
+/* ── connecting: a spinner while a server's client comes up, or the failure with a retry ── */
+
+@keyframes shiver-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 2px solid var(--shiver-border);
+  border-top-color: var(--shiver-accent);
+  border-radius: 50%;
+  animation: shiver-spin 0.8s linear infinite;
+}
+
+.spinner.small {
+  width: 11px;
+  height: 11px;
+  border-width: 1.5px;
+}
+
+/* a phone in a pocket is not a place to animate for ever */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+.connecting {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 0 24px;
+  color: var(--shiver-text-dim);
+  text-align: center;
+}
+
+.connecting p {
+  margin: 0;
+  max-width: 420px;
+}
+
+.connecting-failed {
+  color: var(--shiver-text);
+  font-size: 15px;
+}
+
+/* ── touch: the same look, at a finger's size ── */
+
+.touch button.primary,
+.touch button.ghost {
+  min-height: 44px;
+  padding: 10px 16px;
+}
+
+/* a row's own buttons (the server list's), smaller than the screen's; the desktop client has no need */
+.touch button.small {
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.touch .field input[type='text'],
+.touch .field input[type='password'] {
+  padding: 11px 12px;
+  /* Android zooms into a field whose text is under 16px */
+  font-size: 16px;
+}
+
+/* a row of buttons too wide for a phone goes onto more lines, rather than squeezing their words */
+.touch .actions {
+  flex-wrap: wrap;
+}
+
+.touch .actions > button {
+  white-space: nowrap;
+}
+
+/* tall enough to be a thumb target rather than a mouse one */
+.touch .field-row input[type='range'] {
+  height: 32px;
+  max-width: none;
+}
+
+.touch .field-row input[type='color'] {
+  width: 48px;
+  height: 40px;
+}
+
+.touch .checkbox input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.touch .modal-backdrop {
+  padding: 0;
+}
+
+.touch .card {
+  padding: 20px 16px;
+}

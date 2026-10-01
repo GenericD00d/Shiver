@@ -1,9 +1,8 @@
 //! The core's own connections to every server the webview is not showing (Android has one webview).
 //!
-//! Each connection keeps that server's unread count (above its floor), its DM list, and posts one
-//! Android notification per server that summarises what arrived. Sessions, passwords and floors live
-//! in the encrypted store (`tauri-plugin-shiver-secrets`), written by one
-//! background thread in order.
+//! Each connection keeps that server's unread count (above its floor) and its DM list, and hands
+//! what arrives to `notify`. Sessions, passwords and floors live in the encrypted store
+//! (`tauri-plugin-shiver-secrets`), written by one background thread in order.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -14,7 +13,6 @@ use std::{
 use shiver_core::{
     jwt::{self, Freshness, Renewals},
     limit::Joins,
-    text::clamp,
     LockExt,
 };
 use tauri::{AppHandle, Manager};
@@ -30,19 +28,12 @@ use crate::{
 /// Emitted to Shiver's own pages with the per-server unread counts.
 pub const INBOX_EVENT: &str = "shiver://inbox";
 
-const MAX_AUTHOR: usize = 100;
-const MAX_BODY: usize = 500;
-const MAX_CHANNEL_NAME: usize = 100;
-
 /// Refusals in a row, each after a fresh sign-in, before Shiver stops trying for a server.
 const MAX_REFUSALS: u32 = 3;
 
 /// How long each server left goes unwatched: switching away and back reloads its page, and
 /// opening and closing a connection of Shiver's own besides doubled what the server saw.
-const WATCH_GRACE: Duration = Duration::from_secs(30);
-
-/// Messages arriving this close together are posted as one notification.
-const NOTIFY_AFTER: Duration = Duration::from_millis(900);
+pub(crate) const WATCH_GRACE: Duration = Duration::from_secs(30);
 
 const MUTE_POLL: Duration = Duration::from_secs(1);
 
@@ -70,14 +61,22 @@ pub struct DmEntry {
     pub channel_id: i64,
     pub user_name: String,
     pub last_message_at: Option<u64>,
+    /// the other person's picture, a signed link on that server's own origin
+    pub avatar_url: Option<String>,
 }
 
-/// Every server's conversations, newest first (ties by name), independent of rail order.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64)
+}
+
+/// Every server's conversations (the list orders them: `sortDms` in `shared/web/dms.ts`).
 pub fn collect_dms(
     servers: &[crate::model::ServerEntry],
     dms: &HashMap<String, Vec<sharkord::DirectMessage>>,
 ) -> Vec<DmEntry> {
-    let mut collected: Vec<DmEntry> = servers
+    servers
         .iter()
         .flat_map(|server| {
             dms.get(&server.id)
@@ -90,22 +89,10 @@ pub fn collect_dms(
                     channel_id: dm.channel_id,
                     user_name: dm.user_name.clone(),
                     last_message_at: dm.last_message_at,
+                    avatar_url: dm.avatar_url.clone(),
                 })
         })
-        .collect();
-
-    collected.sort_by(|a, b| {
-        b.last_message_at
-            .cmp(&a.last_message_at)
-            .then_with(|| a.user_name.cmp(&b.user_name))
-    });
-    collected
-}
-
-#[derive(Debug, Clone, Default)]
-struct Announcement {
-    count: u32,
-    latest: String,
+        .collect()
 }
 
 #[derive(Default)]
@@ -116,9 +103,6 @@ struct State {
     running: HashMap<String, tauri::async_runtime::JoinHandle<()>>,
     /// the one pending `sync` for when the next server's `WATCH_GRACE` runs out
     grace_timer: Option<tauri::async_runtime::JoinHandle<()>>,
-    announced: HashMap<String, Announcement>,
-    /// entries with a notification post scheduled
-    posting: HashSet<String>,
     dms: HashMap<String, Vec<sharkord::DirectMessage>>,
     baselines: HashMap<String, HashMap<i64, u32>>,
     read_states: HashMap<String, HashMap<i64, u32>>,
@@ -156,7 +140,6 @@ impl Inbox {
         self.with(|state| {
             state.tokens.remove(entry_id);
             state.unread.remove(entry_id);
-            state.announced.remove(entry_id);
             state.read_states.remove(entry_id);
 
             if let Some(task) = state.running.remove(entry_id) {
@@ -179,7 +162,7 @@ impl Inbox {
     }
 
     /// Records a problem; returns whether it is the first for that entry.
-    fn remember_problem(&self, entry_id: &str, reason: &str) -> bool {
+    pub(crate) fn remember_problem(&self, entry_id: &str, reason: &str) -> bool {
         self.with(|state| {
             state
                 .problems
@@ -214,6 +197,21 @@ impl Inbox {
 
     pub fn has_password(&self, entry_id: &str) -> bool {
         self.with(|state| state.remembered.contains(entry_id))
+    }
+
+    /// A message was sent or received in one of an entry's conversations, which moves it up the
+    /// list (never past now, whatever time it came with); returns whether that conversation is known.
+    fn dm_active(&self, entry_id: &str, channel_id: i64, at: u64) -> bool {
+        let at = at.min(now_ms());
+
+        self.with(|state| {
+            state
+                .dms
+                .get_mut(entry_id)
+                .and_then(|dms| dms.iter_mut().find(|dm| dm.channel_id == channel_id))
+                .map(|dm| dm.last_message_at = dm.last_message_at.max(Some(at)))
+                .is_some()
+        })
     }
 
     fn set_unread(&self, entry_id: &str, count: u32) -> bool {
@@ -443,6 +441,7 @@ pub fn forget_password(app: &AppHandle, entry_id: &str) {
 /// Drops the session (not the password) and marks the server as waiting for a sign-in.
 fn forget_session(app: &AppHandle, entry_id: &str) {
     app.state::<Inbox>().forget_token(entry_id);
+    crate::notify::forget(app, entry_id);
     store_off_thread(app, entry_id.to_string(), None);
 
     if app
@@ -457,7 +456,7 @@ fn forget_session(app: &AppHandle, entry_id: &str) {
 pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
     app.state::<Inbox>().forget(entry_id);
     app.state::<Joins>().forget(entry_id);
-    clear_notification(app, entry_id);
+    crate::notify::clear(app, entry_id);
 
     for key in [
         entry_id.to_string(),
@@ -518,7 +517,7 @@ pub fn sync(app: &AppHandle) {
     });
 
     for entry_id in unwanted.iter().chain(showing.iter()) {
-        clear_notification(app, entry_id);
+        crate::notify::clear(app, entry_id);
     }
 
     for entry_id in wanted {
@@ -644,7 +643,18 @@ impl sharkord::Watcher for Watch {
                     sharkord::set_unread(states, channel_id, count)
                 })
             }
-            sharkord::Event::Posted(message) => announce(app, entry_id, joined, &message),
+            sharkord::Event::Posted(message) => {
+                // the user's own messages count too: the list is ordered by the latest in each
+                if joined.dm_channels.contains(&message.channel_id)
+                    && app
+                        .state::<Inbox>()
+                        .dm_active(entry_id, message.channel_id, now_ms())
+                {
+                    webview::emit_home(app, INBOX_EVENT, app.state::<Inbox>().unread());
+                }
+
+                crate::notify::announce(app, entry_id, joined, &message)
+            }
         }
     }
 
@@ -659,7 +669,7 @@ impl sharkord::Watcher for Watch {
     }
 
     fn too_large(&mut self, size: usize) {
-        report_watch_problem(&self.app, &self.entry_id, size);
+        crate::notify::report_watch_problem(&self.app, &self.entry_id, size);
         self.app
             .state::<Inbox>()
             .with(|state| state.running.remove(&self.entry_id));
@@ -728,6 +738,21 @@ fn update_read_states(
 }
 
 /// Replaces an entry's mutes with what its page reports (bounded), and recounts.
+/// The most channels taken from one read of the page.
+const MAX_SEEN: usize = 100;
+
+/// Messages the page on screen saw sent or received: they move its known conversations up. A page's
+/// claim, so only conversations the core already knows for this entry move, and never past now.
+pub fn messages_seen(app: &AppHandle, entry_id: &str, seen: &[(i64, f64)]) {
+    let inbox = app.state::<Inbox>();
+
+    for &(channel_id, at) in seen.iter().take(MAX_SEEN) {
+        if at.is_finite() && at >= 0.0 {
+            inbox.dm_active(entry_id, channel_id, at as u64);
+        }
+    }
+}
+
 pub fn replace_mutes(app: &AppHandle, entry_id: &str, channels: &[i64]) {
     let store = app.state::<Store>();
     let next = shiver_core::model::normalized_mutes(channels.iter().copied());
@@ -896,230 +921,9 @@ pub fn harvest_token(app: &AppHandle, entry_id: String) {
     });
 }
 
-/* ── notifications ── */
-
-/// One notification id per server, shared with `PushReceiver` (which uses Java's
-/// `String.hashCode` of the push token), so either side can replace or clear the other's.
-fn notification_id(app: &AppHandle, entry_id: &str) -> i32 {
-    let token = app
-        .state::<Store>()
-        .registry()
-        .server(entry_id)
-        .and_then(|server| server.push_token.clone())
-        .unwrap_or_else(|| entry_id.to_string());
-
-    shiver_core::hash::java_string(&token)
-}
-
-fn announce(
-    app: &AppHandle,
-    entry_id: &str,
-    joined: &sharkord::Joined,
-    message: &sharkord::NewMessage,
-) {
-    if app
-        .state::<webview::Showing>()
-        .kept_by_page(WATCH_GRACE)
-        .as_deref()
-        == Some(entry_id)
-    {
-        return;
-    }
-
-    let (muted, server) = {
-        let store = app.state::<Store>();
-        let registry = store.registry();
-
-        (
-            registry.muted_for(entry_id),
-            registry
-                .server(entry_id)
-                .map(|server| (server.name.clone(), server.notify)),
-        )
-    };
-
-    let Some((server, notify)) = server else {
-        return;
-    };
-
-    if !notify.allows(
-        joined.dm_channels.contains(&message.channel_id),
-        message.mentions_me(joined),
-    ) {
-        return;
-    }
-
-    let Some(line) = notice(joined, &muted, message) else {
-        return;
-    };
-
-    app.state::<Inbox>().with(|state| {
-        let announcement = state.announced.entry(entry_id.to_string()).or_default();
-
-        announcement.count += 1;
-        announcement.latest = line;
-    });
-
-    // one post per burst: the first message schedules it, later ones update what it will say
-    if !app
-        .state::<Inbox>()
-        .with(|state| state.posting.insert(entry_id.to_string()))
-    {
-        return;
-    }
-
-    let (app, entry_id) = (app.clone(), entry_id.to_string());
-
-    std::thread::spawn(move || {
-        std::thread::sleep(NOTIFY_AFTER);
-
-        let announcement = app.state::<Inbox>().with(|state| {
-            state.posting.remove(&entry_id);
-            state.announced.get(&entry_id).cloned()
-        });
-
-        if let Some(announcement) = announcement {
-            post(
-                &app,
-                notification_id(&app, &entry_id),
-                server,
-                &announcement,
-            );
-        }
-    });
-}
-
-/// The notification line for a message, or `None` for the user's own or a muted channel's.
-fn notice(
-    joined: &sharkord::Joined,
-    muted: &[i64],
-    message: &sharkord::NewMessage,
-) -> Option<String> {
-    if message.is_own(joined) || muted.contains(&message.channel_id) {
-        return None;
-    }
-
-    let author = clamp(message.author(joined), MAX_AUTHOR);
-    let text = clamp(message.body().to_string(), MAX_BODY);
-    let channel = (!joined.dm_channels.contains(&message.channel_id)).then(|| {
-        clamp(
-            joined
-                .channel_names
-                .get(&message.channel_id)
-                .cloned()
-                .unwrap_or_else(|| "a channel".into()),
-            MAX_CHANNEL_NAME,
-        )
-    });
-
-    Some(shiver_core::text::notice_line(
-        &author,
-        channel.as_deref(),
-        &text,
-    ))
-}
-
-fn post(app: &AppHandle, id: i32, title: String, announcement: &Announcement) {
-    use tauri_plugin_notification::NotificationExt;
-
-    let body = match announcement.count {
-        0 | 1 => announcement.latest.clone(),
-        count => format!("{}\n… and {} more", announcement.latest, count - 1),
-    };
-
-    if let Err(error) = app
-        .notification()
-        .builder()
-        .id(id)
-        .title(title)
-        .body(body)
-        .show()
-    {
-        eprintln!("[shiver] could not show a notification: {error}");
-    }
-}
-
-/// Removes an entry's notification, if one was posted.
-fn clear_notification(app: &AppHandle, entry_id: &str) {
-    let announced = app.state::<Inbox>().with(|state| {
-        state.posting.remove(entry_id);
-        state.announced.remove(entry_id).is_some()
-    });
-
-    #[cfg(mobile)]
-    if announced {
-        use tauri_plugin_notification::NotificationExt;
-
-        let id = notification_id(app, entry_id);
-        let app = app.clone();
-
-        std::thread::spawn(move || {
-            let _ = app.notification().remove_active(vec![id]);
-        });
-    }
-
-    #[cfg(not(mobile))]
-    let _ = announced;
-}
-
-/// Says once, with a notification, that a server sends more than Shiver accepts.
-fn report_watch_problem(app: &AppHandle, entry_id: &str, size: usize) {
-    let Some(name) = app
-        .state::<Store>()
-        .registry()
-        .server(entry_id)
-        .map(|server| server.name.clone())
-    else {
-        return;
-    };
-
-    let size = sharkord::readable_size(size);
-
-    let first = app.state::<Inbox>().remember_problem(
-        entry_id,
-        &format!("Sends {size} in one message, which is more than Shiver accepts — so nothing from this server reaches this phone."),
-    );
-
-    #[cfg(target_os = "android")]
-    if first {
-        use tauri_plugin_notification::NotificationExt;
-
-        let _ = app
-            .notification()
-            .builder()
-            .id(shiver_core::hash::java_string(&format!("problem:{entry_id}")))
-            .title(format!("Shiver cannot watch {name}"))
-            .body("This server sends more in one message than Shiver accepts, so its messages will not reach you here. Settings has the details.")
-            .show();
-    }
-
-    #[cfg(not(target_os = "android"))]
-    let _ = (first, name);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn server() -> sharkord::Joined {
-        sharkord::Joined {
-            own_user_id: Some(1),
-            dm_channels: vec![9],
-            channel_names: HashMap::from([(4, "general".to_string())]),
-            user_names: HashMap::from([(2, "Smiddy".to_string())]),
-            ..Default::default()
-        }
-    }
-
-    fn from(user_id: i64, channel_id: i64, text: &str) -> sharkord::NewMessage {
-        sharkord::NewMessage {
-            channel_id,
-            user_id: Some(user_id),
-            plugin_id: None,
-            text: text.to_string(),
-            mentioned: Vec::new(),
-        }
-    }
 
     fn entry(id: &str, position: i32) -> crate::model::ServerEntry {
         crate::model::ServerEntry {
@@ -1136,53 +940,12 @@ mod tests {
             channel_id,
             user_name: name.into(),
             last_message_at: at,
+            avatar_url: None,
         }
     }
 
     #[test]
-    fn a_message_reads_as_who_said_what_and_where() {
-        assert_eq!(
-            notice(&server(), &[], &from(2, 4, "hi?")),
-            Some("Smiddy in #general: hi?".into())
-        );
-        assert_eq!(
-            notice(&server(), &[], &from(2, 9, "hello")),
-            Some("Smiddy: hello".into())
-        );
-        assert_eq!(
-            notice(&server(), &[], &from(2, 4, "")),
-            Some("Smiddy in #general: Sent an attachment".into())
-        );
-        assert_eq!(
-            notice(&server(), &[], &from(77, 88, "hi")),
-            Some("Someone in #a channel: hi".into())
-        );
-        assert_eq!(notice(&server(), &[], &from(1, 4, "mine")), None);
-        assert_eq!(notice(&server(), &[4], &from(2, 4, "muted")), None);
-    }
-
-    #[test]
-    fn long_fields_are_shortened_by_characters() {
-        let long_name = sharkord::NewMessage {
-            plugin_id: Some("é".repeat(5_000)),
-            user_id: None,
-            ..from(0, 4, "hello")
-        };
-        let line = notice(&server(), &[], &long_name).unwrap();
-
-        assert!(line.starts_with(&"é".repeat(MAX_AUTHOR)));
-        assert!(line.ends_with("in #general: hello"));
-
-        let line = notice(&server(), &[], &from(2, 4, &"a".repeat(10_000))).unwrap();
-
-        assert_eq!(
-            line.chars().count(),
-            "Smiddy in #general: ".len() + MAX_BODY + 1
-        );
-    }
-
-    #[test]
-    fn conversations_are_newest_first_with_ties_by_name_and_no_timestamp_last() {
+    fn every_servers_conversations_are_collected() {
         let dms = HashMap::from([
             (
                 "a".to_string(),
@@ -1196,21 +959,42 @@ mod tests {
         ]);
 
         let names = |servers: &[crate::model::ServerEntry]| {
-            collect_dms(servers, &dms)
+            let mut names: Vec<_> = collect_dms(servers, &dms)
                 .into_iter()
                 .map(|dm| dm.user_name)
-                .collect::<Vec<_>>()
+                .collect();
+
+            names.sort();
+            names
         };
 
         assert_eq!(
             names(&[entry("a", 0), entry("b", 1)]),
-            vec!["Robin", "Ash", "Sam", "Wren"]
-        );
-        assert_eq!(
-            names(&[entry("b", 0), entry("a", 1)]),
-            names(&[entry("a", 0), entry("b", 1)])
+            vec!["Ash", "Robin", "Sam", "Wren"]
         );
         assert!(collect_dms(&[entry("c", 0)], &dms).is_empty());
+    }
+
+    #[test]
+    fn a_conversation_moves_up_only_and_never_past_now() {
+        let inbox = Inbox::default();
+
+        inbox.with(|state| {
+            state
+                .dms
+                .insert("a".into(), vec![conversation(3, "Robin", Some(5_000))])
+        });
+
+        let time = || inbox.dms()["a"][0].last_message_at;
+
+        assert!(inbox.dm_active("a", 3, 4_000));
+        assert_eq!(time(), Some(5_000));
+        assert!(inbox.dm_active("a", 3, 6_000));
+        assert_eq!(time(), Some(6_000));
+        assert!(inbox.dm_active("a", 3, u64::MAX));
+        assert!(time() <= Some(now_ms()));
+        assert!(!inbox.dm_active("a", 4, 6_000));
+        assert!(!inbox.dm_active("b", 3, 6_000));
     }
 
     #[test]

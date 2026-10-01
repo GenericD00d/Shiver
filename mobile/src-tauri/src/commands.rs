@@ -77,6 +77,7 @@ pub async fn add_server(
     origin: String,
     identity: Option<String>,
     password: Option<Password>,
+    account_label: Option<String>,
     remember_password: Option<bool>,
 ) -> Result<ServerEntry> {
     let origin = normalize_origin(&origin)?;
@@ -105,12 +106,24 @@ pub async fn add_server(
     };
 
     let entry = store.update(|registry| {
+        let existing = registry
+            .servers
+            .iter()
+            .filter(|server| server.origin == origin)
+            .count();
+        let identity = identity.clone().filter(|_| session.is_some());
+        // a second account on one origin needs a label to be told apart
+        let account_label = shiver_core::model::account_label(account_label.as_deref())
+            .or_else(|| identity.clone())
+            .or_else(|| (existing > 0).then(|| format!("Account {}", existing + 1)));
+
         let entry = ServerEntry {
             id: Uuid::new_v4().to_string(),
             origin: origin.clone(),
             name: info.name.clone(),
             icon_url: info.icon_url.clone(),
-            identity: identity.clone().filter(|_| session.is_some()),
+            identity,
+            account_label,
             position: registry.next_position(),
             push_token: Some(Uuid::new_v4().simple().to_string()),
             ..Default::default()
@@ -531,6 +544,12 @@ pub async fn reorder_rail(
     ordered: Vec<shiver_core::rail::RailRef>,
 ) -> Result<()> {
     store.update(|registry| Ok(registry.rail().reorder(&ordered)?))
+}
+
+/// Numbers servers in the given order, within the folder they share (a drag inside a folder).
+#[tauri::command]
+pub async fn reorder_servers(store: State<'_, Store>, ordered_ids: Vec<String>) -> Result<()> {
+    store.update(|registry| Ok(registry.rail().reorder_servers(&ordered_ids)?))
 }
 
 /// Creates a folder holding `member_ids`, at the first member's place, in one step.

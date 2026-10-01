@@ -3,8 +3,6 @@
 import { automaticTextColor, lift } from './colors';
 import { DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR } from './settings';
 
-export { automaticTextColor };
-
 type Colors = { themeColor: string; accentColor: string; textColor?: string | null };
 
 export const applyTheme = ({ themeColor, accentColor, textColor }: Colors) => {

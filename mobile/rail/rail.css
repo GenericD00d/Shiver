@@ -1,0 +1,36 @@
+/* The quick rail's page: the rail and nothing else, filling the WebView the plugin sizes to it. The
+   colours are Shiver's defaults until the first view's theme is applied. */
+:root {
+  --shiver-rail-width: 100vw;
+  --shiver-bg: #0a0a0a;
+  --shiver-rail: #171717;
+  --shiver-accent: #e5e5e5;
+  --shiver-on-accent: #171717;
+  --shiver-surface: #262626;
+  --shiver-surface-hover: #333333;
+  --shiver-border: rgb(255 255 255 / 10%);
+  --shiver-text: #fafafa;
+  --shiver-text-dim: #a1a1a1;
+  --shiver-danger: #ff6467;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root,
+#root > .touch {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: var(--shiver-rail);
+  color: var(--shiver-text);
+  font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+}

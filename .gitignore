@@ -3,6 +3,9 @@ dist/
 dist-bridge/
 **/target/
 
+# the quick rail's page, built into the rail plugin's assets (mobile: `bun run build:rail`)
+mobile/plugins/tauri-plugin-shiver-rail/android/src/main/assets/
+
 # Gradle output for the Android plugins
 **/android/build/
 **/android/.tauri/

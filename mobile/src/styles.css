@@ -5,7 +5,7 @@
   --shiver-on-accent: #171717;
   --shiver-surface: #262626;
   --shiver-surface-hover: #333333;
-  /* between the rail and a tile on it: what a folder and the rail's menu sit on */
+  /* what the settings drawer sits on */
   --shiver-surface-dim: #1f1f1f;
   --shiver-border: rgb(255 255 255 / 10%);
   --shiver-text: #fafafa;
@@ -13,7 +13,7 @@
   --shiver-danger: #ff6467;
   /* the rail's own two, matching the desktop client token for token */
   --shiver-rail: #171717;
-  --shiver-rail-width: 68px;
+  --shiver-rail-width: 72px;
 
   color-scheme: dark;
 }
@@ -139,172 +139,8 @@ body {
   color: var(--shiver-text-dim);
 }
 
-/* The conversation search, borrowing the form fields' look so it reads as part of Shiver rather
-   than as something bolted on. Full width because it sits above a full-width list, and 16px because
-   anything smaller makes Android zoom the page when the field takes focus. */
-.dm-search {
-  width: 100%;
-  box-sizing: border-box;
-  margin-bottom: 10px;
-  padding: 12px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 10px;
-  background: var(--shiver-surface);
-  color: var(--shiver-text);
-  font: inherit;
-  font-size: 16px;
-}
-
-/* How long ago the last message in a conversation was. Pushed to the far end and allowed no
-   shrinking, so a long display name ellipsises rather than squeezing the thing the list is sorted
-   by out of view. */
-.dm-when {
-  flex: 0 0 auto;
-  margin-left: auto;
-  padding-left: 8px;
-  font-size: 12px;
-  color: var(--shiver-text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.panel {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-/* every text-like field, so adding one does not silently arrive unstyled */
-.field input[type="text"],
-.field input[type="password"],
-.field input[type="url"] {
-  padding: 12px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 10px;
-  background: var(--shiver-surface);
-  color: var(--shiver-text);
-  font: inherit;
-}
-
-.field input[type="color"] {
-  width: 100%;
-  height: 44px;
-  padding: 0;
-  border: 1px solid var(--shiver-border);
-  border-radius: 10px;
-  background: var(--shiver-surface);
-}
-
-.field-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-/* tall enough to be a thumb target rather than a mouse one */
-.field-row input[type="range"] {
-  flex: 1;
-  height: 32px;
-  accent-color: var(--shiver-accent);
-}
-
-/* fixed width so the row does not shuffle as the number goes from 5% to 250% */
-.volume-readout {
-  min-width: 48px;
-  text-align: right;
-  color: var(--shiver-text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.preview {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 12px;
-}
-
-.preview img {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  object-fit: cover;
-}
-
-.preview p {
-  margin: 4px 0 0;
-  font-size: 14px;
-  color: var(--shiver-text-dim);
-}
-
-/* The initial where the server has no logo, sized to the space the logo would have taken so the
-   row does not change height depending on whether one was set. */
-.preview .fallback {
-  display: grid;
-  place-items: center;
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: var(--shiver-surface-hover, #333333);
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.preview-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-/* the address under the name, ellipsised rather than wrapped: it is confirmation, not reading */
-.preview-text small {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--shiver-text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 button {
   cursor: pointer;
-}
-
-/* comfortably tappable rather than merely clickable */
-.primary,
-.ghost {
-  padding: 12px 16px;
-  border-radius: 10px;
-  font: inherit;
-  font-weight: 600;
-  min-height: 44px;
-}
-
-.primary {
-  border: none;
-  background: var(--shiver-accent);
-  color: var(--shiver-on-accent);
-}
-
-.ghost {
-  border: 1px solid var(--shiver-border);
-  background: transparent;
-  color: var(--shiver-text);
-}
-
-.ghost.small {
-  min-height: 0;
-  padding: 8px 10px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--shiver-text-dim);
 }
 
 .wide {
@@ -316,9 +152,9 @@ button {
   color: var(--shiver-text-dim);
 }
 
-.error {
-  margin: 0 16px;
-  color: var(--shiver-danger);
+/* a failure the screen itself reports, between the bar and the content */
+.app-error {
+  margin: 12px 16px 0;
 }
 
 :disabled {
@@ -335,129 +171,13 @@ button {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* ── the rail ── */
+/* the rail (shared/web/components/rail.css) reaching under the status bar and the gesture area,
+   which the activity already insets */
 .rail {
-  /* the long-press menu is positioned against this */
-  position: relative;
-  width: var(--shiver-rail-width);
-  flex: 0 0 var(--shiver-rail-width);
-  height: 100%;
-  background: var(--shiver-rail);
-  border-right: 1px solid var(--shiver-border);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  /* the activity already insets the system bars */
   padding: calc(10px + env(safe-area-inset-top)) 0 calc(10px + env(safe-area-inset-bottom));
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-width: none;
 }
 
-.rail::-webkit-scrollbar {
-  display: none;
-}
-
-/* A folder wears its contents. Its servers are inset a little when it is open, so the group reads
-   as a group rather than as more of the rail. */
-.rail-folder {
-  background: var(--shiver-surface-dim);
-  padding: 4px;
-}
-
-/* Open, the folder shrinks to a marker and its servers appear below it, boxed. */
-.rail-folder.open {
-  height: 20px;
-  flex: 0 0 20px;
-  border-radius: 10px;
-  padding: 0;
-}
-
-.folder-open {
-  width: 16px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--shiver-text-dim, #8a8a8a);
-}
-
-/* No background of its own: the rail is already the darker surface here, and a darker box around a
-   single tile reads as a black oval drawn round the icon rather than as a group. */
-.folder-contents {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-}
-
-/* The rows are stated as well as the columns on purpose: left to the count, a single member
-   stretches to fill the tile and reads as a server whose icon has been cut in half. */
-.folder-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  gap: 2px;
-  width: 100%;
-  height: 100%;
-}
-
-.folder-cell {
-  border-radius: 5px;
-  font-weight: 700;
-  background: var(--shiver-surface-hover);
-  color: var(--shiver-text);
-  display: grid;
-  place-items: center;
-  font-size: 9px;
-  overflow: hidden;
-}
-
-.folder-cell img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  pointer-events: none;
-  -webkit-user-drag: none;
-}
-
-.rail-item.in-folder {
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
-  border-radius: 13px;
-  font-size: 14px;
-}
-
-/* Renaming happens in the menu itself rather than in a dialog, so the folder being renamed stays
-   on screen next to the field. */
-.menu-rename {
-  display: flex;
-  gap: 6px;
-  padding: 6px;
-}
-
-.menu-rename input {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 8px;
-  background: var(--shiver-input, #2a2a2a);
-  color: inherit;
-  font: inherit;
-}
-
-.menu-rename .menu-item {
-  width: auto;
-  flex: 0 0 auto;
-}
-
-/* The tile a held one would join. Ringed rather than moved: nothing has happened yet, and a tile
-   that shifted would read as a reorder. */
-/* A choice with its reasoning under it. The same shape the desktop client uses, because the two
-   settings screens should not disagree about what a checkbox looks like. */
-/* The other half of the problem line: what the user chose to do about it, said quietly. */
+/* the other half of the problem line: what the user chose to do about it, said quietly */
 .server-note {
   display: block;
   margin-top: 4px;
@@ -465,9 +185,8 @@ button {
   font-size: 12px;
 }
 
-/* The settings sections as a drawer, which is what Sharkord's own settings do on a phone: the same
-   list it shows beside the content on a wide screen, slid in from the left over a scrim. Off screen
-   rather than hidden, so it slides rather than appears. */
+/* The settings sections as a drawer over a scrim, as Sharkord's settings are on a phone. Off screen
+   rather than hidden, so it slides in. */
 .settings-drawer {
   position: fixed;
   top: 0;
@@ -524,41 +243,6 @@ button {
   font-weight: 600;
 }
 
-/* The "a newer Shiver exists" notice. Stacked rather than in a row: three buttons and a sentence do
-   not fit across a phone, and shrinking them to fit would make them harder to hit. */
-.update-notice {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 16px;
-  padding: 12px 14px;
-  border: 1px solid var(--shiver-border);
-  border-radius: 12px;
-  background: var(--shiver-surface);
-}
-
-.update-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-/* The same verdict on the add screen, where it sits under the server's address. */
-.preview-text .has-plugin {
-  margin-top: 4px;
-  color: #4ade80;
-}
-
-.preview-text .no-plugin {
-  margin-top: 4px;
-  color: #f87171;
-}
-
-.preview-text .plugin-unknown {
-  margin-top: 4px;
-  color: var(--shiver-text-dim);
-}
-
 /* The companion-plugin verdict. Colour is the quick read and the tick or cross is the reliable
    one — roughly one man in twelve cannot separate these two hues, and neither can a screen
    reader, so the glyph is in the text rather than implied by the colour. */
@@ -608,120 +292,6 @@ button {
   white-space: normal;
 }
 
-.checkbox {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.checkbox input {
-  margin-top: 3px;
-}
-
-.checkbox small {
-  display: block;
-  margin-top: 4px;
-  color: var(--shiver-text-dim);
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.rail-item.drop-onto {
-  box-shadow: 0 0 0 2px var(--shiver-accent, #e5e5e5);
-}
-
-.rail-item.lifted {
-  transform: scale(1.12);
-  box-shadow: 0 8px 20px rgb(0 0 0 / 55%);
-  opacity: 0.92;
-  transition: transform 120ms ease;
-  /* carried over its neighbours rather than through them */
-  z-index: 2;
-}
-
-.rail-item {
-  /* a long press here is a gesture, never a text selection */
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
-  position: relative;
-  width: 48px;
-  height: 48px;
-  flex: 0 0 48px;
-  border: none;
-  padding: 0;
-  border-radius: 16px;
-  background: var(--shiver-surface);
-  color: var(--shiver-text);
-  display: grid;
-  place-items: center;
-  font-size: 16px;
-  font-weight: 600;
-  transition: border-radius 120ms ease, background 120ms ease;
-}
-
-/* no hover on a touch screen: the press is the only feedback there is */
-.rail-item:active {
-  border-radius: 14px;
-  background: var(--shiver-surface-hover);
-}
-
-.rail-item.active {
-  border-radius: 14px;
-  box-shadow: inset 0 0 0 2px var(--shiver-accent);
-}
-
-.rail-item img {
-  /* decoration only; the touch belongs to the tile, and the platform's image drag must not take it */
-  pointer-events: none;
-  -webkit-user-drag: none;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  /* the icon rounds itself, so the tile can clip nothing and the unread badge is free to overhang
-     it — the desktop rail learned this the hard way, where `overflow: hidden` on the tile hid every
-     badge it was meant to show */
-  border-radius: inherit;
-}
-
-.rail-badge {
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  /* a fixed circle whatever the count (capped at 99+) */
-  min-width: 18px;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border-radius: 50%;
-  text-align: center;
-  background: var(--shiver-text, #fafafa);
-  color: var(--shiver-rail, #171717);
-  font-size: 9px;
-  line-height: 18px;
-  font-weight: 700;
-  pointer-events: none;
-  /* the same hairline as the desktop badge, against the rail behind it */
-  box-shadow: 0 0 0 1px var(--shiver-rail);
-}
-
-.rail-add {
-  color: var(--shiver-accent);
-}
-
-.rail-spacer {
-  flex: 1 1 auto;
-  min-height: 8px;
-}
-
-.rail-divider {
-  width: 32px;
-  height: 1px;
-  flex: 0 0 1px;
-  background: var(--shiver-border);
-}
-
 /* ── the boot screen ──
    Shiver's own front page, which the user should barely see: it exists to hold a spinner while the
    last server answers, and to say so when it does not. */
@@ -735,34 +305,6 @@ button {
   text-align: center;
 }
 
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--shiver-border);
-  border-top-color: var(--shiver-accent);
-  border-radius: 50%;
-  animation: shiver-spin 900ms linear infinite;
-}
-
-@keyframes shiver-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* a phone in a pocket is not a place to animate for ever */
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation-duration: 2400ms;
-  }
-}
-
-.boot-failed {
-  margin: 0;
-  color: var(--shiver-danger);
-  font-weight: 600;
-}
-
 .section {
   margin: 28px 0 12px;
   font-size: 13px;
@@ -772,45 +314,3 @@ button {
   color: var(--shiver-text-dim);
 }
 
-/* ── the rail's long-press menu ── */
-.rail-menu {
-  position: absolute;
-  left: calc(var(--shiver-rail-width) + 8px);
-  min-width: 200px;
-  padding: 6px;
-  border-radius: 12px;
-  border: 1px solid var(--shiver-border);
-  background: var(--shiver-surface-dim);
-  color: var(--shiver-text);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 55%);
-  z-index: 2;
-}
-
-.menu-item {
-  display: block;
-  width: 100%;
-  padding: 11px 12px;
-  border: none;
-  border-radius: 8px;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-
-.menu-item:active {
-  background: var(--shiver-surface-hover);
-}
-
-.menu-divider {
-  height: 1px;
-  margin: 6px 4px;
-  background: var(--shiver-border);
-}
-
-/* catches the tap that dismisses the menu, over the whole app rather than the rail alone */
-.menu-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 1;
-}

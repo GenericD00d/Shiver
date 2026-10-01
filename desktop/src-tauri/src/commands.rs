@@ -4,8 +4,11 @@
 //! than the UI thread. Passwords arrive as `Zeroizing<String>` so Shiver's copies are wiped.
 
 use tauri::{
-    menu::{CheckMenuItemBuilder, ContextMenu, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
-    AppHandle, Emitter, Manager, State,
+    menu::{
+        CheckMenuItemBuilder, ContextMenu, IsMenuItem, MenuBuilder, MenuItemBuilder,
+        PredefinedMenuItem, SubmenuBuilder,
+    },
+    AppHandle, Emitter, Manager, State, Wry,
 };
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -155,8 +158,7 @@ pub async fn add_server(
         let identity = identity.clone().filter(|_| signed_in);
 
         // a second account on one origin needs a label to be told apart
-        let label = account_label
-            .clone()
+        let label = shiver_core::model::account_label(account_label.as_deref())
             .or_else(|| identity.clone())
             .or_else(|| (existing > 0).then(|| format!("Account {}", existing + 1)));
 
@@ -451,122 +453,166 @@ pub async fn set_folder_expanded(
     store.update(|registry| Ok(registry.rail().set_folder_expanded(&id, expanded)?))
 }
 
-#[tauri::command]
-pub async fn show_folder_menu(app: AppHandle, id: String) -> Result<()> {
-    let window = webviews::main_window(&app)?;
-    let rename =
-        MenuItemBuilder::with_id(format!("rename-folder:{id}"), "Rename folder").build(&app)?;
-    let delete =
-        MenuItemBuilder::with_id(format!("delete-folder:{id}"), "Delete folder").build(&app)?;
-
-    MenuBuilder::new(&app)
-        .item(&rename)
-        .separator()
-        .item(&delete)
-        .build()?
-        .popup(window)?;
-
-    Ok(())
+/// What a server's menu says beyond its entry (the menu itself is built by the shell, from the item
+/// model both clients share).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MenuFacts {
+    /// Shiver keeps its password, so there is one to forget
+    has_password: bool,
+    /// whether Shiver has connected and looked for the companion plugin yet
+    plugin_checked: bool,
+    /// the plugin's version, when it was found
+    plugin: Option<String>,
+    /// it has sent a message over the size limit this run
+    too_large: bool,
 }
 
-/// The rail's context menu, as a native menu (an html one would be painted over by the server
-/// webview). The target is encoded in each item's id; `lib.rs` forwards the choice to the shell.
 #[tauri::command]
-pub async fn show_server_menu(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
-    let window = webviews::main_window(&app)?;
-    let entry = entry_of(&store, &id)?;
-    let item = |action: &str, label: &str| {
-        MenuItemBuilder::with_id(format!("{action}:{id}"), label).build(&app)
-    };
-
-    let open = item("open", "Open")?;
-    let mark_read = item("markread", "Mark all as read")?;
-    let refresh = item("refresh", "Refresh name and icon")?;
-    let remove = item("remove", "Remove from Shiver")?;
-    let session = if entry.identity.is_some() {
-        item("logout", "Log out")?
-    } else {
-        item("signin", "Sign in")?
-    };
-
-    // enabled only when there is a password to forget (a keychain read, off the UI thread)
+pub async fn server_menu_facts(app: AppHandle, id: String) -> MenuFacts {
+    // a keychain read, off the UI thread
     let has_password = secrets::read_off_thread(Secret::Password, &id)
         .await
         .is_some();
-    let forget = MenuItemBuilder::with_id(format!("forgetpw:{id}"), "Forget my password")
-        .enabled(has_password)
-        .build(&app)?;
+    let plugin = app.state::<crate::watch::Plugins>().all().remove(&id);
 
-    let plugin = MenuItemBuilder::with_id(
-        format!("plugin:{id}"),
-        plugin_menu_label(app.state::<crate::watch::Plugins>().all().get(&id)),
-    )
-    .enabled(false)
-    .build(&app)?;
-
-    // which of its messages notify; one action per level, since the menu knows which is set
-    let level = |action: &str, label: &str, value: NotifyLevel| {
-        CheckMenuItemBuilder::with_id(format!("{action}:{id}"), label)
-            .checked(entry.notify == value)
-            .build(&app)
-    };
-    let notify = SubmenuBuilder::new(&app, "Notify me about")
-        .item(&level("notify-all", "All messages", NotifyLevel::All)?)
-        .item(&level(
-            "notify-mentions",
-            "Mentions and direct messages",
-            NotifyLevel::Mentions,
-        )?)
-        .item(&level(
-            "notify-dms",
-            "Direct messages only",
-            NotifyLevel::Dms,
-        )?)
-        .build()?;
-
-    let mut builder =
-        MenuBuilder::new(&app).items(&[&open, &mark_read, &refresh, &notify, &forget, &plugin]);
-
-    // the size limit is only offered where it matters: a server that tripped it, or one raised
-    let sizes = if entry.accept_any_size {
-        Some(item("normalsize", "Back to the normal size limit")?)
-    } else if app.state::<crate::watch::Reported>().mentioned(&id) {
-        Some(item("anysize", "Accept larger messages from this server")?)
-    } else {
-        None
-    };
-
-    if let Some(sizes) = &sizes {
-        builder = builder.item(sizes);
+    MenuFacts {
+        has_password,
+        plugin_checked: plugin.is_some(),
+        plugin: plugin.flatten(),
+        too_large: app.state::<crate::watch::Reported>().mentioned(&id),
     }
-
-    let take_out = entry
-        .folder_id
-        .is_some()
-        .then(|| item("unfolder", "Move out of folder"))
-        .transpose()?;
-
-    if let Some(take_out) = &take_out {
-        builder = builder.separator().item(take_out);
-    }
-
-    builder
-        .separator()
-        .item(&session)
-        .item(&remove)
-        .build()?
-        .popup(window)?;
-
-    Ok(())
 }
 
-/// Absent = not connected yet, `None` = not installed.
-fn plugin_menu_label(status: Option<&Option<String>>) -> String {
-    match status {
-        Some(Some(version)) => format!("\u{2713} Shiver plugin {version}"),
-        Some(None) => "\u{2717} No Shiver plugin".to_string(),
-        None => "Shiver plugin: not checked yet".to_string(),
+/// One entry of a rail menu, as `shared/web/menus.ts` builds it.
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum MenuEntry {
+    Item {
+        id: String,
+        label: String,
+        checked: Option<bool>,
+        disabled: Option<bool>,
+    },
+    Separator,
+    Submenu {
+        label: String,
+        items: Vec<MenuEntry>,
+    },
+}
+
+/// More than any rail menu has; a menu past it is refused rather than drawn.
+const MAX_MENU_ENTRIES: usize = 64;
+const MAX_MENU_LABEL: usize = 120;
+const MAX_MENU_ID: usize = 200;
+
+/// An item id is `action:target`: letters and dashes, then ids (uuids) joined by colons. That is all
+/// the shell's menus make, and all `lib.rs` hands back to it.
+fn is_menu_id(id: &str) -> bool {
+    let Some((action, target)) = id.split_once(':') else {
+        return false;
+    };
+
+    id.len() <= MAX_MENU_ID
+        && !action.is_empty()
+        && action.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+        && !target.is_empty()
+        && target
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == ':')
+}
+
+fn count_entries(entries: &[MenuEntry]) -> usize {
+    entries
+        .iter()
+        .map(|entry| match entry {
+            MenuEntry::Submenu { items, .. } => 1 + count_entries(items),
+            _ => 1,
+        })
+        .sum()
+}
+
+fn menu_label(label: &str) -> String {
+    shiver_core::text::clamp(label.to_string(), MAX_MENU_LABEL)
+}
+
+fn refuse_menu() -> crate::error::Error {
+    Core::InvalidInput("That menu cannot be shown.".into()).into()
+}
+
+/// The native items for `entries`; a submenu may hold items and separators only.
+fn menu_items(
+    app: &AppHandle,
+    entries: &[MenuEntry],
+    nested: bool,
+) -> Result<Vec<Box<dyn IsMenuItem<Wry>>>> {
+    let mut items: Vec<Box<dyn IsMenuItem<Wry>>> = Vec::with_capacity(entries.len());
+
+    for entry in entries {
+        match entry {
+            MenuEntry::Separator => items.push(Box::new(PredefinedMenuItem::separator(app)?)),
+            MenuEntry::Item {
+                id,
+                label,
+                checked,
+                disabled,
+            } => {
+                if !is_menu_id(id) {
+                    return Err(refuse_menu());
+                }
+
+                let enabled = !disabled.unwrap_or(false);
+
+                match checked {
+                    Some(checked) => items.push(Box::new(
+                        CheckMenuItemBuilder::with_id(id.as_str(), menu_label(label))
+                            .checked(*checked)
+                            .enabled(enabled)
+                            .build(app)?,
+                    )),
+                    None => items.push(Box::new(
+                        MenuItemBuilder::with_id(id.as_str(), menu_label(label))
+                            .enabled(enabled)
+                            .build(app)?,
+                    )),
+                }
+            }
+            MenuEntry::Submenu { .. } if nested => return Err(refuse_menu()),
+            MenuEntry::Submenu {
+                label,
+                items: inner,
+            } => {
+                let inner = menu_items(app, inner, true)?;
+                let refs: Vec<&dyn IsMenuItem<Wry>> = inner.iter().map(AsRef::as_ref).collect();
+
+                items.push(Box::new(
+                    SubmenuBuilder::new(app, menu_label(label))
+                        .items(&refs)
+                        .build()?,
+                ));
+            }
+        }
     }
+
+    Ok(items)
+}
+
+/// Shows a rail menu as a native menu at the pointer (an html one would be painted over by the
+/// server webview). The shell builds it from the item model both clients share; a chosen item's id
+/// comes back to the shell through `lib.rs`.
+#[tauri::command]
+pub async fn show_menu(app: AppHandle, entries: Vec<MenuEntry>) -> Result<()> {
+    if entries.is_empty() || count_entries(&entries) > MAX_MENU_ENTRIES {
+        return Err(refuse_menu());
+    }
+
+    let window = webviews::main_window(&app)?;
+    let items = menu_items(&app, &entries, false)?;
+    let refs: Vec<&dyn IsMenuItem<Wry>> = items.iter().map(AsRef::as_ref).collect();
+
+    MenuBuilder::new(&app).items(&refs).build()?.popup(window)?;
+
+    Ok(())
 }
 
 /* ── showing servers ── */
@@ -893,9 +939,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_plugin_label_has_three_answers() {
-        assert!(plugin_menu_label(Some(&Some("0.2.0".into()))).contains("0.2.0"));
-        assert!(plugin_menu_label(Some(&None)).contains("No"));
-        assert!(plugin_menu_label(None).contains("not checked"));
+    fn a_menu_item_id_is_an_action_and_its_target() {
+        assert!(is_menu_id("open:6f1c2e4a-0b7d-4c1e-9a55-3d2f8e1b7c90"));
+        assert!(is_menu_id("move:server-id:folder-id"));
+        assert!(!is_menu_id("quit"));
+        assert!(!is_menu_id("open:"));
+        assert!(!is_menu_id(":id"));
+        assert!(!is_menu_id("Open:id"));
+        assert!(!is_menu_id("open:id/../x"));
+        assert!(!is_menu_id(&format!("open:{}", "a".repeat(MAX_MENU_ID))));
+    }
+
+    #[test]
+    fn a_menu_counts_what_its_submenus_hold() {
+        let entries: Vec<MenuEntry> = serde_json::from_str(
+            r#"[{"kind":"item","id":"open:s","label":"Open"},{"kind":"separator"},
+                {"kind":"submenu","label":"Notify","items":[{"kind":"item","id":"notify-all:s","label":"All","checked":true}]}]"#,
+        )
+        .expect("the shell's menu reads");
+
+        assert_eq!(count_entries(&entries), 4);
     }
 }

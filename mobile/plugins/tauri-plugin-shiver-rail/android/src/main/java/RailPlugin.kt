@@ -1,24 +1,28 @@
 package com.shiver.rail
 
+import android.annotation.SuppressLint
 import android.app.Activity
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.util.Base64
-import android.util.TypedValue
-import android.view.Gravity
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
 import android.widget.FrameLayout
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.appcompat.app.AppCompatActivity
+import androidx.webkit.JavaScriptReplyProxy
+import androidx.webkit.WebMessageCompat
+import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewClientCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -27,32 +31,36 @@ import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
-import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 
 /*
- * Shiver's quick rail, drawn with Android's own views over the server page on screen, which keeps
- * running (and connected) behind it. Views, not a page: the server's page shares a script world
- * with anything drawn inside it, and must never see what else is on the rail.
- *
- * Laid out as Shiver's own rail: direct messages, the servers and a tile to add one, with settings
- * kept at the bottom. The core hands over what to draw (`show`, `refresh`) and hears what the user
- * chose through the event channel: a server, one of Shiver's own screens, or back to the page
- * behind. Commands arrive on the core's thread and are drawn on the UI thread before they answer.
+ * Host for the quick rail: the shared rail's page (mobile/rail, in this plugin's assets) in a WebView
+ * of its own over the server page, never inside it. It loads only that page and talks only to this
+ * plugin, over one channel offered to its origin. Here: the overlay, scrim, slide-in, back press and
+ * the channel; the core sends what to draw (`show`, `refresh`) and hears what was chosen.
  */
 
 /** the rail's width, as on Shiver's own page (`--shiver-rail-width`) */
-private const val RAIL_DP = 68
-private const val TILE_DP = 48
-private const val FOLDER_TILE_DP = 40
-private const val GAP_DP = 8
-private const val BADGE_DP = 18
-private const val ICON_DP = 20
-/** a logo is decoded no larger than a tile needs at the densest screens */
-private const val LOGO_PX = 160
+private const val RAIL_DP = 72
 private const val SLIDE_MS = 180L
-/** what shows of the page behind: dimmed, as Shiver's page dimmed its picture of it */
+/** what shows of the page behind: dimmed */
 private const val SCRIM = 0x73000000
+/** the overlay while the page draws: too faint to see, but drawn (at 0 Android skips it) */
+private const val PREPARING_ALPHA = 0.01f
+/** how long a show waits for the page to draw before it gives up (the core then uses Shiver's page) */
+private const val DRAW_TIMEOUT_MS = 2000L
+
+private const val ORIGIN = "https://appassets.androidplatform.net"
+private const val PAGE_PATH = "/assets/rail/"
+private const val PAGE = "$ORIGIN${PAGE_PATH}index.html"
+/** the page's end of the channel: `window.shiverRail` */
+private const val CHANNEL = "shiverRail"
+/** what the user can choose, closing the rail; anything else the page says is dropped */
+private val CHOICES = setOf("dms", "add", "settings", "closed")
+/** an entry or folder id: a uuid, bounded */
+private val ID = Regex("^[A-Za-z0-9-]{1,64}$")
 
 @InvokeArg
 class EventsArgs {
@@ -62,18 +70,36 @@ class EventsArgs {
 @TauriPlugin
 class RailPlugin(private val activity: Activity) : Plugin(activity) {
     private var events: Channel? = null
-
-    /** each entry's logo, decoded once, under the key the core named it by */
-    private val logos = HashMap<String, Pair<String, Bitmap?>>()
+    private val main = Handler(Looper.getMainLooper())
 
     private var overlay: FrameLayout? = null
-    /** the rail itself: `list` scrolls above `footer` */
-    private var panel: LinearLayout? = null
-    private var list: ScrollView? = null
-    private var footer: LinearLayout? = null
+    private var rail: WebView? = null
     private var back: OnBackPressedCallback? = null
-    /** the server whose page is behind the rail */
-    private var current: String? = null
+
+    /** the page's end of the channel, once it has said it is ready */
+    private var page: JavaScriptReplyProxy? = null
+    /** the latest view, held until the page is ready for it */
+    private var queued: String? = null
+    private var sequence = 0
+    /** a show waiting for its view to be drawn: its sequence number, the call, and the logos lacked */
+    private var revealing: Triple<Int, Invoke, JSArray>? = null
+    /** the logo key the page has been given for each entry */
+    private val given = HashMap<String, String>()
+
+    /** Made at start-up rather than on the first swipe, so the page is loaded before it is wanted. */
+    override fun load(webView: WebView) {
+        super.load(webView)
+
+        activity.runOnUiThread { overlay() }
+    }
+
+    override fun onDestroy(activity: AppCompatActivity) {
+        rail?.destroy()
+        rail = null
+        overlay = null
+        page = null
+        given.clear()
+    }
 
     @Command
     fun setEventHandler(invoke: Invoke) {
@@ -95,42 +121,85 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
-    /** Draws `invoke`'s view (sliding the rail in when `reveal`), answering with the logos it lacked. */
+    /**
+     * Hands `invoke`'s view to the page. A rail already up is redrawn at once; a show waits until the
+     * page has drawn it, then slides in, so it never shows a blank or stale rail.
+     */
     private fun draw(invoke: Invoke, reveal: Boolean) {
         val view = invoke.getArgs()
 
         activity.runOnUiThread {
-            try {
-                val shown = overlay?.visibility == View.VISIBLE
-                val missing = JSArray()
+            val up = overlay?.visibility == View.VISIBLE
 
-                if (reveal || shown) {
-                    render(view, missing)
+            if (!reveal && !up) return@runOnUiThread invoke.resolve(drawn(JSArray()))
 
-                    if (!shown) slideIn()
+            val root = overlay() ?: return@runOnUiThread invoke.reject("The rail could not be drawn")
+            val missing = JSArray()
+            val number = ++sequence
+
+            takeLogos(view, missing)
+            send(JSONObject().put("seq", number).put("view", view).toString())
+
+            if (!reveal || (up && revealing == null)) return@runOnUiThread invoke.resolve(drawn(missing))
+
+            // a show still waiting is answered as drawn: rejecting it would send the core to Shiver's page
+            revealing?.let { it.second.resolve(drawn(it.third)) }
+            revealing = Triple(number, invoke, missing)
+            prepare(root)
+
+            main.postDelayed({
+                val waiting = revealing
+
+                if (waiting != null && waiting.first == number) {
+                    revealing = null
+                    dismiss()
+                    waiting.second.reject("The rail did not draw in time")
                 }
+            }, DRAW_TIMEOUT_MS)
+        }
+    }
 
-                invoke.resolve(JSObject().apply { put("missing", missing) })
-            } catch (ex: Exception) {
-                invoke.reject(ex.message ?: "The rail could not be drawn")
+    private fun drawn(missing: JSArray) = JSObject().apply { put("missing", missing) }
+
+    /** Notes the logos this view gives the page, and the ones it names that the page has never been given. */
+    private fun takeLogos(view: JSONObject, missing: JSArray) {
+        val servers = view.optJSONArray("servers") ?: return
+
+        for (index in 0 until servers.length()) {
+            val server = servers.optJSONObject(index) ?: continue
+            val id = server.optString("id")
+            val key = server.optString("iconKey").takeIf { it.isNotEmpty() && !server.isNull("iconKey") }
+            val icon = !server.isNull("icon") && server.optString("icon").isNotEmpty()
+
+            when {
+                key == null -> given.remove(id)
+                icon -> given[id] = key
+                given[id] != key -> missing.put(id)
             }
         }
     }
 
-    private fun dp(value: Int): Int =
-        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), activity.resources.displayMetrics).toInt()
+    private fun send(message: String) {
+        val proxy = page
 
-    /** The overlay, attached over the webview (again, if the content view was replaced). */
-    private fun overlay(): FrameLayout {
-        val content = activity.findViewById<ViewGroup>(android.R.id.content)
+        if (proxy == null) queued = message else proxy.postMessage(message)
+    }
+
+    private fun dp(value: Int): Int = (value * activity.resources.displayMetrics.density).toInt()
+
+    /** The overlay and its WebView, made once and kept (again, if the content view was replaced). */
+    private fun overlay(): FrameLayout? {
+        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return null
         val existing = overlay
 
         if (existing != null) {
             if (existing.parent == null) content.addView(existing)
+            if (rail == null) existing.addView(railView() ?: return null)
 
             return existing
         }
 
+        val web = railView() ?: return null
         val root = FrameLayout(activity).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             setBackgroundColor(SCRIM)
@@ -140,263 +209,168 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
             setOnClickListener { choose("closed", null) }
         }
 
-        val rail = LinearLayout(activity).apply {
-            layoutParams = FrameLayout.LayoutParams(dp(RAIL_DP), ViewGroup.LayoutParams.MATCH_PARENT)
-            orientation = LinearLayout.VERTICAL
-            // a tap on the rail between tiles is not a tap beside it
-            isClickable = true
-        }
-
-        val scroll = ScrollView(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-            isVerticalScrollBarEnabled = false
-        }
-
-        val bottom = LinearLayout(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 0, 0, dp(10))
-        }
-
-        rail.addView(scroll)
-        rail.addView(bottom)
-        root.addView(rail)
+        root.addView(web)
         content.addView(root)
-
-        // added after the activity's own, so it is asked first while the rail is up
-        (activity as? ComponentActivity)?.let { owner ->
-            val callback = object : OnBackPressedCallback(false) {
-                override fun handleOnBackPressed() = choose("closed", null)
-            }
-
-            owner.onBackPressedDispatcher.addCallback(callback)
-            back = callback
-        }
-
         overlay = root
-        panel = rail
-        list = scroll
-        footer = bottom
 
         return root
     }
 
-    private fun render(view: JSONObject, missing: JSArray) {
-        overlay()
+    /** The rail's WebView: its own page only, from the assets, with the network shut off. */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun railView(): WebView? {
+        // the channel is the only way to the page; a WebView too old for it cannot host the rail
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return null
 
-        val rail = panel ?: return
-        val scroll = list ?: return
-        val bottom = footer ?: return
-        val palette = Palette(view)
+        val assets = WebViewAssetLoader.AssetsPathHandler(activity)
+        val loader = WebViewAssetLoader.Builder()
+            .addPathHandler(PAGE_PATH) { path -> assets.handle("rail/$path") }
+            .build()
 
-        current = view.optString("current").takeIf { it.isNotEmpty() && !view.isNull("current") }
-        rail.setBackgroundColor(palette.rail)
+        val web = WebView(activity).apply {
+            layoutParams = FrameLayout.LayoutParams(dp(RAIL_DP), ViewGroup.LayoutParams.MATCH_PARENT)
+            setBackgroundColor(Color.TRANSPARENT)
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
 
-        val column = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, dp(10) - dp(GAP_DP), 0, dp(GAP_DP))
-        }
+            settings.apply {
+                javaScriptEnabled = true
+                blockNetworkLoads = true
+                allowFileAccess = false
+                allowContentAccess = false
+                domStorageEnabled = false
+                javaScriptCanOpenWindowsAutomatically = false
+                setSupportMultipleWindows(false)
+                setGeolocationEnabled(false)
+                setSupportZoom(false)
+            }
 
-        column.addView(iconTile(R.drawable.shiver_rail_messages, "Direct messages", palette.text, palette) { choose("dms", null) })
-        column.addView(divider(palette))
+            webViewClient = object : WebViewClientCompat() {
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse =
+                    loader.shouldInterceptRequest(request.url)
+                        ?: WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
 
-        val rows = view.optJSONArray("rows") ?: JSONArray()
+                // the rail's page, and nowhere else
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) =
+                    request.url.toString() != PAGE
 
-        for (index in 0 until rows.length()) {
-            val row = rows.optJSONObject(index) ?: continue
+                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                    forget(view)
 
-            when (row.optString("kind")) {
-                "server" -> row.optJSONObject("server")?.let { column.addView(tile(it, TILE_DP, palette, missing)) }
-                "folder" -> column.addView(folder(row, palette, missing))
+                    return true
+                }
             }
         }
 
-        column.addView(iconTile(R.drawable.shiver_rail_add, "Add a server", palette.accent, palette) { choose("add", null) })
-
-        scroll.removeAllViews()
-        scroll.addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-        // settings stays in reach however long the list of servers grows
-        bottom.removeAllViews()
-        bottom.addView(divider(palette))
-        bottom.addView(iconTile(R.drawable.shiver_rail_settings, "Shiver settings", palette.text, palette) { choose("settings", null) })
-    }
-
-    private fun divider(palette: Palette) = View(activity).apply {
-        setBackgroundColor(palette.divider)
-        layoutParams = LinearLayout.LayoutParams(dp(32), 1).apply { topMargin = dp(GAP_DP) }
-    }
-
-    /** One of Shiver's own screens: its icon, tinted `color`, on a tile like a server's. */
-    private fun iconTile(icon: Int, label: String, color: Int, palette: Palette, onTap: () -> Unit): View {
-        val frame = FrameLayout(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(TILE_DP), dp(TILE_DP)).apply { topMargin = dp(GAP_DP) }
-            background = rounded(palette.surface, dp(16).toFloat())
-            contentDescription = label
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { onTap() }
+        WebViewCompat.addWebMessageListener(web, CHANNEL, setOf(ORIGIN)) { _, message, origin, isMainFrame, reply ->
+            if (isMainFrame && origin == Uri.parse(ORIGIN)) heard(message, reply)
         }
 
-        val image = ImageView(activity).apply {
-            setImageDrawable(activity.getDrawable(icon)?.mutate()?.apply { setTint(color) })
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
+        web.loadUrl(PAGE)
+        rail = web
 
-        frame.addView(image, FrameLayout.LayoutParams(dp(ICON_DP), dp(ICON_DP), Gravity.CENTER))
-
-        return frame
+        return web
     }
 
-    /** A folder: its servers, grouped on the dimmer surface, always open (this rail is for going). */
-    private fun folder(row: JSONObject, palette: Palette, missing: JSArray): View {
-        val group = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            background = rounded(palette.surfaceDim, dp(16).toFloat())
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(GAP_DP)
+    /** The WebView's renderer is gone: a new one, and a fresh page, next time the rail is wanted. */
+    private fun forget(web: WebView) {
+        dismiss()
+        overlay?.removeView(web)
+        web.destroy()
+        rail = null
+        page = null
+        given.clear()
+    }
+
+    /** What the page said: that it is ready, that a view is drawn, or what the user chose. */
+    private fun heard(message: WebMessageCompat, reply: JavaScriptReplyProxy) {
+        val said = try {
+            JSONObject(message.data ?: return)
+        } catch (ex: JSONException) {
+            return
+        }
+
+        when (val kind = said.optString("kind")) {
+            "ready" -> {
+                page = reply
+                queued?.let { reply.postMessage(it) }
+                queued = null
             }
-            contentDescription = row.optString("name")
-        }
+            "drawn" -> {
+                val waiting = revealing ?: return
 
-        val servers = row.optJSONArray("servers") ?: JSONArray()
+                // a later view (a refresh meanwhile) being drawn means this one has been too
+                if (said.optInt("seq") < waiting.first) return
 
-        for (index in 0 until servers.length()) {
-            servers.optJSONObject(index)?.let { group.addView(tile(it, FOLDER_TILE_DP, palette, missing, first = index == 0)) }
-        }
-
-        return group
-    }
-
-    private fun tile(server: JSONObject, size: Int, palette: Palette, missing: JSArray, first: Boolean = false): View {
-        val id = server.optString("id")
-        val name = server.optString("name")
-        val unread = server.optInt("unread", 0)
-        val radius = dp(if (size == TILE_DP) 16 else 13).toFloat()
-
-        val frame = FrameLayout(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(size), dp(size)).apply { topMargin = if (first) 0 else dp(GAP_DP) }
-            contentDescription = if (unread > 0) "$name, $unread unread" else name
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { choose(if (id == current) "closed" else "open", id) }
-        }
-
-        val logo = logo(id, server, missing)
-        val face: View = if (logo != null) {
-            ImageView(activity).apply {
-                setImageBitmap(logo)
-                scaleType = ImageView.ScaleType.CENTER_CROP
+                revealing = null
+                slideIn()
+                waiting.second.resolve(drawn(waiting.third))
             }
-        } else {
-            TextView(activity).apply {
-                text = server.optString("initials", "?")
-                setTextColor(palette.text)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (size == TILE_DP) 16f else 14f)
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
+            else -> if (showing()) chosen(kind, said)
+        }
+    }
+
+    /** The rail is up and seen: only then can the user have chosen anything on it. */
+    private fun showing() = overlay?.visibility == View.VISIBLE && revealing == null
+
+    private fun chosen(kind: String, said: JSONObject) {
+        when (kind) {
+            "open" -> said.optString("entryId").takeIf { ID.matches(it) }?.let { choose("open", it) }
+            "folder" -> {
+                val folderId = said.optString("folderId").takeIf { ID.matches(it) } ?: return
+                val expanded = said.opt("expanded") as? Boolean ?: return
+
+                // the rail stays up; the core stores it and redraws
+                events?.send(JSObject().apply {
+                    put("kind", "folder")
+                    put("folderId", folderId)
+                    put("expanded", expanded)
+                })
             }
+            in CHOICES -> choose(kind, null)
         }
-
-        face.background = rounded(palette.surface, radius)
-        face.clipToOutline = true
-        frame.addView(face, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-
-        // the server whose page is behind: ringed in the accent, as on Shiver's own rail
-        if (id == current) {
-            frame.addView(
-                View(activity).apply {
-                    background = GradientDrawable().apply {
-                        cornerRadius = radius
-                        setColor(Color.TRANSPARENT)
-                        setStroke(dp(2), palette.accent)
-                    }
-                },
-                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            )
-        }
-
-        if (unread > 0) {
-            frame.addView(
-                TextView(activity).apply {
-                    text = if (unread > 99) "99+" else unread.toString()
-                    setTextColor(palette.rail)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
-                    typeface = Typeface.DEFAULT_BOLD
-                    gravity = Gravity.CENTER
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL
-                        setColor(palette.text)
-                        setStroke(1, palette.rail)
-                    }
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                },
-                FrameLayout.LayoutParams(dp(BADGE_DP), dp(BADGE_DP), Gravity.TOP or Gravity.END)
-            )
-        }
-
-        return frame
     }
 
-    /** The entry's logo: decoded from what came with this view, or kept from an earlier one; a key never seen is reported. */
-    private fun logo(id: String, server: JSONObject, missing: JSArray): Bitmap? {
-        val key = server.optString("iconKey").takeIf { it.isNotEmpty() && !server.isNull("iconKey") } ?: return null
-        val data = server.optString("icon").takeIf { it.isNotEmpty() && !server.isNull("icon") }
-
-        logos[id]?.let { (known, bitmap) -> if (known == key && data == null) return bitmap }
-
-        if (data == null) {
-            missing.put(id)
-
-            return null
-        }
-
-        val bitmap = decode(data)
-
-        logos[id] = key to bitmap
-
-        return bitmap
-    }
-
-    /** A `data:` uri's image, scaled down on decoding; null for what Android cannot draw (SVG). */
-    private fun decode(uri: String): Bitmap? = try {
-        val bytes = Base64.decode(uri.substringAfter(','), Base64.DEFAULT)
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-
-        var sample = 1
-
-        while (bounds.outWidth / (sample * 2) >= LOGO_PX && bounds.outHeight / (sample * 2) >= LOGO_PX) sample *= 2
-
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-    } catch (ex: IllegalArgumentException) {
-        null
-    }
-
-    private fun rounded(color: Int, radius: Float) = GradientDrawable().apply {
-        cornerRadius = radius
-        setColor(color)
+    /**
+     * Up but not yet seen, so the page draws before it slides in: a WebView that is hidden, or whose
+     * overlay is fully transparent, is not drawn at all, and neither is its page.
+     */
+    private fun prepare(root: FrameLayout) {
+        root.animate().cancel()
+        rail?.animate()?.cancel()
+        root.alpha = PREPARING_ALPHA
+        root.isClickable = false
+        root.visibility = View.VISIBLE
+        rail?.translationX = 0f
     }
 
     private fun slideIn() {
         val root = overlay ?: return
-        val rail = panel ?: return
+        val web = rail ?: return
 
-        root.visibility = View.VISIBLE
-        root.alpha = 0f
+        root.isClickable = true
+        web.translationX = -dp(RAIL_DP).toFloat()
         root.animate().alpha(1f).setDuration(SLIDE_MS).start()
-        rail.translationX = -dp(RAIL_DP).toFloat()
-        rail.animate().translationX(0f).setDuration(SLIDE_MS).setInterpolator(DecelerateInterpolator()).start()
+        web.animate().translationX(0f).setDuration(SLIDE_MS).setInterpolator(DecelerateInterpolator()).start()
+
+        // added after the activity's own, so it is asked first while the rail is up
+        if (back == null) {
+            (activity as? ComponentActivity)?.let { owner ->
+                val callback = object : OnBackPressedCallback(false) {
+                    override fun handleOnBackPressed() = choose("closed", null)
+                }
+
+                owner.onBackPressedDispatcher.addCallback(callback)
+                back = callback
+            }
+        }
+
         back?.isEnabled = true
     }
 
     private fun dismiss() {
         overlay?.animate()?.cancel()
+        rail?.animate()?.cancel()
         overlay?.visibility = View.GONE
         back?.isEnabled = false
     }
@@ -412,25 +386,5 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
             put("kind", kind)
             if (entryId != null) put("entryId", entryId)
         })
-    }
-
-    /** The core's `#rrggbb` colours; anything unreadable falls back to Shiver's defaults. */
-    private class Palette(view: JSONObject) {
-        val rail = color(view, "rail", 0xFF171717.toInt())
-        val surface = color(view, "surface", 0xFF313131.toInt())
-        val surfaceDim = color(view, "surfaceDim", 0xFF1f1f1f.toInt())
-        val text = color(view, "text", 0xFFFAFAFA.toInt())
-        val accent = color(view, "accent", 0xFFE5E5E5.toInt())
-        /** `--shiver-border`: the text at a tenth */
-        val divider = (text and 0x00FFFFFF) or 0x1A000000
-
-        private companion object {
-            fun color(view: JSONObject, name: String, fallback: Int): Int = try {
-                Color.parseColor(view.optString(name))
-            } catch (ex: RuntimeException) {
-                // unparseable, or empty (which throws out of bounds rather than illegal argument)
-                fallback
-            }
-        }
     }
 }

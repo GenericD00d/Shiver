@@ -14,7 +14,8 @@ import {
   installSoundVolume,
   installVoiceColors
 } from '../../shared/web/bridge/features';
-import { pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
+import { watchNewMessages } from '../../shared/web/bridge/messages';
+import { fetchDmTimes, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
 import {
   CHANNEL_ITEM,
   closeDialog,
@@ -169,9 +170,28 @@ function install(shiver: ShiverConfig) {
   const queue: QueuedNotification[] = [];
   const openQueue: string[] = [];
   const muteQueue: QueuedMute[] = [];
-  /** when a message was last seen per channel (notifications are all the bridge sees of them) */
+  /**
+   * When the last message was sent or received per channel: from the companion plugin (Sharkord's
+   * client keeps its own DM times to itself), then from what the page's connection hears
+   */
   const lastSeen = new Map<number, number>();
   let lastSeenVersion = 0;
+  /** DM channels whose times the plugin has been asked for */
+  const askedTimes = new Set<number>();
+  /** redraws the DM list; set once the page is ready */
+  let refreshDms = () => {};
+  /** a message in `channelId` at `at`, moving that conversation up if it is newer */
+  const noteMessage = (channelId: number, at: number) => {
+    if (at <= (lastSeen.get(channelId) ?? 0)) return false;
+
+    lastSeen.set(channelId, at);
+    lastSeenVersion += 1;
+    refreshDms();
+
+    return true;
+  };
+
+  watchNewMessages(noteMessage);
 
   installExternalLinks((href) => openQueue.push(href));
 
@@ -245,8 +265,7 @@ function install(shiver: ShiverConfig) {
     const { channelId, channelName, author, isDm } = notificationTarget(title, state);
 
     if (channelId !== null) {
-      lastSeen.set(channelId, Date.now());
-      lastSeenVersion += 1;
+      noteMessage(channelId, Date.now());
 
       if (muted.has(channelId)) return;
     }
@@ -274,10 +293,9 @@ function install(shiver: ShiverConfig) {
 
     let dmInputs: unknown[] = [];
 
-    watchStore((next) => {
-      state = next;
-
-      // the DM list only changes with channels, users or a newly seen message
+    // the DM list only changes with channels, users or a newly seen message
+    refreshDms = () => {
+      const next = state;
       const inputs = [next.channels, next.users, next.ownUserId, lastSeenVersion];
 
       if (inputs.every((input, index) => input === dmInputs[index])) return;
@@ -285,6 +303,15 @@ function install(shiver: ShiverConfig) {
       dmInputs = inputs;
 
       const list = readDms(shiver.origin, next, lastSeen);
+      const unasked = list.map((dm) => dm.channelId).filter((channelId) => !askedTimes.has(channelId));
+
+      for (const channelId of unasked) askedTimes.add(channelId);
+
+      // once per conversation; what comes back goes through this same path, as a seen message does
+      void fetchDmTimes(unasked).then((times) => {
+        for (const [channelId, at] of times ?? []) noteMessage(channelId, at);
+      });
+
       // avatar urls carry expiring tokens, so they are left out of the comparison
       const signature = JSON.stringify(list.map(({ channelId, name, lastMessageAt }) => [channelId, name, lastMessageAt]));
 
@@ -292,6 +319,11 @@ function install(shiver: ShiverConfig) {
         dmsSignature = signature;
         dms = list;
       }
+    };
+
+    watchStore((next) => {
+      state = next;
+      refreshDms();
     });
 
     installChannelMenu({

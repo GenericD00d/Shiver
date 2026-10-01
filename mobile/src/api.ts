@@ -14,6 +14,8 @@ import type {
   Settings
 } from './types';
 
+export { errorMessage } from '../../shared/web/errors';
+
 /** Calls into the core. Only Shiver's own pages have IPC; server pages cannot make these. */
 export const api = {
   listRegistry: () => invoke<Registry>('list_registry'),
@@ -28,8 +30,9 @@ export const api = {
     origin: string,
     identity: string | null,
     password: string | null,
+    accountLabel: string | null,
     rememberPassword: boolean
-  ) => invoke<ServerEntry>('add_server', { origin, identity, password, rememberPassword }),
+  ) => invoke<ServerEntry>('add_server', { origin, identity, password, accountLabel, rememberPassword }),
 
   /** Signs an existing server in again (sessions last a week and cannot be refreshed). */
   signInServer: (id: string, identity: string, password: string, rememberPassword: boolean) =>
@@ -42,6 +45,8 @@ export const api = {
 
   reorderRail: (ordered: { kind: 'server' | 'folder'; id: string }[]) =>
     invoke<void>('reorder_rail', { ordered }),
+  /** the servers of one folder, in their new order */
+  reorderServers: (orderedIds: string[]) => invoke<void>('reorder_servers', { orderedIds }),
   createFolderWith: (name: string, memberIds: string[]) =>
     invoke<Folder>('create_folder_with', { name, memberIds }),
   setServerFolder: (id: string, folderId: string | null) =>
@@ -115,7 +120,3 @@ export const api = {
   onJoinWait: (handler: (wait: { entryId: string; seconds: number }) => void) =>
     listen<{ entryId: string; seconds: number }>('shiver://join-wait', (event) => handler(event.payload))
 };
-
-/** Tauri rejects with the rust error's user-facing message, which is already worth showing. */
-export const errorMessage = (error: unknown) =>
-  typeof error === 'string' ? error : error instanceof Error ? error.message : 'Something went wrong';

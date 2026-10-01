@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api } from './api';
 import { EVENTS, useCoreEvent } from './events';
-import { BellIcon } from './components/icons';
+import { BellIcon } from '../../shared/web/components/icons';
 import { playNotificationSound } from './sounds';
 import type { FeedSummary, Settings } from './types';
 import { applyTheme } from '../../shared/web/theme';

@@ -3,6 +3,7 @@ mod error;
 mod icons;
 mod inbox;
 mod model;
+mod notify;
 mod push;
 mod rail;
 pub use sharkord_client as sharkord;
@@ -65,6 +66,7 @@ pub fn run() {
             commands::update_settings,
             commands::forget_trusted_links,
             commands::reorder_rail,
+            commands::reorder_servers,
             commands::create_folder_with,
             commands::set_server_folder,
             commands::rename_folder,
@@ -90,6 +92,7 @@ pub fn run() {
             app.manage(Showing::default());
             app.manage(sharkord::CheckedSessions::default());
             app.manage(Inbox::default());
+            app.manage(notify::Notices::default());
             app.manage(shiver_core::jwt::Renewals::default());
             app.manage(shiver_core::limit::Joins::default());
             app.manage(rail::QuickRail::default());

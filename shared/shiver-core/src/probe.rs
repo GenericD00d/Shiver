@@ -67,11 +67,19 @@ fn parse_info(origin: &str, body: &Value) -> Option<ServerInfo> {
     })
 }
 
-/// The logo's url on the server's own origin. Built with `Url` so a stored name containing `?`,
-/// `#` or `/` stays one path segment.
+/// The logo's url on the server's own origin.
 fn logo_url(origin: &str, body: &Value) -> Option<String> {
-    let name = body.get("logo")?.get("name")?.as_str()?;
+    public_file_url(origin, body.get("logo")?.get("name")?.as_str()?, None)
+}
 
+/// A file the server serves under `/public/` (a logo, an avatar), with its signed link's token and
+/// expiry when it came with them. Built with `Url` so a stored name containing `?`, `#` or `/` stays
+/// one path segment; an empty or dot name is refused.
+pub fn public_file_url(
+    origin: &str,
+    name: &str,
+    token: Option<(&str, Option<u64>)>,
+) -> Option<String> {
     if name.is_empty() || name == "." || name == ".." {
         return None;
     }
@@ -79,6 +87,16 @@ fn logo_url(origin: &str, body: &Value) -> Option<String> {
     let mut url = url::Url::parse(origin).ok()?;
 
     url.path_segments_mut().ok()?.extend(["public", name]);
+
+    if let Some((token, expires)) = token {
+        let mut query = url.query_pairs_mut();
+
+        query.append_pair("accessToken", token);
+
+        if let Some(expires) = expires {
+            query.append_pair("expires", &expires.to_string());
+        }
+    }
 
     Some(url.into())
 }
@@ -176,6 +194,28 @@ mod tests {
             Some("chat.example.com".into())
         );
         assert_eq!(info(serde_json::json!({ "name": "Chat" })), None);
+    }
+
+    #[test]
+    fn a_signed_file_carries_its_token_and_expiry() {
+        assert_eq!(
+            public_file_url(
+                "https://chat.example.com",
+                "a b?.png",
+                Some(("t0k&", Some(99)))
+            )
+            .as_deref(),
+            Some("https://chat.example.com/public/a%20b%3F.png?accessToken=t0k%26&expires=99")
+        );
+        assert_eq!(
+            public_file_url("https://chat.example.com", "a.png", Some(("t", None))).as_deref(),
+            Some("https://chat.example.com/public/a.png?accessToken=t")
+        );
+        assert_eq!(
+            public_file_url("https://chat.example.com", "..", Some(("t", None))),
+            None
+        );
+        assert_eq!(public_file_url("not an origin", "a.png", None), None);
     }
 
     #[test]

@@ -1,16 +1,10 @@
-//! Shiver's quick rail on Android (a no-op elsewhere).
+//! Shiver's quick rail on Android (a no-op elsewhere): the shared rail, drawn over the server page in
+//! a WebView of the plugin's own, so the page keeps running (and connected) behind it and never sees
+//! it. Each load of a server page is a join, which Sharkord allows only a few times a minute.
 //!
-//! Android has one webview, and Shiver's full rail is on its own page, so reaching it used to
-//! unload the server's page; coming back loaded it again, and each load joins the server, which
-//! Sharkord allows only a few times a minute. This rail is drawn with the platform's own views over
-//! the page instead, which keeps running (and connected) behind it. Being native, it is out of the
-//! page's reach: a server's page never sees what else is on the rail.
-//!
-//! It is laid out as Shiver's own rail: direct messages, the servers and a tile to add one, and
-//! settings at the bottom. The core hands it what to draw ([`RailView`]) and hears back what the
-//! user chose ([`RailEvent`]).
-//! Logos travel once: a tile names its logo by a key, and carries the logo itself only when the
-//! core has not sent that key before; the rail reports the keys it lacks.
+//! The core hands it what to draw ([`RailView`]) and hears what the user chose ([`RailEvent`]). A
+//! logo travels once: a tile names it by a key and carries it only with a key not sent before; the
+//! rail reports the keys it lacks.
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -33,7 +27,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Tile {
     pub id: String,
     pub name: String,
-    pub initials: String,
+    pub folder_id: Option<String>,
+    /// its place at the top level, or within its folder
+    pub position: i32,
     pub unread: u32,
     /// names the logo, when there is one
     pub icon_key: Option<String>,
@@ -41,29 +37,31 @@ pub struct Tile {
     pub icon: Option<String>,
 }
 
-/// One row of the rail.
+/// A folder, placed among the top-level servers.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub enum Row {
-    Server { server: Tile },
-    Folder { name: String, servers: Vec<Tile> },
+#[serde(rename_all = "camelCase")]
+pub struct RailFolder {
+    pub id: String,
+    pub name: String,
+    pub position: i32,
+    pub expanded: bool,
 }
 
-/// Everything the rail draws. Colours are `#rrggbb`.
+/// Everything the rail draws, and the user's colours to draw it in (`#rrggbb`; no text colour is
+/// the automatic one). The page orders it as the rail on Shiver's own page does.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RailView {
-    pub rail: String,
-    pub surface: String,
-    pub surface_dim: String,
-    pub text: String,
-    pub accent: String,
+    pub theme_color: String,
+    pub accent_color: String,
+    pub text_color: Option<String>,
     /// the server whose page is behind the rail
     pub current: Option<String>,
-    pub rows: Vec<Row>,
+    pub servers: Vec<Tile>,
+    pub folders: Vec<RailFolder>,
 }
 
-/// What the user did with the rail. Each one has already closed it.
+/// What the user did with the rail. Each but `Folder` has already closed it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum RailEvent {
@@ -80,6 +78,12 @@ pub enum RailEvent {
     Settings,
     /// back to the page behind
     Closed,
+    /// a folder opened or shut; the rail stays up
+    Folder {
+        #[serde(rename = "folderId")]
+        folder_id: String,
+        expanded: bool,
+    },
 }
 
 #[derive(Default, Deserialize)]
@@ -208,32 +212,48 @@ mod tests {
         assert_eq!(read(r#"{"kind":"add"}"#), Some(RailEvent::Add));
         assert_eq!(read(r#"{"kind":"settings"}"#), Some(RailEvent::Settings));
         assert_eq!(read(r#"{"kind":"closed"}"#), Some(RailEvent::Closed));
+        assert_eq!(
+            read(r#"{"kind":"folder","folderId":"f","expanded":true}"#),
+            Some(RailEvent::Folder {
+                folder_id: "f".into(),
+                expanded: true
+            })
+        );
+        assert_eq!(read(r#"{"kind":"folder","folderId":"f"}"#), None);
         assert_eq!(read(r#"{"kind":"home"}"#), None);
         assert_eq!(read(r#"{"kind":"open"}"#), None);
         assert_eq!(read(r#"{"kind":"elsewhere"}"#), None);
     }
 
     #[test]
-    fn rows_are_tagged_for_the_rail() {
-        let tile = Tile {
-            id: "a".into(),
-            name: "Chat".into(),
-            initials: "C".into(),
-            unread: 2,
-            icon_key: None,
-            icon: None,
-        };
-        let folder = serde_json::to_value(Row::Folder {
-            name: "Work".into(),
-            servers: vec![tile.clone()],
+    fn the_view_is_what_the_page_reads() {
+        let view = serde_json::to_value(RailView {
+            theme_color: "#0a0a0a".into(),
+            accent_color: "#e5e5e5".into(),
+            text_color: None,
+            current: Some("a".into()),
+            servers: vec![Tile {
+                id: "a".into(),
+                name: "Chat".into(),
+                folder_id: Some("f".into()),
+                position: 0,
+                unread: 2,
+                icon_key: None,
+                icon: None,
+            }],
+            folders: vec![RailFolder {
+                id: "f".into(),
+                name: "Work".into(),
+                position: 0,
+                expanded: false,
+            }],
         })
         .unwrap();
 
-        assert_eq!(folder["kind"], "folder");
-        assert_eq!(folder["servers"][0]["iconKey"], Value::Null);
-        assert_eq!(
-            serde_json::to_value(Row::Server { server: tile }).unwrap()["server"]["unread"],
-            2
-        );
+        assert_eq!(view["themeColor"], "#0a0a0a");
+        assert_eq!(view["textColor"], Value::Null);
+        assert_eq!(view["servers"][0]["folderId"], "f");
+        assert_eq!(view["servers"][0]["iconKey"], Value::Null);
+        assert_eq!(view["folders"][0]["expanded"], false);
     }
 }

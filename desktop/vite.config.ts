@@ -5,6 +5,9 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
+  // shared/web's components import React from outside this project: always this project's copy,
+  // the one the app renders with (a second copy would break their hooks)
+  resolve: { dedupe: ['react', 'react-dom'] },
   server: {
     port: 1420,
     strictPort: true,

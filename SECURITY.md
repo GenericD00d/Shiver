@@ -110,9 +110,12 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   before the server's first load is refused. It steps aside if the server refuses the token or the
   user signs in on the page; logging out of or removing a server clears what its page stored
   (on Android every account on one address shares that storage, so it is cleared for all of them).
-- **What a server's page can learn on Android.** There is one webview, and the rail is never in
-  the server's page: the quick rail is drawn with Android's own views over it (a page cannot read
-  those), and the full one is on Shiver's own page. A server's page is handed its own entry's
+- **What a server's page can learn on Android.** There is one app webview, and the rail is never in
+  the server's page: the quick rail is drawn over it in a WebView of the rail plugin's own, which
+  shares no script world with the page, loads only the rail's page from the app's assets with network
+  loads blocked, and has no IPC (it talks to the plugin over a message channel offered to its own
+  origin alone, and the plugin passes on only its known choices, which the core checks again); the
+  full rail is on Shiver's own page. A server's page is handed its own entry's
   settings, mutes, session and push endpoint, and the address of Shiver's page (asking for the rail
   is a navigation there, which the core turns into the quick rail); nothing about other servers. It
   can navigate to Shiver's page, whose fragment can only ask for the rail or one of Shiver's screens

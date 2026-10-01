@@ -46,7 +46,7 @@ will serve you perfectly well.
 - **HTTPS only.** Shiver refuses to add a server, sign in to one, or open a socket over `http://`,
   with no exemption for localhost or a private address.
 - **Unread badges per server**, cleared by opening it, with per-channel mutes excluded
-- **A direct message inbox across servers**, ordered by when the last message arrived and labelled
+- **A direct message inbox across servers**, ordered by its latest message, sent or received, and labelled
   with the server it is on. It lives on Shiver's own screen rather than inside a server's page,
   which is what keeps one server from being handed the name of everyone you talk to on the others
 - **Per-channel mute** — dimmed in the channel list, no notification, no sound
@@ -85,12 +85,24 @@ follow you between devices: muted channels, custom statuses, and the push endpoi
 server wake your phone. It also draws usernames in their role colour (an admin can turn that off).
 Everyone on the server gets statuses and colours, browser users included.
 
+## Known limitations
+
+- **The DM inbox's order on desktop, without the companion plugin.** A server whose page is open
+  (the one Shiver opens at launch, say) cannot tell Shiver when its older conversations last had a
+  message: Sharkord's client keeps that to itself. Until a message arrives in one, they sit below
+  the rest, by name. With the [companion plugin](plugin/README.md#conversation-order) on that
+  server, Shiver asks it instead and the order is right from the start.
+- **The DM inbox on Android, for the server just left.** Android reads every server's conversations
+  over the core's own connections, and the server on screen has none (its page is connected
+  instead), nor the one left until 30 seconds have passed (going straight back would otherwise
+  connect it twice). Its conversations join the list once that connection is up.
+
 ## What it deliberately does not do
 
 Each server's client runs pinned to its own origin with no way to call into Shiver. On desktop the
-rail is Shiver's own webview; on Android, where there is one webview, it is drawn with Android's own
-views over the server's page, which cannot read them. Either way a server's page is told nothing
-about your other servers.
+rail is Shiver's own webview; on Android it is drawn over the server's page in a WebView of its own,
+which loads nothing but the rail and which the server's page cannot read. Either way a server's page
+is told nothing about your other servers.
 
 ## Building
 

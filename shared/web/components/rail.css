@@ -1,0 +1,293 @@
+/* The rail both clients draw (Rail.tsx), in the desktop client's look. On desktop it is the only part
+   of the shell always visible: the active server webview covers the rest. */
+.rail {
+  width: var(--shiver-rail-width);
+  flex: 0 0 var(--shiver-rail-width);
+  height: 100%;
+  background: var(--shiver-rail);
+  border-right: 1px solid var(--shiver-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  /* a press here is a gesture, never a text selection */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.rail::-webkit-scrollbar {
+  display: none;
+}
+
+.rail-item {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  border: none;
+  padding: 0;
+  border-radius: 16px;
+  background: var(--shiver-surface);
+  color: var(--shiver-text);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 600;
+  transition: border-radius 120ms ease, background 120ms ease;
+}
+
+/* no hover on a touch screen, where it would stick after a tap: the press is the feedback there */
+@media (hover: hover) {
+  .rail-item:hover,
+  .rail-folder-tile:hover {
+    border-radius: 14px;
+    background: var(--shiver-surface-hover);
+  }
+}
+
+.rail-item:active,
+.rail-folder-tile:active {
+  border-radius: 14px;
+  background: var(--shiver-surface-hover);
+}
+
+.rail-item.active {
+  border-radius: 14px;
+  box-shadow: 0 0 0 2px var(--shiver-accent);
+}
+
+/* A tile's slot reaches into the gaps either side of it. The negative margin cancels the padding, so
+   the rail looks identical while a drop anywhere in the column has a tile to land on. */
+.rail-slot {
+  flex: 0 0 auto;
+  padding: 4px 0;
+  margin: -4px 0;
+}
+
+/* the edges of a tile reorder, the centre merges, so the two need to look different: a line where
+   the item would land, versus a ring around the tile it would join */
+.rail-item,
+.rail-folder-tile {
+  position: relative;
+}
+
+.rail-item.insert-before::after,
+.rail-item.insert-after::after,
+.rail-folder-tile.insert-before::after,
+.rail-folder-tile.insert-after::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--shiver-accent);
+}
+
+.rail-item.insert-before::after,
+.rail-folder-tile.insert-before::after {
+  top: -6px;
+}
+
+.rail-item.insert-after::after,
+.rail-folder-tile.insert-after::after {
+  bottom: -6px;
+}
+
+.rail-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* the tile clips nothing (the badge and drop line overhang it), so the icon rounds itself */
+  border-radius: inherit;
+  transition: border-radius 120ms ease;
+}
+
+.rail-add {
+  background: var(--shiver-surface);
+  color: var(--shiver-accent);
+  font-size: 24px;
+  line-height: 1;
+}
+
+/* dropping a server onto another makes a folder of the two, so that target reads differently
+   from a plain reorder */
+.rail-item.merge-target {
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--shiver-accent);
+}
+
+.rail-folder {
+  width: 48px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+/* collapsed, the tile is a 2x2 preview of the folder's first four servers */
+.rail-folder-tile {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  border: none;
+  padding: 4px;
+  border-radius: 16px;
+  background: var(--shiver-surface);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: border-radius 120ms ease, background 120ms ease;
+}
+
+.rail-folder-tile.drop-target {
+  box-shadow: 0 0 0 2px var(--shiver-accent);
+}
+
+.rail-folder-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+}
+
+.rail-folder-mini {
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--shiver-surface-hover);
+  color: var(--shiver-text);
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.rail-folder-mini img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* expanded, the tile collapses to a small marker and the members list below it */
+.rail-folder-tile.expanded {
+  height: 20px;
+  flex: 0 0 20px;
+  border-radius: 10px;
+  padding: 0;
+}
+
+.rail-folder-open {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--shiver-text-dim);
+}
+
+.rail-folder-contents {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-radius: 16px;
+  background: var(--shiver-bg);
+}
+
+.rail-item.in-folder {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 13px;
+  font-size: 14px;
+}
+
+/* Unread count: Sharkord's own pale badge, overhanging the tile like the bell's (red is kept for
+   the offline mark). */
+.rail-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--shiver-text);
+  color: var(--shiver-rail);
+  font-size: 9px;
+  line-height: 16px;
+  font-weight: 700;
+  pointer-events: none;
+  /* the same hairline as the status dot, so the two badges on a tile match */
+  box-shadow: 0 0 0 1px var(--shiver-rail);
+}
+
+/* A server that is not answering: a red mark with the exclamation cut out, so the icon shows
+   through; `inherit` follows the tile's radius. */
+.rail-offline {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.rail-offline svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.rail-spacer {
+  flex: 1 1 auto;
+  min-height: 8px;
+}
+
+.rail-divider {
+  width: 32px;
+  height: 1px;
+  flex: 0 0 1px;
+  background: var(--shiver-border);
+}
+
+
+/* picked up: carried under the pointer (Rail.tsx sets the offset), above its neighbours, and see-through
+   enough that the tile it is over still reads */
+.rail-item.lifted,
+.rail-folder-tile.lifted {
+  z-index: 2;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 55%);
+  opacity: 0.7;
+  transition: none;
+  cursor: grabbing;
+}
+
+.rail.dragging {
+  cursor: grabbing;
+}
+
+.rail img {
+  /* decoration only; the press belongs to the tile, and the platform's image drag must not take it */
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* where it would land is drawn over the tile being carried, which is otherwise on top of it */
+.rail-item.merge-target,
+.rail-folder-tile.drop-target,
+.rail-item.insert-before,
+.rail-item.insert-after,
+.rail-folder-tile.insert-before,
+.rail-folder-tile.insert-after {
+  z-index: 3;
+}

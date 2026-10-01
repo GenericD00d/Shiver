@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, errorMessage } from './api';
-import { AddServer } from './components/AddServer';
 import { BackgroundNotifications } from './components/BackgroundNotifications';
 import { Boot, type BootState, type ConfirmAction } from './components/Boot';
 import { DirectMessages } from './components/DirectMessages';
-import { UpdateNotice } from './components/UpdateNotice';
 import type { SettingsSection } from './components/SettingsScreen';
-import { Rail, type RailRef } from './components/Rail';
 import { ServerList } from './components/ServerList';
 import { Sessions, TrustedLinks } from './components/Sessions';
-import { SignInServer } from './components/SignInServer';
 import { SettingsScreen } from './components/SettingsScreen';
+import { AddServerForm } from '../../shared/web/components/AddServerForm';
+import { Menu } from '../../shared/web/components/Menu';
+import { Rail } from '../../shared/web/components/Rail';
+import { RenameFolderForm } from '../../shared/web/components/RenameFolderForm';
+import { SignInForm } from '../../shared/web/components/SignInForm';
+import { UpdateNotice } from '../../shared/web/components/UpdateNotice';
 import { applyTheme } from '../../shared/web/theme';
 import {
   DEFAULT_ACCENT_COLOR,
@@ -20,13 +22,14 @@ import {
   type ServerEntry,
   type Settings
 } from './types';
-import { byPosition } from '../../shared/web/rail';
+import { folderMenu, type MenuEntry, notifyLevelOf, readMenuId, serverMenu } from '../../shared/web/menus';
+import { byPosition, type RailRef, type RailStep, runRailSteps } from '../../shared/web/rail';
 
 /**
  * Shiver's own screens. `boot` opens the last server used, or waits after `#home` (the quick rail
  * could not be drawn, so the swipe that asked for it lands here).
  */
-type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms';
+type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms' | 'folder';
 
 /** The screens the quick rail can open, each by the fragment of the same name. */
 const RAIL_SCREENS = ['dms', 'add', 'settings'] as const;
@@ -57,10 +60,16 @@ const EMPTY: Registry = {
   }
 };
 
-const TITLES: Record<Exclude<Screen, 'boot'>, string> = {
-  add: 'Add a server',
+/**
+ * How long Shiver's page may be on its way to a server before its rail is drawn. The quick rail is
+ * the one seen over a server, so a page only passing through (launch, a server chosen on the quick
+ * rail) shows none; one that stays that long is slow, and the rail lets the user go elsewhere.
+ */
+const PASSING_THROUGH_MS = 2000;
+
+/** The screens with a bar across the top; the others are a card with its own title and Cancel. */
+const TITLES: Partial<Record<Screen, string>> = {
   settings: 'Settings',
-  signIn: 'Sign in',
   dms: 'Direct messages'
 };
 
@@ -111,9 +120,29 @@ export const App = () => {
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   /** the server the sign-in screen is for */
   const [signingIn, setSigningIn] = useState<string | null>(null);
+  /** the folder the rename screen is for */
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  /** the rail's menu, while it is open */
+  const [menu, setMenu] = useState<{ entries: MenuEntry[]; at: { x: number; y: number } } | null>(null);
   const [boot, setBoot] = useState<BootState>({ kind: 'waiting' });
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
+  /** a newer release on offer, until turned down or put off */
+  const [update, setUpdate] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .updateAvailable()
+      .then(setUpdate)
+      .catch(() => undefined);
+
+    // found after launch, by the core's own check
+    const stop = api.onUpdate(setUpdate);
+
+    return () => {
+      void stop.then((unlisten) => unlisten());
+    };
+  }, []);
 
   const [icons, setIcons] = useState<Record<string, string>>({});
   const loadIcons = useCallback(() => void api.serverIcons().then(setIcons, () => undefined), []);
@@ -121,7 +150,7 @@ export const App = () => {
   useEffect(loadIcons, [loadIcons]);
 
   const servers = useMemo(
-    () => byPosition(registry.servers).map((server) => ({ ...server, icon: icons[server.id] })),
+    () => byPosition(registry.servers).map((server) => ({ ...server, icon: icons[server.id] ?? null })),
     [registry.servers, icons]
   );
 
@@ -379,30 +408,135 @@ export const App = () => {
 
   const handleSettings = useCallback((settings: Settings) => void change(() => api.updateSettings(settings)), [change]);
 
+  /** A server's or folder's menu, from the item model both clients share. */
+  const openMenu = useCallback(
+    (target: RailRef, at: { x: number; y: number }) => {
+      if (target.kind === 'folder') {
+        setMenu({ entries: folderMenu(target.id), at });
+
+        return;
+      }
+
+      const server = servers.find((candidate) => candidate.id === target.id);
+
+      if (!server) return;
+
+      setMenu({
+        entries: serverMenu(server, {
+          folders: registry.folders,
+          hasPassword: remembered.includes(server.id),
+          plugin: server.id in plugins ? plugins[server.id] : undefined,
+          // a problem watching it is what the size limit raises; the settings list offers the same
+          tooLarge: server.id in problems,
+          canMarkRead: false
+        }),
+        at
+      });
+    },
+    [plugins, problems, registry.folders, remembered, servers]
+  );
+
+  const chooseFromMenu = useCallback(
+    (id: string) => {
+      const chosen = readMenuId(id);
+
+      if (!chosen) return;
+
+      const { action, target } = chosen;
+
+      switch (action) {
+        case 'open':
+          openById(target);
+          break;
+        case 'refresh':
+          void change(() => api.refreshServerInfo(target)).then(loadIcons);
+          break;
+        case 'notify-all':
+        case 'notify-mentions':
+        case 'notify-dms':
+          void change(() => api.setNotifyLevel(target, notifyLevelOf(action) ?? 'all'));
+          break;
+        case 'anysize':
+        case 'normalsize':
+          void change(() => api.setAcceptAnySize(target, action === 'anysize'));
+          break;
+        case 'forgetpw':
+        case 'logout':
+        case 'remove':
+          handleAsk(action, target);
+          break;
+        case 'signin':
+          setSigningIn(target);
+          setScreen('signIn');
+          break;
+        case 'move': {
+          const [serverId, folderId] = target.split(':');
+
+          void change(() => api.setServerFolder(serverId, folderId));
+          break;
+        }
+        case 'unfolder':
+          void change(() => api.setServerFolder(target, null));
+          break;
+        case 'rename-folder':
+          setRenamingFolder(target);
+          setScreen('folder');
+          break;
+        case 'delete-folder':
+          void change(() => api.deleteFolder(target));
+          break;
+        case 'markread':
+        case 'plugin':
+          break;
+      }
+    },
+    [change, handleAsk, loadIcons, openById]
+  );
+
+  /** A drag's calls, in order, then the registry read again (which redraws the rail). */
+  const applyDrop = useCallback(
+    (steps: RailStep[]) => void change(() => runRailSteps(steps, api)),
+    [change]
+  );
+
+  const renaming = registry.folders.find((folder) => folder.id === renamingFolder);
+
+  // on its way to a server (a wait for a join is a stay, not a pass)
+  const passingThrough =
+    screen === 'boot' && (boot.kind === 'waiting' || (boot.kind === 'connecting' && !boot.until));
+  const [slow, setSlow] = useState(false);
+
+  useEffect(() => {
+    setSlow(false);
+
+    if (!passingThrough) return;
+
+    const timer = window.setTimeout(() => setSlow(true), PASSING_THROUGH_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [passingThrough]);
+
   return (
-    <div className="app">
-      <Rail
-        servers={servers}
-        activeId={null}
-        screen={screen}
-        unread={unread}
-        onOpen={openById}
-        onOpenDms={() => setScreen('dms')}
-        onAdd={() => setScreen('add')}
-        onSettings={() => setScreen('settings')}
-        onRefresh={(id) => void change(() => api.refreshServerInfo(id)).then(loadIcons)}
-        onAsk={handleAsk}
-        onReorder={(ordered: RailRef[]) => void change(() => api.reorderRail(ordered))}
-        folders={registry.folders}
-        onSetFolder={(id, folderId) => void change(() => api.setServerFolder(id, folderId))}
-        onCreateFolder={(memberIds) => void change(() => api.createFolderWith('New folder', memberIds))}
-        onRenameFolder={(id, name) => void change(() => api.renameFolder(id, name))}
-        onDeleteFolder={(id) => void change(() => api.deleteFolder(id))}
-        onToggleFolder={(id, expanded) => void change(() => api.setFolderExpanded(id, expanded))}
-      />
+    <div className="app touch">
+      {passingThrough && !slow ? null : (
+        <Rail
+          servers={servers}
+          folders={registry.folders}
+          activeId={null}
+          screen={screen === 'dms' || screen === 'add' || screen === 'settings' ? screen : null}
+          unread={unread}
+          onOpen={openById}
+          onOpenDms={() => setScreen('dms')}
+          onAdd={() => setScreen('add')}
+          onSettings={() => setScreen('settings')}
+          onToggleFolder={(id, expanded) => void change(() => api.setFolderExpanded(id, expanded))}
+          onDrop={applyDrop}
+          onMenu={openMenu}
+        />
+      )}
 
       <div className="main">
-        {screen === 'boot' ? null : (
+        {!TITLES[screen] ? null : (
           <header className="bar">
             {screen === 'settings' ? (
               <button
@@ -424,10 +558,18 @@ export const App = () => {
           </header>
         )}
 
-        {error ? <p className="error">{error}</p> : null}
+        {error ? <p className="error app-error">{error}</p> : null}
 
         <main className="content">
-          <UpdateNotice />
+          {/* Shiver cannot install packages itself (that would need `REQUEST_INSTALL_PACKAGES`), so
+              "Get it" opens the releases page */}
+          <UpdateNotice
+            version={update}
+            takeLabel="Get it"
+            onTake={api.openReleases}
+            onLater={() => setUpdate(null)}
+            onSkip={api.skipUpdate}
+          />
 
           {screen === 'boot' ? (
             <Boot
@@ -438,22 +580,72 @@ export const App = () => {
             />
           ) : null}
 
-          {screen === 'add' ? <AddServer onAdded={handleAdded} /> : null}
+          {screen === 'folder' && renaming ? (
+            <div className="modal-backdrop">
+              <RenameFolderForm
+                key={renaming.id}
+                name={renaming.name}
+                onSave={(name) => void change(() => api.renameFolder(renaming.id, name)).then(() => resume(registry))}
+                onCancel={() => void resume(registry)}
+              />
+            </div>
+          ) : null}
+
+          {screen === 'add' ? (
+            <div className="modal-backdrop">
+              <AddServerForm
+                hint={
+                  <>
+                    Shiver signs in for you, so the server opens straight into the app. Your password goes only to
+                    this server, and both it and the session are kept in Android's encrypted store, under a key the
+                    phone's Keystore holds — so Shiver can sign you in again when the session runs out, which
+                    Sharkord makes it do every seven days. Take it back whenever you like by holding the server in
+                    the rail.
+                  </>
+                }
+                check={api.checkServer}
+                add={async ({ origin, identity, password, accountLabel }) => {
+                  await api.addServer(origin, identity, password, accountLabel, !!password);
+                  await handleAdded();
+                }}
+                onCancel={servers.length > 0 ? () => void resume(registry) : null}
+              />
+            </div>
+          ) : null}
 
           {screen === 'dms' ? (
             <DirectMessages onOpen={openById} />
           ) : null}
 
           {screen === 'signIn' && signingInServer ? (
-            <SignInServer
-              server={signingInServer}
-              remembered={remembered.includes(signingInServer.id)}
-              onDone={() => {
-                readSessions();
-                setScreen('settings');
-              }}
-              onCancel={() => setScreen('settings')}
-            />
+            <div className="modal-backdrop">
+              <SignInForm
+                key={signingInServer.id}
+                serverName={signingInServer.name}
+                identity={signingInServer.identity}
+                hint={
+                  <>
+                    Sharkord expires a session after seven days and offers no way to renew one, so Shiver's watch of{' '}
+                    {signingInServer.origin.replace(/^https?:\/\//, '')} ends with it. Signing in gives Shiver a fresh
+                    session.
+                  </>
+                }
+                rememberHint={
+                  <>
+                    Shiver keeps the password and signs in again by itself, so this server never goes quiet. Stored
+                    encrypted under a key the phone's Keystore holds and Shiver cannot read out. Left unticked, you sign
+                    in here again when the session next expires.
+                  </>
+                }
+                remembered={remembered.includes(signingInServer.id)}
+                onSubmit={async (identity, password, remember) => {
+                  await api.signInServer(signingInServer.id, identity, password, remember);
+                  readSessions();
+                  setScreen('settings');
+                }}
+                onCancel={() => setScreen('settings')}
+              />
+            </div>
           ) : null}
 
           {screen === 'settings' ? (
@@ -547,6 +739,8 @@ export const App = () => {
           ) : null}
         </main>
       </div>
+
+      {menu ? <Menu entries={menu.entries} at={menu.at} onChoose={chooseFromMenu} onClose={() => setMenu(null)} /> : null}
     </div>
   );
 };

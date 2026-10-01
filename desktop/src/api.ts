@@ -4,6 +4,7 @@ import type {
   DmEntry,
   FeedSummary,
   Folder,
+  MenuFacts,
   Notification,
   NotifyLevel,
   Registry,
@@ -12,6 +13,10 @@ import type {
   Settings,
   VoiceStatus
 } from './types';
+
+import type { MenuEntry } from '../../shared/web/menus';
+
+export { errorMessage } from '../../shared/web/errors';
 
 /**
  * Every call into the rust core. The core owns the server list, the webviews and the credential
@@ -69,7 +74,11 @@ export const api = {
   setChannelMuted: (entryId: string, channelId: number, muted: boolean) =>
     invoke<void>('set_channel_muted', { entryId, channelId, muted }),
 
-  showServerMenu: (id: string) => invoke<void>('show_server_menu', { id }),
+  /** what a server's menu says beyond its entry */
+  serverMenuFacts: (id: string) => invoke<MenuFacts>('server_menu_facts', { id }),
+
+  /** a rail menu as a native menu at the pointer; the chosen item comes back as `EVENTS.menu` */
+  showMenu: (entries: MenuEntry[]) => invoke<void>('show_menu', { entries }),
 
   togglePopup: () => invoke<boolean>('toggle_popup'),
 
@@ -95,8 +104,6 @@ export const api = {
 
   createFolderWith: (name: string, memberIds: string[]) =>
     invoke<Folder>('create_folder_with', { name, memberIds }),
-
-  showFolderMenu: (id: string) => invoke<void>('show_folder_menu', { id }),
 
   setServerFolder: (id: string, folderId: string | null) =>
     invoke<void>('set_server_folder', { id, folderId }),
@@ -151,7 +158,3 @@ export const api = {
 
   refreshServerInfo: (id: string) => invoke<ServerEntry>('refresh_server_info', { id })
 };
-
-/** Tauri rejects with the rust error's user-facing message, which is already worth showing. */
-export const errorMessage = (error: unknown) =>
-  typeof error === 'string' ? error : error instanceof Error ? error.message : 'Something went wrong';

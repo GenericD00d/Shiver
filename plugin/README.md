@@ -25,8 +25,12 @@ Needs Sharkord **0.0.25 or newer** (plugin SDK 2). A server on 0.0.24 refuses to
 
 That is the whole install. Nothing else about the server changes.
 
-**Updating:** replace the folder and restart the server. The server half is one file,
-`server/index.js`, so no older copy of a part of it can be left running beside a newer one.
+**Updating:** replace the folder, then restart the server (or turn **Shiver** off and on again in
+Settings → Plugins). Until then the old version keeps running: Sharkord's Plugins page already
+shows the new version, since it reads `manifest.json` from disk, but the version everyone's client
+is told, and so the one Shiver reports when adding a server, is the one loaded. The server half is
+one file, `server/index.js`, so no older copy of a part of it can be left running beside a newer
+one.
 
 ## What it stores
 
@@ -179,6 +183,16 @@ mentions carry no id in Sharkord's page, so those are matched by the name shown.
 An admin can turn it off for everyone under **Settings → Plugins → Shiver → Colour usernames by
 role**. Open pages follow the change without a reload. Shiver's apps draw no colours of their own, so
 on a server without this plugin names stay Sharkord's plain colour.
+
+## Conversation order
+
+Shiver lists every server's direct messages together, newest message first. A server's page cannot
+read when each conversation last had a message (Sharkord's client keeps that to its own DM list), so
+on desktop, for a server whose page is open, Shiver asks the plugin: the `getDmTimes` action answers
+with the time of the newest message in each of the caller's own conversations. Only DMs the caller
+takes part in are answered (for a DM, Sharkord's channel permission is membership alone, so not
+even an owner can ask about anyone else's), only the time is read, never the message, and nothing
+is stored. Reads are rate limited per user like the plugin's others.
 
 ## Updating while people are connected
 

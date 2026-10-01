@@ -1,11 +1,9 @@
-//! The quick rail: direct messages, the servers and settings, drawn natively over the server page on
-//! screen (`tauri-plugin-shiver-rail`), so reaching them no longer unloads the page. Coming back to
-//! the same server is closing the rail; the page never stopped, so it never joins the server again.
+//! The quick rail over the server page (`tauri-plugin-shiver-rail`), so reaching Shiver's screens
+//! does not unload it; coming back to the same server only closes the rail.
 //!
-//! A server's page asks for the rail the only way it can, by navigating to Shiver's page with
-//! `#home` (a swipe past the drawer, or back); that navigation is cancelled and the rail drawn
-//! instead. Choosing another server, or one of Shiver's own screens, leaves through Shiver's page
-//! as before (`#open=<id>`, `#dms`, `#add`, `#settings`).
+//! A server's page asks for it by navigating to Shiver's page with `#home` (a swipe past the drawer,
+//! or back); that navigation is cancelled and the rail drawn instead. Another server, or one of
+//! Shiver's screens, is reached through Shiver's page (`#open=<id>`, `#dms`, `#add`, `#settings`).
 
 use std::{
     collections::HashMap,
@@ -15,15 +13,17 @@ use std::{
     },
 };
 
-use shiver_core::{
-    model::palette,
-    rail::{initials, rows, RailRow},
-    LockExt,
-};
+use shiver_core::LockExt;
 use tauri::{AppHandle, Manager, Url};
-use tauri_plugin_shiver_rail::{RailEvent, RailExt, RailView, Row, Tile};
+use tauri_plugin_shiver_rail::{RailEvent, RailExt, RailFolder, RailView, Tile};
 
-use crate::{icons, inbox::Inbox, model::ServerEntry, store::Store, webview};
+use crate::{
+    icons,
+    inbox::Inbox,
+    model::ServerEntry,
+    store::{RegistryStore, Store},
+    webview,
+};
 
 #[derive(Default)]
 pub struct QuickRail {
@@ -71,25 +71,38 @@ pub fn close(app: &AppHandle) {
     });
 }
 
-/// What the user chose. The rail has already closed itself.
+/// What the user chose. The rail has already closed itself, unless a folder was opened or shut.
 pub fn chosen(app: &AppHandle, event: RailEvent) {
+    let screen = match event {
+        RailEvent::Folder {
+            folder_id,
+            expanded,
+        } => {
+            // an unknown folder stores nothing; either way the rail redraws to match the store
+            let _ = app.state::<Store>().update(|registry| {
+                Ok(registry.rail().set_folder_expanded(&folder_id, expanded)?)
+            });
+
+            return refresh(app);
+        }
+        RailEvent::Closed => None,
+        RailEvent::Dms => Some("dms".to_string()),
+        RailEvent::Add => Some("add".to_string()),
+        RailEvent::Settings => Some("settings".to_string()),
+        // opened by Shiver's page, which waits for the server to take another join if need be
+        RailEvent::Open { entry_id } => app
+            .state::<Store>()
+            .registry()
+            .server(&entry_id)
+            .map(|_| format!("open={entry_id}")),
+    };
+
     app.state::<QuickRail>()
         .open
         .store(false, Ordering::Release);
 
-    match event {
-        RailEvent::Closed => {}
-        RailEvent::Dms => webview::go_home(app, Some("dms")),
-        RailEvent::Add => webview::go_home(app, Some("add")),
-        RailEvent::Settings => webview::go_home(app, Some("settings")),
-        RailEvent::Open { entry_id } => {
-            let known = app.state::<Store>().registry().server(&entry_id).is_some();
-
-            // opened by Shiver's page, which waits for the server to take another join if need be
-            if known {
-                webview::go_home(app, Some(&format!("open={entry_id}")));
-            }
-        }
+    if let Some(fragment) = screen {
+        webview::go_home(app, Some(&fragment));
     }
 }
 
@@ -147,11 +160,6 @@ fn view(app: &AppHandle) -> RailView {
         )
     };
     let unread = app.state::<Inbox>().unread();
-    let colors = palette(
-        &settings.theme_color,
-        &settings.accent_color,
-        settings.text_color.as_deref(),
-    );
     let tile = |server: &ServerEntry| {
         let icon_key = icons::key(app, &server.id);
         let icon = icon_key.as_ref().and_then(|key| {
@@ -172,7 +180,8 @@ fn view(app: &AppHandle) -> RailView {
         Tile {
             id: server.id.clone(),
             name: server.name.clone(),
-            initials: initials(&server.name),
+            folder_id: server.folder_id.clone(),
+            position: server.position,
             unread: unread.get(&server.id).copied().unwrap_or(0),
             icon_key,
             icon,
@@ -180,22 +189,18 @@ fn view(app: &AppHandle) -> RailView {
     };
 
     RailView {
-        rail: colors.rail,
-        surface: colors.surface,
-        surface_dim: colors.surface_dim,
-        text: colors.text,
-        accent: colors.accent,
+        theme_color: settings.theme_color,
+        accent_color: settings.accent_color,
+        text_color: settings.text_color,
         current: app.state::<webview::Showing>().server(),
-        rows: rows(&servers, &folders)
+        servers: servers.iter().map(tile).collect(),
+        folders: folders
             .into_iter()
-            .map(|row| match row {
-                RailRow::Server(server) => Row::Server {
-                    server: tile(server),
-                },
-                RailRow::Folder(folder, members) => Row::Folder {
-                    name: folder.name.clone(),
-                    servers: members.into_iter().map(tile).collect(),
-                },
+            .map(|folder| RailFolder {
+                id: folder.id,
+                name: folder.name,
+                position: folder.position,
+                expanded: folder.expanded,
             })
             .collect(),
     }

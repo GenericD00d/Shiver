@@ -51,6 +51,15 @@ export type DmEntry = {
   channel: DmChannel;
 };
 
+/** `MenuFacts` in commands.rs: what a server's menu says beyond its entry. */
+export type MenuFacts = {
+  hasPassword: boolean;
+  /** whether Shiver has looked for the companion plugin yet */
+  pluginChecked: boolean;
+  plugin: string | null;
+  tooLarge: boolean;
+};
+
 /** What the badge on a server's icon says. */
 export type ServerStatus = 'online' | 'connecting' | 'offline';
 

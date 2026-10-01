@@ -34,4 +34,11 @@ wrong = {path: value for path, value in found.items() if value != version}
 if wrong:
     sys.exit("\n".join(f"{path} has {value}, Cargo.toml has {version}" for path, value in wrong.items()))
 
-print(f"every version is {version}")
+# The plugin has a version of its own; its manifest (what Sharkord reports) and package.json agree.
+plugin = json.loads((root / "plugin/manifest.json").read_text())["version"]
+plugin_package = json.loads((root / "plugin/package.json").read_text())["version"]
+
+if plugin != plugin_package:
+    sys.exit(f"plugin/package.json has {plugin_package}, plugin/manifest.json has {plugin}")
+
+print(f"every version is {version}; the plugin is {plugin}")
