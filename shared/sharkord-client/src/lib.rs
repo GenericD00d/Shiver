@@ -639,7 +639,7 @@ pub fn apply_delta(read_states: &mut HashMap<i64, u32>, channel_id: i64, delta: 
 /// How long to wait before reconnecting after `attempt` consecutive failures: 30s doubling to a
 /// 10-minute ceiling, plus a stable per-server offset (from `key`) so a whole rail does not
 /// reconnect in lockstep.
-fn retry_delay(attempt: u32, key: &str) -> std::time::Duration {
+pub fn retry_delay(attempt: u32, key: &str) -> std::time::Duration {
     const FIRST: std::time::Duration = std::time::Duration::from_secs(30);
     const CEILING: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 

@@ -240,15 +240,27 @@ struct Watch {
 
 impl sharkord::Watcher for Watch {
     async fn target(&mut self) -> Option<sharkord::Target> {
-        // asked each attempt, which is what renews an expiring session
-        let Some(token) = session::token(&self.app, &self.entry).await else {
-            eprintln!(
-                "[shiver] no session for {}; not watched until signed in",
-                self.entry.origin
-            );
-            finished(&self.app, &self.entry.id, self.task_id, true);
+        // asked each attempt, which is what renews an expiring session; a server that cannot be
+        // reached to sign in again is asked again later, as a dropped connection is
+        let mut attempt = 0;
+        let token = loop {
+            match session::session(&self.app, &self.entry).await {
+                Ok(token) => break token,
+                Err(session::NoSession::Unreachable) => {
+                    self.app.state::<Readiness>().disconnected(&self.entry.id);
+                    tokio::time::sleep(sharkord::retry_delay(attempt, &self.entry.id)).await;
+                    attempt = attempt.saturating_add(1);
+                }
+                Err(session::NoSession::Signed) => {
+                    eprintln!(
+                        "[shiver] no session for {}; not watched until signed in",
+                        self.entry.origin
+                    );
+                    finished(&self.app, &self.entry.id, self.task_id, true);
 
-            return None;
+                    return None;
+                }
+            }
         };
 
         let accept_any_size = self

@@ -648,7 +648,10 @@ pub async fn select_server(app: AppHandle, store: State<'_, Store>, id: String) 
 /// can cover it until `shiver://server-ready`.
 #[tauri::command]
 pub async fn prepare_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<bool> {
-    if app.get_webview(&webviews::webview_label(&id)).is_none() {
+    if app.get_webview(&webviews::webview_label(&id)).is_some() {
+        // a page that will not recover by itself is reloaded rather than waited on ("Try again")
+        crate::drain::revive_now(&app, &id);
+    } else {
         let (entry, settings, muted) = page_inputs(&store, &id)?;
         let token = session::token(&app, &entry).await;
 

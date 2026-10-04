@@ -148,6 +148,9 @@ pub struct DrainResult {
     pub ready: bool,
     #[serde(default)]
     pub signed_out: bool,
+    /// the page will not recover by itself (Sharkord gave up, or no client started); see `drain::Stalls`
+    #[serde(default)]
+    pub stalled: bool,
     #[serde(default)]
     pub fullscreen: bool,
     #[serde(default)]

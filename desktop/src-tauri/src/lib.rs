@@ -182,6 +182,7 @@ pub fn run() {
             app.manage(Recovery::default());
             app.manage(shiver_core::jwt::Renewals::default());
             app.manage(drain::Broadcast::default());
+            app.manage(drain::Stalls::default());
             app.manage(webviews::Openings::default());
             app.manage(update::Available::default());
             app.manage(Watcher::default());

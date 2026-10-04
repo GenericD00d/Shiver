@@ -33,6 +33,7 @@ import {
   notifyAllows,
   paintMuted,
   readDms,
+  RECONNECTING_OVERLAY,
   rowName,
   SERVER_VIEW,
   SIDE_PANEL,
@@ -231,6 +232,7 @@ function install(shiver: ShiverConfig) {
       openDmFailed,
       ready: isClientReady(state),
       signedOut: isSignedOut(),
+      stalled: isStalled(),
       fullscreen: isFullscreen(),
       voice: readVoice(state),
       // an open DM first: `selectedChannelId` keeps naming the last ordinary channel
@@ -242,8 +244,8 @@ function install(shiver: ShiverConfig) {
     openDmFailed = false;
     markAllRead = false;
 
-    const { notifications, mutes, open, ready, signedOut, fullscreen, voice, viewingChannelId } = drained;
-    const now = JSON.stringify([ready, signedOut, fullscreen, voice, viewingChannelId]);
+    const { notifications, mutes, open, ready, signedOut, stalled, fullscreen, voice, viewingChannelId } = drained;
+    const now = JSON.stringify([ready, signedOut, stalled, fullscreen, voice, viewingChannelId]);
     const queued =
       notifications.length || mutes.length || open.length || drained.markAllRead || drained.dms || drained.syncedMutes || drained.openDmFailed;
 
@@ -621,6 +623,25 @@ function isSignedOut() {
   } catch {
     return true;
   }
+}
+
+/** How long a page may go without Sharkord's client starting before it is counted as stalled. */
+const STALL_MS = 20_000;
+const startedAt = Date.now();
+
+/**
+ * Whether the page will not recover by itself, so the core should reload it once the server
+ * answers: Sharkord's "connection lost" screen, shown when its own retries (a few seconds' worth)
+ * are spent, or no Sharkord client at all (a proxy's error page while the server is down). Not a
+ * kick or a ban, whose screens the user should see.
+ */
+function isStalled() {
+  if (document.querySelector(SIDEBAR) || document.querySelector(RECONNECTING_OVERLAY)) return false;
+
+  // the wifi-off icon is also in the voice controls and Sharkord's retry overlay, both ruled out above
+  if (hasLucideIcon(document.documentElement, 'wifi-off')) return true;
+
+  return Date.now() - startedAt > STALL_MS && !sharkordStore();
 }
 
 /** Connected (own user known and the server view mounted), or showing its connect form. */

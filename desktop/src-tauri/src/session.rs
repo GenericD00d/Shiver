@@ -41,19 +41,34 @@ const RETRY_AFTER: Duration = Duration::from_secs(20);
 /// renewal is returned as it is and renewed in the background; only a missing or expired one waits
 /// on a sign-in.
 pub async fn token(app: &AppHandle, entry: &ServerEntry) -> Option<String> {
+    session(app, entry).await.ok()
+}
+
+/// A session token, or why there is none: no way to sign in (no password, or the server refused it,
+/// which only the user can answer), or the server could not be reached to sign in (which time does).
+pub async fn session(app: &AppHandle, entry: &ServerEntry) -> Result<String, NoSession> {
     let stored = secrets::read_off_thread(Secret::Session, &entry.id)
         .await
         .map(|token| token.to_string());
 
     match stored.as_deref().map(jwt::freshness) {
-        Some(Freshness::Fresh) => stored,
+        Some(Freshness::Fresh) => stored.ok_or(NoSession::Signed),
         Some(Freshness::Due) => {
             renew_in_background(app, entry);
 
-            stored
+            stored.ok_or(NoSession::Signed)
         }
         Some(Freshness::Expired) | None => renew(entry).await,
     }
+}
+
+/// Why `session` has no token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoSession {
+    /// no stored password, or the server refused it: only the user signing in will do
+    Signed,
+    /// the server did not answer, or not as Sharkord: worth asking again later
+    Unreachable,
 }
 
 /// A session to seed a new page with: `None` when the entry's page already exists, since it has
@@ -73,19 +88,19 @@ fn renew_in_background(app: &AppHandle, entry: &ServerEntry) {
     let (app, entry) = (app.clone(), entry.clone());
 
     tauri::async_runtime::spawn(async move {
-        if renew(&entry).await.is_some() {
+        if renew(&entry).await.is_ok() {
             app.state::<Renewals>().succeeded(&entry.id);
         }
     });
 }
 
 /// Signs in with the stored password and keeps the new session.
-async fn renew(entry: &ServerEntry) -> Option<String> {
+async fn renew(entry: &ServerEntry) -> Result<String, NoSession> {
     let (Some(identity), Some(password)) = (
         entry.identity.as_deref(),
         secrets::read_off_thread(Secret::Password, &entry.id).await,
     ) else {
-        return None;
+        return Err(NoSession::Signed);
     };
 
     match shiver_core::login::sign_in(&entry.origin, identity, &password).await {
@@ -98,7 +113,7 @@ async fn renew(entry: &ServerEntry) -> Option<String> {
                 );
             }
 
-            Some(token)
+            Ok(token)
         }
         Err(error) => {
             eprintln!(
@@ -106,7 +121,12 @@ async fn renew(entry: &ServerEntry) -> Option<String> {
                 entry.origin
             );
 
-            None
+            Err(match error {
+                shiver_core::Error::Unreachable(_) | shiver_core::Error::NotSharkord(_) => {
+                    NoSession::Unreachable
+                }
+                _ => NoSession::Signed,
+            })
         }
     }
 }
@@ -218,7 +238,7 @@ pub fn recover(app: &AppHandle, entry_id: &str) -> bool {
 }
 
 async fn sign_in_again(app: &AppHandle, entry: &ServerEntry) -> bool {
-    let Some(token) = renew(entry).await else {
+    let Ok(token) = renew(entry).await else {
         return false;
     };
 

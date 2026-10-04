@@ -8,8 +8,8 @@ release can break them without any Shiver test noticing. This checks, against a 
 - every `sharkord-*` storage key Shiver reads or seeds is one the client uses,
 - every class they match with `[class~="..."]` appears in the client's source (or its UI package),
 - and the other conventions named in `CONTRACTS` (notification titles, DM channel names, the
-  plugin store, the image portal, the member-list slot, the DM list's times, and the new-message
-  subscription and who it reaches).
+  plugin store, the image portal, the member-list slot, the DM list's times, the new-message
+  subscription and who it reaches, and the screens that tell a page gave up connecting).
 
 Usage: check-sharkord.py [SHARKORD_CHECKOUT] [--ref REF | --latest]
 Without a checkout, Sharkord is cloned at `SHARKORD_REF` (or `--ref`, or its default branch with
@@ -91,6 +91,16 @@ CONTRACTS = [
         "the page's client speaking over one WebSocket (watchDmActivity)",
         "apps/client/src/lib/trpc.ts",
         r"wsLink\(",
+    ),
+    (
+        "the plugin store exposed as the client starts, before any join (isStalled: none yet is a page that never loaded)",
+        "apps/client/src/main.tsx",
+        r"(?m)^exposePluginStore\(\);",
+    ),
+    (
+        "the screen shown once the client gives up reconnecting, with the `WifiOff` icon (isStalled)",
+        "apps/client/src/screens/disconnected/index.tsx",
+        r"<WifiOff ",
     ),
     (
         "the member-list slot rendered inside the member's row, after the name (the plugin's MemberColor)",

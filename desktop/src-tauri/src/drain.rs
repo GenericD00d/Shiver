@@ -116,6 +116,70 @@ impl Readiness {
     }
 }
 
+/// How long a page may say nothing (its document never loaded, so the bridge is not in it) before it
+/// is counted as stalled. A page the bridge reports stalled is counted at once.
+const STALL_GRACE: Duration = Duration::from_secs(20);
+
+/// Pages that will not recover by themselves: a document that never loaded (the server was down
+/// when it opened), or one whose client gave up (Sharkord stops retrying after a few seconds) or
+/// never started. Each is asked about with the server's own `/info`, backing off as the core's
+/// sockets do, and reloaded once the server answers.
+#[derive(Default)]
+pub struct Stalls(Mutex<HashMap<String, Stall>>);
+
+struct Stall {
+    attempts: u32,
+    next: Instant,
+    probing: bool,
+}
+
+impl Stalls {
+    /// Counts the page as stalled from now, unless it already is.
+    fn note(&self, entry_id: &str, after: Duration) {
+        self.0
+            .locked()
+            .entry(entry_id.to_string())
+            .or_insert_with(|| Stall {
+                attempts: 0,
+                next: Instant::now() + after,
+                probing: false,
+            });
+    }
+
+    fn clear(&self, entry_id: &str) {
+        self.0.locked().remove(entry_id);
+    }
+
+    pub fn is_stalled(&self, entry_id: &str) -> bool {
+        self.0.locked().contains_key(entry_id)
+    }
+
+    /// The stalled pages due a probe, marked as being probed.
+    fn due(&self, open: impl Fn(&str) -> bool) -> Vec<String> {
+        let mut stalls = self.0.locked();
+        let now = Instant::now();
+
+        stalls.retain(|entry_id, _| open(entry_id));
+        stalls
+            .iter_mut()
+            .filter(|(_, stall)| !stall.probing && stall.next <= now)
+            .map(|(entry_id, stall)| {
+                stall.probing = true;
+                entry_id.clone()
+            })
+            .collect()
+    }
+
+    /// A probe ended (and the page was reloaded if the server answered); the next one backs off.
+    fn probed(&self, entry_id: &str) {
+        if let Some(stall) = self.0.locked().get_mut(entry_id) {
+            stall.next = Instant::now() + sharkord_client::retry_delay(stall.attempts, entry_id);
+            stall.attempts = stall.attempts.saturating_add(1);
+            stall.probing = false;
+        }
+    }
+}
+
 /// The statuses last sent to the rail, so an unchanged set is not re-sent every poll.
 #[derive(Default)]
 pub struct Broadcast(Mutex<HashMap<String, ServerStatus>>);
@@ -164,7 +228,71 @@ fn poll_once(app: &AppHandle, background_turn: bool) {
     }
 
     reconcile_voice(app, &entry_ids);
+    revive_stalled(app);
     broadcast_statuses(app, &entry_ids);
+}
+
+/// Asks each stalled page's server whether it answers, and reloads the page if it does.
+fn revive_stalled(app: &AppHandle) {
+    for entry_id in app.state::<Stalls>().due(|entry_id| {
+        app.get_webview(&webviews::webview_label(entry_id))
+            .is_some()
+    }) {
+        let Some(origin) = app
+            .state::<Store>()
+            .registry()
+            .server(&entry_id)
+            .map(|entry| entry.origin.clone())
+        else {
+            continue;
+        };
+        let app = app.clone();
+
+        tauri::async_runtime::spawn(async move {
+            if shiver_core::probe::fetch_info(&origin).await.is_ok() {
+                reload(&app, &entry_id, &origin);
+            }
+
+            app.state::<Stalls>().probed(&entry_id);
+        });
+    }
+}
+
+/// Loads a server's page afresh (its bridge, and the session it was made with, come with it).
+fn reload(app: &AppHandle, entry_id: &str, origin: &str) {
+    let (Some(webview), Ok(url)) = (
+        app.get_webview(&webviews::webview_label(entry_id)),
+        url::Url::parse(origin),
+    ) else {
+        return;
+    };
+
+    eprintln!("[shiver] {origin} answers again; reloading its page");
+    app.state::<Readiness>().disconnected(entry_id);
+
+    if let Err(error) = webview.navigate(url) {
+        eprintln!("[shiver] could not reload {origin}'s page: {error}");
+    }
+}
+
+/// "Try again" on a page that will not recover by itself: reloads it now, and the backoff starts
+/// over. Returns whether there was one.
+pub fn revive_now(app: &AppHandle, entry_id: &str) -> bool {
+    if !app.state::<Stalls>().is_stalled(entry_id) {
+        return false;
+    }
+
+    if let Some(origin) = app
+        .state::<Store>()
+        .registry()
+        .server(entry_id)
+        .map(|entry| entry.origin.clone())
+    {
+        app.state::<Stalls>().clear(entry_id);
+        reload(app, entry_id, &origin);
+    }
+
+    true
 }
 
 /// Sends the rail every server's status when it changed. Driven from here because "offline" is
@@ -211,10 +339,16 @@ fn reconcile_voice(app: &AppHandle, entry_ids: &[String]) {
 fn drain_webview(app: &AppHandle, webview: &tauri::Webview, entry_id: String, full: bool) {
     let app = app.clone();
 
-    // null until the bridge has installed itself, and when nothing changed (unless `full`)
-    let script = format!("(window.__SHIVER_DRAIN__ && window.__SHIVER_DRAIN__({full})) || null");
+    // null when nothing changed (unless `full`); "absent" while the bridge is not in the page,
+    // which past a short grace means its document never loaded
+    let script =
+        format!("window.__SHIVER_DRAIN__ ? (window.__SHIVER_DRAIN__({full}) || null) : \"absent\"");
 
     let _ = webview.eval_with_callback(script, move |raw| {
+        if raw == "\"absent\"" {
+            return app.state::<Stalls>().note(&entry_id, STALL_GRACE);
+        }
+
         if raw.len() > MAX_DRAIN_BYTES {
             return eprintln!(
                 "[shiver] {entry_id} answered a drain with {} bytes",
@@ -255,6 +389,12 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
             entry.notify,
         )
     };
+
+    if result.stalled {
+        app.state::<Stalls>().note(entry_id, Duration::ZERO);
+    } else if result.ready {
+        app.state::<Stalls>().clear(entry_id);
+    }
 
     apply_page_state(
         app,
@@ -438,5 +578,43 @@ fn apply_page_state(
         if crate::badges::is_being_read(app, entry_id) {
             crate::badges::channel_viewed(app, entry_id, channel_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stalled_page_is_probed_after_its_grace_once_at_a_time_then_backs_off() {
+        let stalls = Stalls::default();
+        let open = |_: &str| true;
+
+        stalls.note("a", Duration::from_secs(60));
+        assert!(stalls.is_stalled("a"));
+        assert!(stalls.due(open).is_empty(), "within its grace");
+
+        stalls.note("b", Duration::ZERO);
+        assert_eq!(stalls.due(open), vec!["b".to_string()]);
+        assert!(stalls.due(open).is_empty(), "already being probed");
+
+        stalls.probed("b");
+        assert!(stalls.due(open).is_empty(), "backing off after a probe");
+
+        // noting again does not restart a stall's clock or its backoff
+        stalls.note("b", Duration::ZERO);
+        assert!(stalls.due(open).is_empty());
+
+        stalls.clear("b");
+        assert!(!stalls.is_stalled("b"));
+    }
+
+    #[test]
+    fn a_page_that_was_closed_is_no_longer_stalled() {
+        let stalls = Stalls::default();
+
+        stalls.note("gone", Duration::ZERO);
+        assert!(stalls.due(|_| false).is_empty());
+        assert!(!stalls.is_stalled("gone"));
     }
 }
