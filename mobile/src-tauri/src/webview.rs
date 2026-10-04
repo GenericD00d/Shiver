@@ -333,7 +333,7 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
 /// departure would be torn down by the navigation before it answered).
 const READ_SCRIPT: &str = "JSON.stringify({ \
     muted: window.__SHIVER_MUTED__ ? window.__SHIVER_MUTED__() : null, \
-    open: window.__SHIVER_OPEN__ ? window.__SHIVER_OPEN__() : null,     seen: window.__SHIVER_SEEN__ ? window.__SHIVER_SEEN__() : null })";
+    open: window.__SHIVER_OPEN__ ? window.__SHIVER_OPEN__() : null,     seen: window.__SHIVER_SEEN__ ? window.__SHIVER_SEEN__() : null,     dms: window.__SHIVER_DMS__ ? window.__SHIVER_DMS__() : null })";
 
 #[derive(Default, Deserialize)]
 struct PageState {
@@ -343,6 +343,9 @@ struct PageState {
     /// `[channel id, time]` of the latest message the page's connection heard in each channel
     #[serde(default, deserialize_with = "null_as_default")]
     seen: Vec<(i64, f64)>,
+    /// the page's conversations, when they changed since the last read
+    #[serde(default)]
+    dms: Option<Vec<inbox::PageDm>>,
 }
 
 fn null_as_default<'de, D: serde::Deserializer<'de>, T: Default + Deserialize<'de>>(
@@ -399,6 +402,10 @@ fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
 
     if let Some(channels) = state.muted {
         inbox::replace_mutes(app, entry_id, &channels);
+    }
+
+    if let Some(dms) = state.dms {
+        inbox::page_dms(app, entry_id, dms);
     }
 
     inbox::messages_seen(app, entry_id, &state.seen);
@@ -681,5 +688,22 @@ mod tests {
             state.seen,
             vec![(10, 1_790_875_224_931.0), (8, 1_790_864_397_385.0)]
         );
+        assert!(state.dms.is_none());
+
+        // and the conversations, as the bridge hands them over once the page has joined
+        let state: PageState = serde_json::from_str(
+            r#"{"muted":[],"open":[],"seen":[[8,1790875262737]],
+                "dms":[{"channelId":8,"name":"Elda97","iconUrl":null},{"channelId":9,"name":"IdaSipes","iconUrl":"https://a.example.com/public/i.png"}]}"#,
+        )
+        .unwrap();
+        let dms = state.dms.unwrap();
+
+        assert_eq!(
+            dms.iter()
+                .map(|dm| (dm.channel_id, dm.name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(8, "Elda97"), (9, "IdaSipes")]
+        );
+        assert!(dms[0].icon_url.is_none() && dms[1].icon_url.is_some());
     }
 }

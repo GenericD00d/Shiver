@@ -445,7 +445,7 @@ pub fn unread_counts(inbox: State<'_, Inbox>) -> std::collections::HashMap<Strin
 /// user talks to on the others.
 #[tauri::command]
 pub fn list_dms(store: State<'_, Store>, inbox: State<'_, Inbox>) -> Vec<inbox::DmEntry> {
-    inbox::collect_dms(&store.registry().servers, &inbox.dms())
+    inbox::collect_dms(&store.registry().servers, &inbox.dms(), &inbox.dm_times())
 }
 
 /// Tells Shiver's page a server opens only after a wait: `{ entryId, seconds }`.

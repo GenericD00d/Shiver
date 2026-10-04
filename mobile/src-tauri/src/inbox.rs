@@ -15,7 +15,7 @@ use shiver_core::{
     limit::Joins,
     LockExt,
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Url};
 use tauri_plugin_shiver_secrets::SecretsExt;
 use zeroize::Zeroizing;
 
@@ -71,10 +71,12 @@ fn now_ms() -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-/// Every server's conversations (the list orders them: `sortDms` in `shared/web/dms.ts`).
+/// Every server's conversations, each with the latest time known for it from any source (the list
+/// orders them: `sortDms` in `shared/web/dms.ts`).
 pub fn collect_dms(
     servers: &[crate::model::ServerEntry],
     dms: &HashMap<String, Vec<sharkord::DirectMessage>>,
+    times: &HashMap<String, HashMap<i64, u64>>,
 ) -> Vec<DmEntry> {
     servers
         .iter()
@@ -88,7 +90,12 @@ pub fn collect_dms(
                     account_label: server.account_label.clone(),
                     channel_id: dm.channel_id,
                     user_name: dm.user_name.clone(),
-                    last_message_at: dm.last_message_at,
+                    last_message_at: dm.last_message_at.max(
+                        times
+                            .get(&server.id)
+                            .and_then(|times| times.get(&dm.channel_id))
+                            .copied(),
+                    ),
                     avatar_url: dm.avatar_url.clone(),
                 })
         })
@@ -103,7 +110,10 @@ struct State {
     running: HashMap<String, tauri::async_runtime::JoinHandle<()>>,
     /// the one pending `sync` for when the next server's `WATCH_GRACE` runs out
     grace_timer: Option<tauri::async_runtime::JoinHandle<()>>,
+    /// each entry's conversations, from its last join or from its page while on screen
     dms: HashMap<String, Vec<sharkord::DirectMessage>>,
+    /// the latest message time known per entry and channel, from whichever source told it first
+    dm_times: HashMap<String, HashMap<i64, u64>>,
     baselines: HashMap<String, HashMap<i64, u32>>,
     read_states: HashMap<String, HashMap<i64, u32>>,
     signed_out: HashSet<String>,
@@ -155,6 +165,7 @@ impl Inbox {
             state.signed_out.remove(entry_id);
             state.remembered.remove(entry_id);
             state.dms.remove(entry_id);
+            state.dm_times.remove(entry_id);
             state.baselines.remove(entry_id);
             state.problems.remove(entry_id);
             state.plugins.remove(entry_id);
@@ -183,6 +194,10 @@ impl Inbox {
         self.with(|state| state.dms.clone())
     }
 
+    pub fn dm_times(&self) -> HashMap<String, HashMap<i64, u64>> {
+        self.with(|state| state.dm_times.clone())
+    }
+
     pub fn unread(&self) -> HashMap<String, u32> {
         self.with(|state| state.unread.clone())
     }
@@ -199,18 +214,24 @@ impl Inbox {
         self.with(|state| state.remembered.contains(entry_id))
     }
 
-    /// A message was sent or received in one of an entry's conversations, which moves it up the
-    /// list (never past now, whatever time it came with); returns whether that conversation is known.
+    /// A message was sent or received in one of an entry's conversations at `at` (never past now),
+    /// which moves it up the list; kept even before the conversation itself is known, since a page
+    /// can report the time before its list. Returns whether the time moved.
     fn dm_active(&self, entry_id: &str, channel_id: i64, at: u64) -> bool {
         let at = at.min(now_ms());
 
         self.with(|state| {
-            state
-                .dms
-                .get_mut(entry_id)
-                .and_then(|dms| dms.iter_mut().find(|dm| dm.channel_id == channel_id))
-                .map(|dm| dm.last_message_at = dm.last_message_at.max(Some(at)))
-                .is_some()
+            let times = state.dm_times.entry(entry_id.to_string()).or_default();
+
+            if times.get(&channel_id).is_some_and(|known| *known >= at)
+                || (times.len() >= MAX_DMS && !times.contains_key(&channel_id))
+            {
+                return false;
+            }
+
+            times.insert(channel_id, at);
+
+            true
         })
     }
 
@@ -738,19 +759,73 @@ fn update_read_states(
 }
 
 /// Replaces an entry's mutes with what its page reports (bounded), and recounts.
-/// The most conversations taken from one read of the page (as many as it holds).
-const MAX_SEEN: usize = 500;
+/// The most conversations kept per server, and taken from one read of the page.
+const MAX_DMS: usize = 500;
 
-/// Messages the page on screen saw sent or received: they move its known conversations up. A page's
-/// claim, so only conversations the core already knows for this entry move, and never past now.
+/// Messages the page on screen saw sent or received: they move its conversations up. A page's claim
+/// about its own entry only, bounded, and never past now.
 pub fn messages_seen(app: &AppHandle, entry_id: &str, seen: &[(i64, f64)]) {
     let inbox = app.state::<Inbox>();
 
-    for &(channel_id, at) in seen.iter().take(MAX_SEEN) {
+    for &(channel_id, at) in seen.iter().take(MAX_DMS) {
         if at.is_finite() && at >= 0.0 {
             inbox.dm_active(entry_id, channel_id, at as u64);
         }
     }
+}
+
+/// One conversation as the page on screen lists it.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageDm {
+    pub channel_id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub icon_url: Option<String>,
+}
+
+const MAX_DM_NAME: usize = 100;
+const MAX_URL: usize = 2048;
+
+/// The page on screen's conversations, which replace what its last join said: the core has no
+/// connection of its own to that server while its page is up (and none at all to one it has no
+/// session for), so the page is the only one that knows.
+pub fn page_dms(app: &AppHandle, entry_id: &str, dms: Vec<PageDm>) {
+    let Some(origin) = app
+        .state::<Store>()
+        .registry()
+        .server(entry_id)
+        .map(|server| server.origin.clone())
+    else {
+        return;
+    };
+
+    let listed = page_dm_list(&origin, dms);
+
+    app.state::<Inbox>()
+        .with(|state| state.dms.insert(entry_id.to_string(), listed));
+}
+
+/// A page's claim about its own server's conversations: bounded, names cleaned (none left empty),
+/// pictures only from that server's own origin.
+fn page_dm_list(origin: &str, dms: Vec<PageDm>) -> Vec<sharkord::DirectMessage> {
+    dms.into_iter()
+        .take(MAX_DMS)
+        .filter_map(|dm| {
+            let name = shiver_core::text::clamp(dm.name, MAX_DM_NAME);
+            let own = |url: &String| {
+                url.len() <= MAX_URL
+                    && Url::parse(url).is_ok_and(|url| crate::model::is_same_origin(origin, &url))
+            };
+
+            (!name.trim().is_empty()).then(|| sharkord::DirectMessage {
+                channel_id: dm.channel_id,
+                user_name: name,
+                last_message_at: None,
+                avatar_url: dm.icon_url.filter(own),
+            })
+        })
+        .collect()
 }
 
 pub fn replace_mutes(app: &AppHandle, entry_id: &str, channels: &[i64]) {
@@ -959,7 +1034,7 @@ mod tests {
         ]);
 
         let names = |servers: &[crate::model::ServerEntry]| {
-            let mut names: Vec<_> = collect_dms(servers, &dms)
+            let mut names: Vec<_> = collect_dms(servers, &dms, &HashMap::new())
                 .into_iter()
                 .map(|dm| dm.user_name)
                 .collect();
@@ -972,7 +1047,20 @@ mod tests {
             names(&[entry("a", 0), entry("b", 1)]),
             vec!["Ash", "Robin", "Sam", "Wren"]
         );
-        assert!(collect_dms(&[entry("c", 0)], &dms).is_empty());
+        assert!(collect_dms(&[entry("c", 0)], &dms, &HashMap::new()).is_empty());
+
+        // the latest time wins, whichever source gave it
+        let times = HashMap::from([("a".to_string(), HashMap::from([(2, 9_000), (1, 1)]))]);
+        let listed = collect_dms(&[entry("a", 0)], &dms, &times);
+        let time_of = |name: &str| {
+            listed
+                .iter()
+                .find(|dm| dm.user_name == name)
+                .and_then(|dm| dm.last_message_at)
+        };
+
+        assert_eq!(time_of("Wren"), Some(9_000));
+        assert_eq!(time_of("Robin"), Some(3_000));
     }
 
     #[test]
@@ -985,16 +1073,53 @@ mod tests {
                 .insert("a".into(), vec![conversation(3, "Robin", Some(5_000))])
         });
 
-        let time = || inbox.dms()["a"][0].last_message_at;
+        let time = || inbox.dm_times()["a"].get(&3).copied();
 
-        assert!(inbox.dm_active("a", 3, 4_000));
+        assert!(inbox.dm_active("a", 3, 5_000));
+        assert!(!inbox.dm_active("a", 3, 4_000));
         assert_eq!(time(), Some(5_000));
         assert!(inbox.dm_active("a", 3, 6_000));
         assert_eq!(time(), Some(6_000));
         assert!(inbox.dm_active("a", 3, u64::MAX));
         assert!(time() <= Some(now_ms()));
-        assert!(!inbox.dm_active("a", 4, 6_000));
-        assert!(!inbox.dm_active("b", 3, 6_000));
+        // a time can come before its conversation does; collect_dms then puts the two together
+        assert!(inbox.dm_active("b", 3, 6_000));
+    }
+
+    #[test]
+    fn a_pages_conversations_are_bounded_cleaned_and_pictured_only_from_its_server() {
+        let dm = |channel_id, name: &str, icon: Option<&str>| PageDm {
+            channel_id,
+            name: name.into(),
+            icon_url: icon.map(str::to_string),
+        };
+        let listed = page_dm_list(
+            "https://a.example.com",
+            vec![
+                dm(1, "Robin", Some("https://a.example.com/public/r.png")),
+                dm(2, "Wren\u{202e}", Some("https://evil.example.com/w.png")),
+                dm(3, "\u{200b}", None),
+                dm(4, &"x".repeat(500), Some("javascript:alert(1)")),
+            ],
+        );
+
+        assert_eq!(
+            listed
+                .iter()
+                .map(|dm| (dm.channel_id, dm.avatar_url.is_some()))
+                .collect::<Vec<_>>(),
+            vec![(1, true), (2, false), (4, false)]
+        );
+        assert_eq!(listed[1].user_name, "Wren");
+        assert!(listed[2].user_name.chars().count() <= MAX_DM_NAME + 1);
+        assert_eq!(
+            page_dm_list(
+                "https://a.example.com",
+                (0..1_000).map(|id| dm(id, "n", None)).collect()
+            )
+            .len(),
+            MAX_DMS
+        );
     }
 
     #[test]

@@ -87,12 +87,10 @@ Everyone on the server gets statuses and colours, browser users included.
 
 ## Known limitations
 
-- **The DM inbox on Android, for the server opened at launch.** Android lists each server's
-  conversations from the core's own connection to it, which waits while that server's page is open
-  (the page is connected instead) and for 30 seconds after you leave it (going straight back would
-  otherwise connect twice). So the server Shiver opens at launch joins the list about 30 seconds
-  after you first leave it. Once listed, a server's conversations stay in order while its page is
-  open, from what the page itself hears.
+- **The DM inbox on Android, for a server Shiver holds no session for.** Android lists each
+  server's conversations from Shiver's own connection to it, or from its page while it is on screen.
+  A server you sign in to on its own page without "log in automatically" leaves Shiver nothing to
+  connect with after a restart, so its conversations join the list once you have opened it.
 
 ## What it deliberately does not do
 

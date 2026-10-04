@@ -15,7 +15,7 @@ import {
   installVoiceColors
 } from '../../shared/web/bridge/features';
 import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, waitForPlugin } from '../../shared/web/bridge/plugin';
-import { CHANNEL_ITEM, installMuteStyles, paintMuted } from '../../shared/web/bridge/sharkord';
+import { CHANNEL_ITEM, installMuteStyles, paintMuted, readDms, sharkordStore } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme } from '../../shared/web/bridge/theme';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
 import { installRailSwipe, openRail, setHome } from './home';
@@ -56,6 +56,7 @@ function install(shiver: ShiverConfig) {
   const paint = () => paintMuted(muted);
 
   defineHook('__SHIVER_MUTED__', () => [...muted]);
+  installDmList(shiver.origin);
   installLongPress({
     has: (channelId) => muted.has(channelId),
     toggle: (channelId) => {
@@ -97,6 +98,33 @@ function install(shiver: ShiverConfig) {
   installRailSwipe();
 
   if (shiver.openDmUser) openConversation(shiver.openDmUser);
+}
+
+/**
+ * This server's conversations, for Shiver's inbox, which otherwise knows them only from the core's
+ * own connection: there is none while this page is up, and none at all to a server without a
+ * stored session. Read by the core with the mutes; handed over only when they changed, and only
+ * once the page has joined (before that the store is empty, which is not "no conversations"). Their
+ * times come separately, from `document-start.ts`.
+ */
+function installDmList(origin: string) {
+  let reported = '';
+
+  defineHook('__SHIVER_DMS__', () => {
+    const state = sharkordStore()?.getState();
+
+    if (typeof state?.ownUserId !== 'number') return null;
+
+    const list = readDms(origin, state, new Map()).map(({ channelId, name, iconUrl }) => ({ channelId, name, iconUrl }));
+    // avatar urls carry expiring tokens, so they are left out of the comparison
+    const signature = JSON.stringify(list.map(({ channelId, name }) => [channelId, name]));
+
+    if (signature === reported) return null;
+
+    reported = signature;
+
+    return list;
+  });
 }
 
 /**
