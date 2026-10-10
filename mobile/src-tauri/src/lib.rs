@@ -141,15 +141,13 @@ pub fn run() {
 
                     // a frame inside the page asks here too, and refusing it costs the page
                     // nothing: only a server page that then never arrives failed to open
-                    if handle.state::<Showing>().loading() {
-                        let (handle, server) = (handle.clone(), handle.state::<Showing>().server());
+                    if let Some(ticket) = handle.state::<Showing>().loading_ticket() {
+                        let handle = handle.clone();
 
                         tauri::async_runtime::spawn(async move {
                             tokio::time::sleep(REFUSAL_GRACE).await;
 
-                            let showing = handle.state::<Showing>();
-
-                            if showing.loading() && showing.server() == server {
+                            if handle.state::<Showing>().loading_ticket() == Some(ticket) {
                                 webview::show_failed(&handle);
                             }
                         });

@@ -125,9 +125,10 @@ export const App = () => {
   /** the rail's menu, while it is open */
   const [menu, setMenu] = useState<{ entries: MenuEntry[]; at: { x: number; y: number } } | null>(null);
   const [boot, setBoot] = useState<BootState>({ kind: 'waiting' });
-  // which `connect` is the latest, and the screen now, so an older one's answer does nothing
+  // which `connect` is the latest, and what is on screen now, so an older one's answer does nothing
   const connecting = useRef(0);
   const screenRef = useRef(screen);
+  const bootRef = useRef(boot);
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
   /** a newer release on offer, until turned down or put off */
@@ -135,7 +136,8 @@ export const App = () => {
 
   useEffect(() => {
     screenRef.current = screen;
-  }, [screen]);
+    bootRef.current = boot;
+  }, [screen, boot]);
 
   useEffect(() => {
     api
@@ -188,12 +190,19 @@ export const App = () => {
    */
   const connect = useCallback(async (server: ServerEntry, dmUser?: string) => {
     const mine = ++connecting.current;
-    // a later choice, or the user going elsewhere, while `/info` was answering
-    const superseded = () => connecting.current !== mine || screenRef.current !== 'boot';
+    // a later choice, or the user going elsewhere (another screen, or a question on this one),
+    // while `/info` was answering
+    const superseded = () =>
+      connecting.current !== mine ||
+      screenRef.current !== 'boot' ||
+      bootRef.current.kind !== 'connecting' ||
+      bootRef.current.server.id !== server.id;
+    const starting: BootState = { kind: 'connecting', server };
 
     setScreen('boot');
+    setBoot(starting);
     screenRef.current = 'boot';
-    setBoot({ kind: 'connecting', server });
+    bootRef.current = starting;
 
     try {
       await api.probeServer(server.origin);

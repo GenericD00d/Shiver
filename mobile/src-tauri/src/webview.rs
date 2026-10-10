@@ -90,6 +90,8 @@ struct ShowingState {
     background_since: Option<Instant>,
     /// counts servers asked for, so one that waited for its turn can tell a newer choice was made
     opening: u64,
+    /// counts server pages set loading, so a later check can tell it is still the same load
+    loads: u64,
 }
 
 /// Where Shiver's own pages live and which server the webview is on.
@@ -119,6 +121,7 @@ impl Showing {
         state.server = entry_id;
         state.loaded = false;
         state.stray = false;
+        state.loads += 1;
     }
 
     pub fn set_stray(&self) {
@@ -136,10 +139,12 @@ impl Showing {
         self.0.locked().loaded = true;
     }
 
-    pub fn loading(&self) -> bool {
+    /// Which load is under way while a server page is loading: the same until another starts,
+    /// even of the same server.
+    pub fn loading_ticket(&self) -> Option<u64> {
         let state = self.0.locked();
 
-        state.server.is_some() && !state.loaded
+        (state.server.is_some() && !state.loaded).then_some(state.loads)
     }
 
     pub fn server(&self) -> Option<String> {
@@ -570,13 +575,20 @@ mod tests {
     fn only_a_server_still_loading_is_loading() {
         let showing = Showing::default();
 
-        assert!(!showing.loading());
+        assert!(showing.loading_ticket().is_none());
         showing.set_server(Some("a".into()));
-        assert!(showing.loading());
+        assert!(showing.loading_ticket().is_some());
         showing.set_loaded();
-        assert!(!showing.loading());
+        assert!(showing.loading_ticket().is_none());
         showing.set_server(Some("b".into()));
-        assert!(showing.loading());
+        assert!(showing.loading_ticket().is_some());
+
+        // the same server loading again is another load
+        let ticket = showing.loading_ticket();
+
+        showing.set_server(Some("b".into()));
+        assert!(showing.loading_ticket().is_some());
+        assert_ne!(showing.loading_ticket(), ticket);
     }
 
     #[test]

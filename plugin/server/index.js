@@ -323,6 +323,8 @@ const MAX_ENDPOINTS = 5;
 const MAX_ENDPOINT_LENGTH = 512;
 const DEBOUNCE_MS = 10_000;
 const PUSH_TIMEOUT_MS = 5_000;
+/** How long a user's ban and plugin permission, once read, are taken as still true. */
+const STANDING_MS = 60_000;
 const MAX_RESPONSE_BYTES = 16 * 1024;
 const MAX_IN_FLIGHT = 64;
 /** Wake-ups waiting for a delivery slot, past which new ones are dropped. */
@@ -641,20 +643,41 @@ export const createPush = (
     pump();
   };
 
+  /** userId -> { at, ok }: whether they are neither banned nor without plugins, as last read */
+  const standing = new Map();
+
   /**
-   * Whether a user may be woken about a channel: one Sharkord lets see it (which it grants anyone
-   * for a public channel, banned or not), not banned, and still allowed to use plugins (without
-   * which they could not take their endpoint back). Any failure to tell counts as no.
+   * Not banned and still allowed to use plugins (without which they could not take their endpoint
+   * back). Read at most once a minute per user: it rarely changes, and messages are many.
+   */
+  const inGoodStanding = async (userId) => {
+    const known = standing.get(userId);
+
+    if (known && now() - known.at < STANDING_MS) return known.ok;
+
+    const [user, usesPlugins] = await Promise.all([
+      ctx.users.get(userId),
+      ctx.permissions.userCan(userId, 'USE_PLUGINS')
+    ]);
+    const ok = Boolean(user && !user.banned && usesPlugins);
+
+    standing.set(userId, { at: now(), ok });
+
+    return ok;
+  };
+
+  /**
+   * Whether a user may be woken about a channel: in good standing, and one Sharkord lets see it
+   * (which it grants anyone for a public channel, banned or not). Any failure to tell counts as no.
    */
   const mayWake = async (userId, channelId) => {
     try {
-      const [user, usesPlugins, sees] = await Promise.all([
-        ctx.users.get(userId),
-        ctx.permissions.userCan(userId, 'USE_PLUGINS'),
+      const [good, sees] = await Promise.all([
+        inGoodStanding(userId),
         ctx.permissions.userCanInChannel(userId, channelId, 'VIEW_CHANNEL')
       ]);
 
-      return Boolean(user && !user.banned && usesPlugins && sees);
+      return good && sees;
     } catch {
       return false;
     }
@@ -754,6 +777,7 @@ export const createPush = (
   const forgetUser = (userId) => {
     subscribers.delete(userId);
     lastPushAt.delete(userId);
+    standing.delete(userId);
   };
 
   return { adopt, register, unregister, onMessage, rowChanged, forgetUser, recipients };
@@ -919,7 +943,9 @@ const onLoad = async (ctx) => {
     // a banned user's devices are not woken again; Shiver registers them anew if they come back
     ctx.events.on('user:banned', ({ userId }) => {
       push.forgetUser(userId);
-      void push.unregister(userId).catch((error) => ctx.logger.debug(`Could not clear user ${userId}'s endpoints: ${error?.message}`));
+      void push
+        .unregister(userId)
+        .catch((error) => ctx.logger.debug(`Could not clear user ${userId}'s endpoints: ${error?.message}`));
     })
   ];
 

@@ -289,13 +289,27 @@ test('banned users and users without plugins are not woken', async () => {
 
   assert.deepEqual(await push.recipients({ userId: 9, channelId: 4 }), []);
 
+  // what was read is reused for a while, so a message costs no extra reads per user
+  let reads = 0;
+
+  ctx.users.get = async (id) => ((reads += 1), { id, banned: false });
+  await push.recipients({ userId: 9, channelId: 5 });
+  assert.equal(reads, 0);
+});
+
+test('a user whose standing cannot be read is not woken, and that is not remembered', async () => {
+  const ctx = subscribed();
+  const { push } = await pushFor(ctx);
+  const get = ctx.users.get;
+
   ctx.users.get = async () => {
     throw new Error('database unavailable');
   };
-  ctx.banned.clear();
-  ctx.permissions.userCan = async () => true;
 
-  assert.deepEqual(await push.recipients({ userId: 9, channelId: 5 }), [], 'unknown counts as no');
+  assert.deepEqual(await push.recipients({ userId: 9, channelId: 4 }), [], 'unknown counts as no');
+
+  ctx.users.get = get;
+  assert.deepEqual((await push.recipients({ userId: 9, channelId: 5 })).map((entry) => entry.userId).sort(), [1, 2]);
 });
 
 test('a dead endpoint is dropped without touching the rest of the row', async () => {

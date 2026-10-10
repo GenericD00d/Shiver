@@ -58,6 +58,13 @@ const READ_STATE_PATH: &str = "channels.onReadStateDelta";
 const READ_STATE_UPDATE_PATH: &str = "channels.onReadStateUpdate";
 const MESSAGE_PATH: &str = "messages.onNew";
 
+/// What a joined socket subscribes to; every event arrives on one of them.
+const SUBSCRIPTIONS: [(u32, &str); 3] = [
+    (READ_STATE_ID, READ_STATE_PATH),
+    (READ_STATE_UPDATE_ID, READ_STATE_UPDATE_PATH),
+    (MESSAGE_ID, MESSAGE_PATH),
+];
+
 /// The id Shiver's companion plugin installs under.
 const SHIVER_PLUGIN_ID: &str = "shiver";
 
@@ -789,6 +796,8 @@ fn frame_cap(accept_any_size: bool) -> usize {
 pub(crate) struct Session {
     socket: Socket,
     pub(crate) joined: Joined,
+    /// subscriptions the server refused; once it has refused them all, nothing more can arrive
+    refused: HashSet<u64>,
 }
 
 /// Connects, authenticates, joins and subscribes. Returns once the join has been answered.
@@ -817,7 +826,11 @@ pub(crate) async fn open(origin: &str, token: &str, accept_any_size: bool) -> Re
             other => other,
         })?;
 
-    Ok(Session { socket, joined })
+    Ok(Session {
+        socket,
+        joined,
+        refused: HashSet::new(),
+    })
 }
 
 /// Authenticates, joins and subscribes on a connected socket.
@@ -859,11 +872,7 @@ async fn join(socket: &mut Socket, origin: &str, token: &str) -> Result<Joined> 
         }
     }
 
-    for (id, path) in [
-        (READ_STATE_ID, READ_STATE_PATH),
-        (READ_STATE_UPDATE_ID, READ_STATE_UPDATE_PATH),
-        (MESSAGE_ID, MESSAGE_PATH),
-    ] {
+    for (id, path) in SUBSCRIPTIONS {
         send(
             socket,
             request_frame(id, "subscription", path, Some(Value::Null)),
@@ -928,14 +937,19 @@ impl Session {
                 Reply::Failed { id, message, .. } => {
                     eprintln!("[shiver] the server refused request {id:?}: {message}");
 
-                    // a refused subscription leaves a socket that answers pings and says nothing:
-                    // closed, so the watch reconnects (with backoff) rather than going quiet
-                    if id.is_some_and(|id| {
-                        [READ_STATE_ID, MESSAGE_ID, READ_STATE_UPDATE_ID]
+                    // with every subscription refused the socket answers pings and says nothing:
+                    // closed, so the watch reconnects (with backoff) rather than going quiet. One
+                    // refused alone still leaves the others delivering.
+                    if let Some(id) = id.filter(|id| {
+                        SUBSCRIPTIONS
                             .iter()
-                            .any(|subscription| id == u64::from(*subscription))
+                            .any(|(subscription, _)| *id == u64::from(*subscription))
                     }) {
-                        return None;
+                        self.refused.insert(id);
+
+                        if self.refused.len() == SUBSCRIPTIONS.len() {
+                            return None;
+                        }
                     }
 
                     None
