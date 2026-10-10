@@ -1,12 +1,9 @@
-//! Commands called from Shiver's own pages. Server pages have no IPC.
-//!
-//! Commands that write the registry are `async`, so the disk write happens off the UI thread.
-//! Passwords arrive as `Zeroizing<String>` so Shiver's copies are wiped.
+//! Adding, checking, signing in to, logging out of and removing servers, their sessions and their
+//! per-server switches.
 
 use std::collections::HashMap;
 
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_shiver_push::PushExt;
 use tauri_plugin_shiver_secrets::SecretsExt;
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -15,23 +12,14 @@ use sharkord_client::{CheckedSessions, ServerCheck};
 use shiver_core::{limit::Joins, login, model::NotifyLevel, probe};
 
 use crate::{
-    error::{Core, Error, Result},
+    error::{Core, Result},
     icons,
     inbox::{self, Inbox},
-    model::{normalize_origin, Folder, Registry, ServerEntry, ServerInfo, Settings},
+    model::{normalize_origin, Registry, ServerEntry, ServerInfo},
     store::{RegistryStore, Store},
-    webview::{self, Showing},
 };
 
-type Password = Zeroizing<String>;
-
-fn entry_of(store: &Store, id: &str) -> Result<ServerEntry> {
-    store
-        .registry()
-        .server(id)
-        .cloned()
-        .ok_or(Core::UnknownServer.into())
-}
+use super::{entry_of, Password};
 
 /// Clears what an origin's pages stored. The one webview has one storage per origin, so this also
 /// signs out the pages of any other account on the same address; leaving it would keep this one's.
@@ -224,85 +212,6 @@ pub fn server_icons(app: AppHandle, store: State<'_, Store>) -> HashMap<String, 
     icons::load(&app, &ids)
 }
 
-/* ── push ── */
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PushStatus {
-    /// package names of installed distributors
-    pub distributors: Vec<String>,
-    pub chosen: Option<String>,
-    pub servers: Vec<PushServer>,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PushServer {
-    pub id: String,
-    pub name: String,
-    pub wanted: bool,
-    /// `off`, `waiting`, `ready` or `failed`
-    pub state: &'static str,
-}
-
-/// What the notifications screen shows. No endpoint is returned, only whether one exists.
-#[tauri::command]
-pub fn push_status(app: AppHandle, store: State<'_, Store>) -> PushStatus {
-    let (distributors, chosen) = app.shiver_push().distributors().unwrap_or_default();
-    let push = app.state::<crate::push::Push>();
-    let registry = store.registry();
-
-    let servers = registry
-        .servers
-        .iter()
-        .map(|server| {
-            let wanted = registry.settings.push_servers.contains(&server.id);
-
-            PushServer {
-                id: server.id.clone(),
-                name: server.name.clone(),
-                wanted,
-                state: if !wanted {
-                    "off"
-                } else if push.endpoint(&server.id).is_some() {
-                    "ready"
-                } else if push.has_failed(&server.id) {
-                    "failed"
-                } else {
-                    "waiting"
-                },
-            }
-        })
-        .collect();
-
-    PushStatus {
-        distributors,
-        chosen,
-        servers,
-    }
-}
-
-#[tauri::command]
-pub async fn set_push_server(app: AppHandle, entry_id: String, wanted: bool) -> Result<()> {
-    crate::push::set_wanted(&app, &entry_id, wanted)
-}
-
-/// Chooses a distributor and registers the chosen servers with it (answers arrive as events).
-#[tauri::command]
-pub fn set_push_distributor(app: AppHandle, distributor: String) -> Result<()> {
-    crate::push::retire_endpoints(&app)?;
-
-    app.shiver_push()
-        .set_distributor(&distributor)
-        .map_err(|error| Error::Webview(error.to_string()))?;
-
-    crate::push::register_wanted(&app);
-
-    Ok(())
-}
-
-/* ── sessions ── */
-
 /// Drops every session and stored password Shiver holds (each server's own page sign-in stays).
 #[tauri::command]
 pub fn forget_sessions(app: AppHandle, store: State<'_, Store>) {
@@ -436,166 +345,4 @@ pub fn session_states(inbox: State<'_, Inbox>, store: State<'_, Store>) -> Sessi
         problems: inbox.problems(),
         plugins: inbox.plugins(),
     }
-}
-
-/* ── the rail and the inbox ── */
-
-#[tauri::command]
-pub fn unread_counts(inbox: State<'_, Inbox>) -> std::collections::HashMap<String, u32> {
-    inbox.unread()
-}
-
-/// Every server's conversations. Only Shiver's own pages can call this, so no server learns who the
-/// user talks to on the others.
-#[tauri::command]
-pub fn list_dms(store: State<'_, Store>, inbox: State<'_, Inbox>) -> Vec<inbox::DmEntry> {
-    inbox::collect_dms(&store.registry().servers, &inbox.dms(), &inbox.dm_times())
-}
-
-/// Tells Shiver's page a server opens only after a wait: `{ entryId, seconds }`.
-const JOIN_WAIT_EVENT: &str = "shiver://join-wait";
-
-/// Hands the webview to a server's client; `dm_user` asks the bridge to open that conversation once
-/// connected.
-///
-/// Each page load joins the server, which Sharkord allows only a few times a minute, and past that
-/// its client drops the session. So a load waits for its place (`limit::Joins`), with Shiver's page
-/// counting down meanwhile; a newer choice made while it waits wins.
-#[tauri::command]
-pub async fn select_server(
-    app: AppHandle,
-    store: State<'_, Store>,
-    id: String,
-    dm_user: Option<String>,
-) -> Result<()> {
-    let entry = entry_of(&store, &id)?;
-    let ticket = app.state::<Showing>().begin_opening();
-    let token = inbox::session_for(&app, &id).await;
-    let place = app.state::<Joins>().take(&entry.origin);
-
-    if !place.wait.is_zero() {
-        webview::emit_home(
-            &app,
-            JOIN_WAIT_EVENT,
-            serde_json::json!({ "entryId": id, "seconds": place.wait.as_secs_f64().ceil() }),
-        );
-        tokio::time::sleep(place.wait).await;
-    }
-
-    if !app.state::<Showing>().still_opening(ticket) {
-        app.state::<Joins>().give_back(&entry.origin, place);
-
-        return Ok(());
-    }
-
-    app.state::<Showing>().set_pending_dm_user(dm_user);
-
-    webview::show_server(&app, &entry, token.as_deref())?;
-    inbox::sync(&app);
-
-    store.update(|registry| {
-        registry.settings.last_server_id = Some(id);
-
-        Ok(())
-    })
-}
-
-/// Makes every site whose links opened without asking ask again.
-#[tauri::command]
-pub async fn forget_trusted_links(store: State<'_, Store>) -> Result<()> {
-    store.update(|registry| {
-        registry.settings.trusted_links.clear();
-
-        Ok(())
-    })
-}
-
-#[tauri::command]
-pub fn app_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
-}
-
-/// Saves settings (sanitised; bookkeeping fields kept) and repaints the gap between pages.
-#[tauri::command]
-pub async fn update_settings(
-    app: AppHandle,
-    store: State<'_, Store>,
-    settings: Settings,
-) -> Result<()> {
-    let saved = store.update(|registry| {
-        registry.settings = Settings {
-            last_server_id: registry.settings.last_server_id.take(),
-            skipped_update: registry.settings.skipped_update.take(),
-            push_servers: std::mem::take(&mut registry.settings.push_servers),
-            trusted_links: std::mem::take(&mut registry.settings.trusted_links),
-            ..settings.sanitised()
-        };
-
-        Ok(registry.settings.clone())
-    })?;
-
-    if let Ok(window) = webview::main_window(&app) {
-        let _ = window.set_background_color(Some(webview::background_color(&saved)));
-    }
-
-    Ok(())
-}
-
-/// Applies a drag at the top level (servers and folders share one position space).
-#[tauri::command]
-pub async fn reorder_rail(
-    store: State<'_, Store>,
-    ordered: Vec<shiver_core::rail::RailRef>,
-) -> Result<()> {
-    store.update(|registry| Ok(registry.rail().reorder(&ordered)?))
-}
-
-/// Numbers servers in the given order, within the folder they share (a drag inside a folder).
-#[tauri::command]
-pub async fn reorder_servers(store: State<'_, Store>, ordered_ids: Vec<String>) -> Result<()> {
-    store.update(|registry| Ok(registry.rail().reorder_servers(&ordered_ids)?))
-}
-
-/// Creates a folder holding `member_ids`, at the first member's place, in one step.
-#[tauri::command]
-pub async fn create_folder_with(
-    store: State<'_, Store>,
-    name: String,
-    member_ids: Vec<String>,
-) -> Result<Folder> {
-    store.update(|registry| {
-        Ok(registry
-            .rail()
-            .create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?)
-    })
-}
-
-/// Moves a server into a folder (or out, with `None`); a folder left with one server dissolves.
-#[tauri::command]
-pub async fn set_server_folder(
-    store: State<'_, Store>,
-    id: String,
-    folder_id: Option<String>,
-) -> Result<()> {
-    store.update(|registry| Ok(registry.rail().set_server_folder(&id, folder_id)?))
-}
-
-#[tauri::command]
-pub async fn rename_folder(store: State<'_, Store>, id: String, name: String) -> Result<()> {
-    store.update(|registry| Ok(registry.rail().rename_folder(&id, &name)?))
-}
-
-/// Deletes a folder; its servers move back to the top level.
-#[tauri::command]
-pub async fn delete_folder(store: State<'_, Store>, id: String) -> Result<()> {
-    store.update(|registry| Ok(registry.rail().delete_folder(&id)?))
-}
-
-#[tauri::command]
-pub async fn set_folder_expanded(
-    store: State<'_, Store>,
-    id: String,
-    expanded: bool,
-) -> Result<()> {
-    store.update(|registry| Ok(registry.rail().set_folder_expanded(&id, expanded)?))
 }
