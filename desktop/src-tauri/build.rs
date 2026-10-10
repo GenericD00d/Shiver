@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 fn main() {
-    // webviews.rs pulls the bridge in with include_str!, which is resolved before `bun run build:bridge`
+    // webviews/mod.rs pulls the bridge in with include_str!, which is resolved before `bun run build:bridge`
     // has necessarily run. an empty placeholder keeps a clean checkout compiling.
     let bridge = Path::new("generated/bridge.js");
 
