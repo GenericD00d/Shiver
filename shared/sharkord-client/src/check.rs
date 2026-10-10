@@ -77,7 +77,7 @@ pub async fn check_server(
 
     tokio::time::sleep(joins.take(&origin).wait).await;
 
-    let session = crate::open(&origin, &token, false).await?;
+    let session = crate::connection::open(&origin, &token, false).await?;
 
     kept.keep(&origin, identity, password, token);
 

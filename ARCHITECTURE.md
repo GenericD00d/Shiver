@@ -86,11 +86,15 @@ scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys,
 
 ## shared/sharkord-client (`sharkord_client`)
 
+Modules: `lib` (the public types), `wire` (frames, request ids and the payload parsers), `html`
+(`plain_text`, `mentioned`: a message's text and mentions, each `>` looked for once), `unread`, `connection`
+(`open`, the join and subscriptions, `Session::next_event`, `call`, and the watch loop), `check`, `error`.
+
 - Types: `Joined` (join payload: read states, user names and `user_avatars`, `plugin_version`…), `Avatar` (`url`), `DirectMessage` (with the partner's `avatar_url`),
   `NewMessage` (`is_own`, `author`, `body`, `mentioned`/`mentions_me`: read from the html as Sharkord's `hasMention` does), `Event`, `Error` (`TooLarge`, `Refused` and `Busy` (a rate limit, retried later, never a refused session) matter; converts
   into `shiver_core::Error`), `readable_size`.
 - Watch loop: `watch(key, impl Watcher)`; `Watcher` trait: `target()→Option<Target{origin,token,accept_any_size}>`,
-  `joined`, `event`, `refused(n)→retry now?`, `too_large`, `disconnected`; reconnects with backoff (`retry_delay`: 30 s doubling to 10 min, jittered per key; also the desktop's for its own retries).
+  `joined`, `event`, `refused(n)→retry now?`, `too_large`, `disconnected`; reconnects with backoff (`retry_delay`: 30 s doubling to 10 min, jittered per key; also the desktop's for its own retries), reset only by a connection that delivered an event or lasted a minute. A socket whose every subscription was refused is closed.
 - Unread math: `set_unread`, `apply_delta`, `unread_total`, `choose_floor` (shared floor, else this device's, else the join; both apps).
 - `check_server(origin, identity, password, &CheckedSessions, &Joins) -> ServerCheck {info, plugin}` (plugin: absent =
   not asked; its join takes a `Joins` place); `CheckedSessions::take` hands `add_server` the check's session for the same credentials.
