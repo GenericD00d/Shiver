@@ -293,14 +293,26 @@ pub(super) fn forget_session(app: &AppHandle, entry_id: &str) {
 
 /// Drops everything Shiver holds for an entry, in memory and in the store.
 pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
-    app.state::<Inbox>().forget(entry_id);
+    forget(app, entry_id, false);
+}
+
+/// Drops an entry's session and password, keeping its unread floor (the server is still listed,
+/// and what was read stays read).
+pub fn forget_credentials(app: &AppHandle, entry_id: &str) {
+    forget(app, entry_id, true);
+}
+
+fn forget(app: &AppHandle, entry_id: &str, keep_floor: bool) {
+    app.state::<Inbox>().forget(entry_id, keep_floor);
     crate::notify::clear(app, entry_id);
 
-    for key in [
-        entry_id.to_string(),
-        password_store_key(entry_id),
-        baseline_store_key(entry_id),
-    ] {
+    let mut keys = vec![entry_id.to_string(), password_store_key(entry_id)];
+
+    if !keep_floor {
+        keys.push(baseline_store_key(entry_id));
+    }
+
+    for key in keys {
         store_off_thread(app, key, None);
     }
 }

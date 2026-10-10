@@ -58,7 +58,7 @@ pub async fn session(app: &AppHandle, entry: &ServerEntry) -> Result<String, NoS
 
             stored.ok_or(NoSession::Signed)
         }
-        Some(Freshness::Expired) | None => renew(entry).await,
+        Some(Freshness::Expired) | None => renew(app, entry).await,
     }
 }
 
@@ -88,14 +88,28 @@ fn renew_in_background(app: &AppHandle, entry: &ServerEntry) {
     let (app, entry) = (app.clone(), entry.clone());
 
     tauri::async_runtime::spawn(async move {
-        if renew(&entry).await.is_ok() {
+        if renew(&app, &entry).await.is_ok() {
             app.state::<Renewals>().succeeded(&entry.id);
         }
     });
 }
 
-/// Signs in with the stored password and keeps the new session.
-async fn renew(entry: &ServerEntry) -> Result<String, NoSession> {
+/// Held while a renewed session is checked and stored, and while a log-out or removal clears an
+/// entry's identity and secrets, so a renewal that finishes during one cannot store a session after
+/// it (which would sign the page back in the next time it is built).
+pub static CREDENTIALS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Whether the entry is still listed and signed in through Shiver.
+fn still_signed_in(app: &AppHandle, entry_id: &str) -> bool {
+    app.state::<Store>()
+        .registry()
+        .server(entry_id)
+        .is_some_and(|entry| entry.identity.is_some())
+}
+
+/// Signs in with the stored password and keeps the new session, unless the entry was logged out of
+/// or removed while it signed in.
+async fn renew(app: &AppHandle, entry: &ServerEntry) -> Result<String, NoSession> {
     let (Some(identity), Some(password)) = (
         entry.identity.as_deref(),
         secrets::read_off_thread(Secret::Password, &entry.id).await,
@@ -105,6 +119,12 @@ async fn renew(entry: &ServerEntry) -> Result<String, NoSession> {
 
     match shiver_core::login::sign_in(&entry.origin, identity, &password).await {
         Ok(token) => {
+            let _held = CREDENTIALS.lock().await;
+
+            if !still_signed_in(app, &entry.id) {
+                return Err(NoSession::Signed);
+            }
+
             if let Err(error) = secrets::store_off_thread(Secret::Session, &entry.id, &token).await
             {
                 eprintln!(
@@ -238,7 +258,7 @@ pub fn recover(app: &AppHandle, entry_id: &str) -> bool {
 }
 
 async fn sign_in_again(app: &AppHandle, entry: &ServerEntry) -> bool {
-    let Ok(token) = renew(entry).await else {
+    let Ok(token) = renew(app, entry).await else {
         return false;
     };
 

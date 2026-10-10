@@ -6,7 +6,8 @@
 //!
 //! The rail badge is the feed's unread count (what arrived while Shiver ran) plus `Missed` (what
 //! arrived while it was closed, counted once per server per run against the stored floor, and
-//! afterwards only ever lowered as channels are read).
+//! afterwards only ever lowered as channels are read). A channel read lowers its floor too, so what
+//! arrives in it afterwards counts.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -348,8 +349,13 @@ fn on_event(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined, event: s
         }
         // read somewhere (this machine, the phone, a browser)
         sharkord::Event::UnreadSet { channel_id, count } => {
-            app.state::<ReadStates>().apply(entry_id, |states| {
-                sharkord::set_unread(states, channel_id, count)
+            let states = app.state::<ReadStates>().apply(entry_id, |states| {
+                sharkord::set_unread(states, channel_id, count);
+                states.clone()
+            });
+
+            lower_floor(app, entry_id, |floor| {
+                sharkord::settle_floor(floor, &states)
             });
 
             if count == 0 {
@@ -394,10 +400,48 @@ pub fn channel_read<R: Runtime>(app: &AppHandle<R>, entry_id: &str, channel_id: 
         .state::<ReadStates>()
         .apply(entry_id, |states| states.remove(&channel_id))
         .is_some();
+    let had_floor = app
+        .state::<Store>()
+        .registry()
+        .baselines
+        .get(entry_id)
+        .is_some_and(|floor| floor.contains_key(&channel_id));
+
+    // read to the end: only what arrives from now on is unread
+    if had_floor {
+        lower_floor(app, entry_id, |floor| floor.remove(&channel_id).is_some());
+    }
 
     if was_unread && recount(app, entry_id) {
         drain::notify_feed_changed(app);
     }
+}
+
+/// Lowers an entry's stored floor with `settle` (`sharkord::settle_floor`'s rule: never raised),
+/// tried on a copy first so an unchanged floor costs no write. Returns whether it changed.
+fn lower_floor<R: Runtime>(
+    app: &AppHandle<R>,
+    entry_id: &str,
+    settle: impl Fn(&mut HashMap<i64, u32>) -> bool,
+) -> bool {
+    let store = app.state::<Store>();
+    let Some(mut floor) = store.registry().baselines.get(entry_id).cloned() else {
+        return false;
+    };
+
+    if !settle(&mut floor) {
+        return false;
+    }
+
+    store
+        .update(|registry| {
+            if let Some(stored) = registry.baselines.get_mut(entry_id) {
+                settle(stored);
+            }
+
+            Ok(())
+        })
+        .is_ok()
 }
 
 /// An entry's mutes changed: a newly muted channel no longer counts toward its badge.
@@ -415,7 +459,7 @@ pub fn mark_read(app: &AppHandle, entry_id: &str) {
 }
 
 /// Hands a server's page its floor, so the companion plugin can share it with the user's other
-/// devices. The floor itself does not move.
+/// devices.
 pub fn publish_floor(app: &AppHandle, entry_id: &str) {
     let Some(floor) = app
         .state::<Store>()

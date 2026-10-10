@@ -92,7 +92,6 @@ export const createLimiter = (limit, windowMs, now = () => Date.now()) => {
  * hour, so a new upload could show up as someone's old, deleted picture. A random suffix prevents it.
  */
 
-
 /** 64 bits: a birthday collision on one base name is out of reach. */
 const SUFFIX_BYTES = 8;
 const SUFFIX_MARK = '~';
@@ -236,7 +235,6 @@ export const createOptions = async (ctx) => {
  * Sharkord's plugin slots and broadcast with `ctx.push.toAll` when it changes.
  */
 
-
 const MAX_STATUS = 100;
 const STATUS_LIMIT = 10;
 
@@ -316,8 +314,6 @@ export const createStatuses = (ctx, rows, { now = () => Date.now() } = {}) => {
  * which closes DNS rebinding. Redirects are never followed, and deliveries in flight are capped:
  * the rest wait their turn in a bounded queue, oldest first, each endpoint at most once.
  */
-
-
 
 const MAX_ENDPOINTS = 5;
 const MAX_ENDPOINT_LENGTH = 512;

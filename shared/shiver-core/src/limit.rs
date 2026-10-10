@@ -58,7 +58,7 @@ impl Openings {
     }
 }
 
-/// Joins Shiver makes per rail entry within `JOIN_WINDOW`. Sharkord allows a user five joins a
+/// Joins Shiver makes per server (origin) within `JOIN_WINDOW`. Sharkord allows a user five joins a
 /// minute (`joinServer`, one fixed window shared by all their devices), so one is left for the
 /// user's others.
 const JOINS: usize = 4;
@@ -143,7 +143,7 @@ mod tests {
         assert_eq!(
             joins.take_at("b", seconds(10)).wait,
             Duration::ZERO,
-            "per entry"
+            "per server"
         );
 
         // an abandoned place is free again

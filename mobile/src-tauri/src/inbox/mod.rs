@@ -28,8 +28,8 @@ use sessions::{baseline_store_key, forget_session, renew, store_off_thread};
 
 pub use dms::{collect_dms, messages_seen, page_dms, DmEntry, PageDm};
 pub use sessions::{
-    forget_everywhere, forget_password, harvest_token, remember_password, remember_session,
-    restore, session_for,
+    forget_credentials, forget_everywhere, forget_password, harvest_token, remember_password,
+    remember_session, restore, session_for,
 };
 
 /// Emitted to Shiver's own pages with the per-server unread counts.
@@ -100,17 +100,20 @@ impl Inbox {
         });
     }
 
-    /// Drops everything about an entry.
-    fn forget(&self, entry_id: &str) {
+    /// Drops everything about an entry, its unread floor too unless `keep_floor`.
+    fn forget(&self, entry_id: &str, keep_floor: bool) {
         self.forget_token(entry_id);
         self.with(|state| {
             state.signed_out.remove(entry_id);
             state.remembered.remove(entry_id);
             state.dms.remove(entry_id);
             state.dm_times.remove(entry_id);
-            state.baselines.remove(entry_id);
             state.problems.remove(entry_id);
             state.plugins.remove(entry_id);
+
+            if !keep_floor {
+                state.baselines.remove(entry_id);
+            }
         });
     }
 
@@ -181,8 +184,6 @@ impl Inbox {
         self.with(|state| state.unread.insert(entry_id.to_string(), count) != Some(count))
     }
 }
-
-/* ── the encrypted store ── */
 
 /// Starts a connection for every entry with a session, no connection and no problem that retrying
 /// cannot fix, stops those for entries that left the rail or are on screen (their page has its
@@ -411,16 +412,21 @@ fn on_joined(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
     });
 
     if let Some(floor) = floor {
-        if let Ok(encoded) = serde_json::to_string(&floor) {
-            store_off_thread(
-                app,
-                baseline_store_key(entry_id),
-                Some(Zeroizing::new(encoded)),
-            );
-        }
+        store_floor(app, entry_id, &floor);
     }
 
     update_read_states(app, entry_id, |states| *states = joined.read_states.clone());
+}
+
+/// Queues an entry's floor for the encrypted store.
+fn store_floor(app: &AppHandle, entry_id: &str, floor: &HashMap<i64, u32>) {
+    if let Ok(encoded) = serde_json::to_string(floor) {
+        store_off_thread(
+            app,
+            baseline_store_key(entry_id),
+            Some(Zeroizing::new(encoded)),
+        );
+    }
 }
 
 /// Changes one entry's read states in place and recomputes its unread count.
@@ -436,19 +442,31 @@ fn update_read_states(
         .into_iter()
         .collect();
 
-    let total = app.state::<Inbox>().with(|state| {
+    let (total, lowered) = app.state::<Inbox>().with(|state| {
         let states = state.read_states.entry(entry_id.to_string()).or_default();
 
         change(states);
 
+        // a channel read lowers its floor, so what arrives in it afterwards counts
+        let lowered = state
+            .baselines
+            .get_mut(entry_id)
+            .and_then(|floor| sharkord::settle_floor(floor, states).then(|| floor.clone()));
         let empty = HashMap::new();
 
-        sharkord::unread_total(
-            states,
-            state.baselines.get(entry_id).unwrap_or(&empty),
-            &muted,
+        (
+            sharkord::unread_total(
+                states,
+                state.baselines.get(entry_id).unwrap_or(&empty),
+                &muted,
+            ),
+            lowered,
         )
     });
+
+    if let Some(floor) = lowered {
+        store_floor(app, entry_id, &floor);
+    }
 
     if app.state::<Inbox>().set_unread(entry_id, total) {
         publish(app);
@@ -501,8 +519,6 @@ fn publish(app: &AppHandle) {
     crate::rail::refresh(app);
 }
 
-/* ── sessions ── */
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,7 +564,7 @@ mod tests {
         assert!(inbox.set_unread("a", 3));
         assert!(!inbox.set_unread("a", 3));
 
-        inbox.forget("a");
+        inbox.forget("a", false);
 
         assert!(inbox.unread().is_empty());
         assert!(inbox.token("a").is_none());

@@ -150,10 +150,8 @@ pub fn set_wanted(app: &AppHandle, entry_id: &str, wanted: bool) -> Result<()> {
             return Ok(None);
         };
 
-        if let Some(endpoint) =
-            retired.filter(|endpoint| !server.retired_push_endpoints.contains(endpoint))
-        {
-            server.retired_push_endpoints.push(endpoint);
+        if let Some(endpoint) = retired {
+            server.retire_push_endpoint(endpoint);
         }
 
         Ok(server
@@ -199,9 +197,7 @@ pub fn retire_endpoints(app: &AppHandle) -> Result<()> {
     app.state::<Store>().update(|registry| {
         for (entry_id, endpoint) in &current {
             if let Some(server) = registry.server_mut(entry_id) {
-                if !server.retired_push_endpoints.contains(endpoint) {
-                    server.retired_push_endpoints.push(endpoint.clone());
-                }
+                server.retire_push_endpoint(endpoint.clone());
             }
         }
 

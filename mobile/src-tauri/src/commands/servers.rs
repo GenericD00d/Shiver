@@ -223,7 +223,7 @@ pub fn forget_sessions(app: AppHandle, store: State<'_, Store>) {
         .collect();
 
     for id in ids {
-        inbox::forget_everywhere(&app, &id);
+        inbox::forget_credentials(&app, &id);
     }
 }
 

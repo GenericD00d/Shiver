@@ -9,7 +9,7 @@ use crate::{
     error::{Error, Result},
     http,
     login::unreachable,
-    text::presentable,
+    text::presentable_name,
 };
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -67,11 +67,11 @@ fn parse_info(origin: &str, body: &Value) -> Option<ServerInfo> {
 
     Some(ServerInfo {
         origin: origin.to_string(),
-        name: presentable(text("name")?).map_or_else(
+        name: presentable_name(text("name")?).map_or_else(
             || origin.trim_start_matches("https://").to_string(),
             |name| name.chars().take(MAX_NAME).collect(),
         ),
-        description: text("description").and_then(presentable),
+        description: text("description").and_then(presentable_name),
         icon_url: logo_url(origin, body),
     })
 }

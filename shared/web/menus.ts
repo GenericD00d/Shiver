@@ -106,12 +106,15 @@ export const serverMenu = (server: MenuServer, facts: ServerMenuFacts): MenuEntr
   if (server.acceptAnySize) entries.push(item('normalsize', id, 'Back to the normal size limit'));
   else if (facts.tooLarge) entries.push(item('anysize', id, 'Accept larger messages from this server'));
 
+  // in a submenu of their own, so many folders make a long submenu rather than a menu too long to show
   const moves = facts.folders
     .filter((folder) => folder.id !== server.folderId)
-    .map((folder) => item('move', `${id}:${folder.id}`, `Move to “${folder.name}”`));
+    .map((folder) => item('move', `${id}:${folder.id}`, folder.name));
 
   if (moves.length > 0 || server.folderId) {
-    entries.push({ kind: 'separator' }, ...moves);
+    entries.push({ kind: 'separator' });
+
+    if (moves.length > 0) entries.push({ kind: 'submenu', label: 'Move to folder', items: moves });
 
     if (server.folderId) entries.push(item('unfolder', id, 'Move out of folder'));
   }

@@ -48,6 +48,28 @@ pub struct ServerEntry {
     pub notify: shiver_core::model::NotifyLevel,
 }
 
+/// Retired endpoints kept per server. A server without the plugin never confirms clearing one, so
+/// without a bound each switch would add one for good; the oldest go first.
+const MAX_RETIRED_ENDPOINTS: usize = 10;
+
+impl ServerEntry {
+    /// Marks an endpoint for the server's page to clear with the plugin (once, newest last, bounded).
+    pub fn retire_push_endpoint(&mut self, endpoint: String) {
+        if self.retired_push_endpoints.contains(&endpoint) {
+            return;
+        }
+
+        self.retired_push_endpoints.push(endpoint);
+
+        let excess = self
+            .retired_push_endpoints
+            .len()
+            .saturating_sub(MAX_RETIRED_ENDPOINTS);
+
+        self.retired_push_endpoints.drain(..excess);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -130,5 +152,26 @@ impl Registry {
                 server.id.clone()
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retired_endpoints_are_kept_once_and_bounded() {
+        let mut server = ServerEntry::default();
+
+        server.retire_push_endpoint("https://a".into());
+        server.retire_push_endpoint("https://a".into());
+        assert_eq!(server.retired_push_endpoints, ["https://a"]);
+
+        for index in 0..MAX_RETIRED_ENDPOINTS {
+            server.retire_push_endpoint(format!("https://{index}"));
+        }
+
+        assert_eq!(server.retired_push_endpoints.len(), MAX_RETIRED_ENDPOINTS);
+        assert_eq!(server.retired_push_endpoints[0], "https://0");
     }
 }

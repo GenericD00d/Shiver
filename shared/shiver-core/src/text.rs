@@ -26,9 +26,20 @@ pub fn notice_line(author: &str, channel: Option<&str>, text: &str) -> String {
     }
 }
 
-/// A server's words made safe for Shiver's own panels: one line, no control characters, no links,
-/// no bidi tricks, bounded; `None` when nothing is left.
+/// A server's words made safe for Shiver's own panels: one line, no control characters, no links
+/// (bare domains included: an error message is where "sign in again at evil.example" would be
+/// believed), no bidi tricks, bounded; `None` when nothing is left.
 pub fn presentable(message: &str) -> Option<String> {
+    clean(message, looks_like_link)
+}
+
+/// As [`presentable`], for what a server calls itself (its name and description): addresses with a
+/// scheme, `www.` or a path still go, but a dotted word stays, since "Node.js Devs" is a name.
+pub fn presentable_name(message: &str) -> Option<String> {
+    clean(message, looks_like_address)
+}
+
+fn clean(message: &str, is_link: fn(&str) -> bool) -> Option<String> {
     let cleaned = message
         .chars()
         .filter(|character| !is_invisible(*character))
@@ -41,25 +52,40 @@ pub fn presentable(message: &str) -> Option<String> {
         })
         .collect::<String>()
         .split_whitespace()
-        .filter(|word| !looks_like_link(word))
+        .filter(|word| !is_link(word))
         .collect::<Vec<_>>()
         .join(" ");
 
     (!cleaned.is_empty()).then(|| cleaned.chars().take(MAX_SERVER_MESSAGE).collect())
 }
 
-fn looks_like_link(word: &str) -> bool {
-    let word = word.to_ascii_lowercase();
-    let word = word.trim_matches(|character: char| !character.is_alphanumeric());
+/// A word as it is compared: lowercase, without the punctuation around it.
+fn bare(word: &str) -> String {
+    word.to_ascii_lowercase()
+        .trim_matches(|character: char| !character.is_alphanumeric())
+        .to_string()
+}
+
+/// A url, `www.` address, or a bare domain with a path (`evil.example/reset`).
+fn looks_like_address(word: &str) -> bool {
+    let word = bare(word);
 
     word.contains("://")
         || word.starts_with("www.")
-        // a bare domain with a path: `evil.example/reset`
-        || word.split('/').next().is_some_and(|host| host.contains('.') && word.contains('/'))
-        // or without one: `evil.example`, whose last label reads as a top-level domain (letters, two
-        // or more), which `e.g`, `v1.2` and `3.14` do not
-        || word.rsplit_once('.').is_some_and(|(name, top)| {
-            !name.is_empty() && top.len() >= 2 && top.chars().all(|character| character.is_ascii_alphabetic())
+        || word
+            .split('/')
+            .next()
+            .is_some_and(|host| host.contains('.') && word.contains('/'))
+}
+
+/// An address, or a bare domain without a path: `evil.example`, whose last label reads as a
+/// top-level domain (letters, two or more), which `e.g`, `v1.2` and `3.14` do not.
+fn looks_like_link(word: &str) -> bool {
+    looks_like_address(word)
+        || bare(word).rsplit_once('.').is_some_and(|(name, top)| {
+            !name.is_empty()
+                && top.len() >= 2
+                && top.chars().all(|character| character.is_ascii_alphabetic())
         })
 }
 
@@ -90,6 +116,23 @@ mod tests {
             presentable("Reset at evil.example now, e.g. v1.2 or 3.14.").as_deref(),
             Some("Reset at now, e.g. v1.2 or 3.14.")
         );
+    }
+
+    #[test]
+    fn a_name_keeps_its_dotted_words_but_not_its_links() {
+        assert_eq!(
+            presentable_name("Node.js Devs").as_deref(),
+            Some("Node.js Devs")
+        );
+        assert_eq!(
+            presentable_name("chat.example.com").as_deref(),
+            Some("chat.example.com")
+        );
+        assert_eq!(
+            presentable_name("Join www.evil.example or https://evil.example/x now").as_deref(),
+            Some("Join or now")
+        );
+        assert_eq!(presentable("Node.js Devs").as_deref(), Some("Devs"));
     }
 
     #[test]

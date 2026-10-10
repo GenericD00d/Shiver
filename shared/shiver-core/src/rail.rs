@@ -150,15 +150,25 @@ impl<S: RailServer> Rail<'_, S> {
         next_position(self.servers, self.folders)
     }
 
-    /// A folder `id` holding `member_ids` (in that order), where its first member was (a member
-    /// taken from another folder was where that folder is). A folder a member left that is now too
-    /// thin is dissolved.
+    /// A folder `id` holding `member_ids` (in that order, at least two different servers), where its
+    /// first member was (a member taken from another folder was where that folder is). A folder a
+    /// member left that is now too thin is dissolved.
     pub fn create_folder(
         &mut self,
         id: String,
         name: &str,
         member_ids: &[String],
     ) -> Result<Folder> {
+        // one server alone would be dissolved again at once, and the folder handed back gone
+        if member_ids
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            < 2
+        {
+            return Err(Error::InvalidInput("A folder needs two servers".into()));
+        }
+
         let slot = |server: &S| {
             server
                 .folder_id()
@@ -673,6 +683,11 @@ mod tests {
             rail.set_server_folder("a", Some("nope".into())),
             Err(Error::UnknownFolder)
         ));
+        assert!(matches!(
+            rail.create_folder("f".into(), "One", &["a".into(), "a".into()]),
+            Err(Error::InvalidInput(_))
+        ));
+        assert!(rail.folders.is_empty(), "a folder of one is never made");
         assert!(matches!(
             rail.reorder(&[RailRef {
                 kind: RailKind::Server,

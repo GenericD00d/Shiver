@@ -63,8 +63,9 @@ pub enum MenuEntry {
     },
 }
 
-/// More than any rail menu has; a menu past it is refused rather than drawn.
-const MAX_MENU_ENTRIES: usize = 64;
+/// More than any rail menu has (a server's "Move to folder" lists every folder); a menu past it is
+/// refused rather than drawn.
+const MAX_MENU_ENTRIES: usize = 256;
 
 const MAX_MENU_LABEL: usize = 120;
 

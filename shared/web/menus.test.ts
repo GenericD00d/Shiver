@@ -58,6 +58,16 @@ describe('rail menus', () => {
     expect(entries.find((entry) => entry.kind === 'item' && entry.id === 'forgetpw:s')).toMatchObject({ disabled: true });
   });
 
+  test('moves are a submenu of folder names, however many folders there are', () => {
+    const folders = Array.from({ length: 80 }, (_, index) => ({ id: `f${index}`, name: `Folder ${index}` }));
+    const entries = serverMenu({ id: 's', identity: 'me', folderId: 'f0', notify: 'all' }, { ...facts, folders });
+    const moves = entries.find((entry) => entry.kind === 'submenu' && entry.label === 'Move to folder');
+
+    expect(entries.length).toBeLessThan(20);
+    expect(moves?.kind === 'submenu' && moves.items.length).toBe(79);
+    expect(moves?.kind === 'submenu' && moves.items[0]).toMatchObject({ id: 'move:s:f1', label: 'Folder 1' });
+  });
+
   test('a server that sent too much is offered the larger limit', () => {
     expect(ids(serverMenu({ id: 's', identity: 'me', folderId: null, notify: 'all' }, { ...facts, tooLarge: true }))).toContain(
       'anysize:s'

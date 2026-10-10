@@ -19,7 +19,7 @@ use shiver_core::probe::public_file_url;
 pub use crate::check::{check_server, CheckedSessions, ServerCheck};
 pub use crate::connection::{retry_delay, watch, Target, Watcher};
 pub use crate::error::{Error, Result};
-pub use crate::unread::{apply_delta, choose_floor, set_unread, unread_total};
+pub use crate::unread::{apply_delta, choose_floor, set_unread, settle_floor, unread_total};
 
 mod check;
 mod connection;

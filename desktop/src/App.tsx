@@ -29,13 +29,13 @@ import { dmKey } from '../../shared/web/dms';
 import { folderMenu, notifyLevelOf, readMenuId, serverMenu } from '../../shared/web/menus';
 import { byPosition, type RailRef, type RailStep, railOrder, runRailSteps } from '../../shared/web/rail';
 
+/** A message clicked in the bell's feed. */
+type OpenMessage = { entryId: string; channelId: number | null; isDm: boolean; author: string };
+
 /**
  * Which Shiver surface owns the content area. Anything other than `server` means the active server's
  * webview is hidden and the shell is drawing the whole area.
  */
-/** A message clicked in the bell's feed. */
-type OpenMessage = { entryId: string; channelId: number | null; isDm: boolean; author: string };
-
 type Panel = 'server' | 'add' | 'settings' | 'dms' | 'folder' | 'connecting' | 'signin' | 'remove';
 
 /** The server Shiver is waiting on, and whether it has given up on it. */
@@ -249,6 +249,8 @@ export const App = () => {
 
   /// reopens the inbox, restoring the conversation it was last showing
   const openDmPanel = useCallback(async () => {
+    navigationRef.current += 1;
+
     try {
       await api.showShell();
 
@@ -343,6 +345,8 @@ export const App = () => {
   /// opens the conversation beside Shiver's DM list, drawn by that server's own client
   const handleOpenDm = useCallback(
     async (entryId: string, name: string, channelId: number) => {
+      navigationRef.current += 1;
+
       try {
         await api.openDm(entryId, name);
 

@@ -12,7 +12,7 @@ use crate::{
     feed::Feed,
     model::{normalize_origin, RegistryView, ServerEntry},
     secrets::{self, Secret},
-    session::Recovery,
+    session::{self, Recovery},
     store::{RegistryStore, Store},
     voice::VoiceState,
     webviews,
@@ -164,6 +164,9 @@ pub async fn remove_server(
 
     webviews::close_server(&app, &id)?;
 
+    // held to the end: a renewal finishing meanwhile must not store a session for it again
+    let _held = session::CREDENTIALS.lock().await;
+
     // credentials go first, so a failure cannot leave one behind for a server no longer listed
     secrets::forget_all_off_thread(&id).await?;
 
@@ -200,7 +203,12 @@ pub async fn remove_server(
 /// browser profile is replaced so the page keeps no cookie or stored token either.
 #[tauri::command]
 pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String) -> Result<()> {
+    // a renewal finishing meanwhile must not store a session again: it waits, then sees no identity
+    let held = session::CREDENTIALS.lock().await;
+
     secrets::forget_all_off_thread(&id).await?;
+
+    let on_screen = app.state::<webviews::ActiveServer>().is_on_screen(&id);
 
     webviews::close_server(&app, &id)?;
 
@@ -214,6 +222,8 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
         Ok(server.clone())
     })?;
 
+    drop(held);
+
     webviews::discard_profiles(&app, &id, Some(&entry));
     // the account's messages and conversations go with it (the bell and DM list are told below)
     app.state::<Feed>().forget_entry(&id);
@@ -221,10 +231,15 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
     app.state::<Recovery>().forget_entry(&id);
     app.state::<Readiness>().forget_entry(&id);
 
-    let settings = store.registry().settings.clone();
-    let locked = voice_locked_for(&app, &id);
+    // the page comes back at its sign-in only if it was the one on screen; any other is built when
+    // the user next opens it, rather than covering whatever they are looking at
+    if on_screen {
+        let settings = store.registry().settings.clone();
+        let locked = voice_locked_for(&app, &id);
 
-    webviews::show_server(&app, &entry, &settings, None, &[], locked)?;
+        webviews::show_server(&app, &entry, &settings, None, &[], locked)?;
+    }
+
     crate::watch::sync(&app);
     crate::watch::forget(&app, &id);
     drain::notify_feed_changed(&app);
