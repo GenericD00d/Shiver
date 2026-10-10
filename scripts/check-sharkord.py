@@ -37,7 +37,7 @@ SHIVER_SOURCES = [
     *ROOT.glob("desktop/bridge/*.ts"),
     *ROOT.glob("mobile/bridge/*.ts"),
     *ROOT.glob("plugin/client/*.js"),
-    ROOT / "mobile/src-tauri/src/inbox.rs",
+    ROOT / "mobile/src-tauri/src/inbox/sessions.rs",
 ]
 
 # (what Shiver relies on, a Sharkord path relative to the checkout, a regex that must match there)
