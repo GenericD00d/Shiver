@@ -37,7 +37,7 @@ will serve you perfectly well.
 - **A server rail** — add, remove, reorder by dragging, group into folders, per-server menu
 - **Seamless sign-in.** Shiver signs in for you and the server opens straight into the app rather
   than onto a login page. Sessions and passwords live in the OS keychain, or
-  `EncryptedSharedPreferences` on Android — never in a file, never in plaintext. Keeping the password
+  `EncryptedSharedPreferences` on Android — never stored unencrypted. Keeping the password
   is the default, because it is what lets Shiver sign itself in again before a session expires
   (Sharkord's sessions last seven days and cannot be refreshed), in the background, so opening a
   server never waits on it. The session is handed to a server's

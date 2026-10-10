@@ -28,6 +28,9 @@ use crate::{
 #[derive(Default)]
 pub struct QuickRail {
     open: AtomicBool,
+    /// asked for and not since taken down: a `close` while it is still being drawn clears this, and
+    /// the draw then takes it down again rather than leaving it over the new page
+    wanted: AtomicBool,
     /// the logo key the rail has been given for each entry
     sent: Mutex<HashMap<String, String>>,
 }
@@ -42,6 +45,10 @@ pub fn wanted(app: &AppHandle, target: &Url) -> bool {
 /// Slides the rail in over the page. Off the calling thread: this is asked from the webview's own
 /// (UI) thread, which the rail needs to draw on.
 pub fn open(app: &AppHandle) {
+    app.state::<QuickRail>()
+        .wanted
+        .store(true, Ordering::Release);
+
     let app = app.clone();
 
     std::thread::spawn(move || draw(&app, true));
@@ -60,7 +67,11 @@ pub fn refresh(app: &AppHandle) {
 
 /// Takes the rail down, as a page starts loading under it.
 pub fn close(app: &AppHandle) {
-    if !app.state::<QuickRail>().open.swap(false, Ordering::AcqRel) {
+    let rail = app.state::<QuickRail>();
+
+    rail.wanted.store(false, Ordering::Release);
+
+    if !rail.open.swap(false, Ordering::AcqRel) {
         return;
     }
 
@@ -97,9 +108,10 @@ pub fn chosen(app: &AppHandle, event: RailEvent) {
             .map(|_| format!("open={entry_id}")),
     };
 
-    app.state::<QuickRail>()
-        .open
-        .store(false, Ordering::Release);
+    let quick = app.state::<QuickRail>();
+
+    quick.wanted.store(false, Ordering::Release);
+    quick.open.store(false, Ordering::Release);
 
     if let Some(fragment) = screen {
         webview::go_home(app, Some(&fragment));
@@ -130,7 +142,16 @@ fn draw(app: &AppHandle, reveal: bool) {
     };
 
     if reveal {
-        app.state::<QuickRail>().open.store(true, Ordering::Release);
+        let quick = app.state::<QuickRail>();
+
+        quick.open.store(true, Ordering::Release);
+
+        // closed while it was being drawn: a page started loading under it
+        if !quick.wanted.load(Ordering::Acquire) && quick.open.swap(false, Ordering::AcqRel) {
+            let _ = rail.hide();
+
+            return;
+        }
     }
 
     // the rail lost logos it was given (a new activity): sent again

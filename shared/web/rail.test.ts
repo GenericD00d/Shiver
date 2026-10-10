@@ -34,7 +34,8 @@ describe('rail helpers', () => {
       { id: 'e', position: 0, folderId: 'gone' }
     ];
 
-    expect(railOrder(servers, [{ id: 'f', position: 1 }]).map((server) => server.id)).toEqual(['c', 'b', 'a', 'd']);
+    // `e` names a folder that is gone: the rail draws it loose, so the shortcuts reach it there
+    expect(railOrder(servers, [{ id: 'f', position: 1 }]).map((server) => server.id)).toEqual(['c', 'e', 'b', 'a', 'd']);
   });
 });
 

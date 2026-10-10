@@ -33,6 +33,12 @@ pub fn apply(app: &AppHandle, accelerator: Option<&str>) {
         if let Err(error) = shortcuts.unregister(previous) {
             eprintln!("[shiver] could not clear the old mute shortcut: {error}");
         }
+
+        // a rail key the old mute shortcut held (set before rail keys were refused) is the rail's
+        // again, without waiting for Shiver to next come to the front
+        if webviews::is_in_front(app) {
+            set_rail_shortcuts(app, true);
+        }
     }
 
     let Some(accelerator) = accelerator.map(str::trim).filter(|value| !value.is_empty()) else {
@@ -67,6 +73,15 @@ pub fn apply(app: &AppHandle, accelerator: Option<&str>) {
             eprintln!("[shiver] could not register '{accelerator}' as the mute shortcut: {error}")
         }
     }
+}
+
+/// Whether `accelerator` is one of the rail's shortcuts, which the mute shortcut may not be: the
+/// two would take the combination from each other.
+pub fn is_rail_shortcut(accelerator: &str) -> bool {
+    accelerator
+        .trim()
+        .parse::<Shortcut>()
+        .is_ok_and(|shortcut| rail_shortcuts().iter().any(|(rail, _)| *rail == shortcut))
 }
 
 /// The rail's shortcuts and what each tells the shell.
@@ -143,6 +158,21 @@ pub fn watch_front(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rail_shortcut_cannot_be_the_mute_shortcut() {
+        assert!(is_rail_shortcut("CommandOrControl+3"));
+        assert!(is_rail_shortcut(" CommandOrControl+Alt+ArrowUp "));
+        assert!(!is_rail_shortcut("CommandOrControl+Shift+M"));
+        assert!(!is_rail_shortcut("not a shortcut"));
+
+        // as the settings field writes them (Ctrl is the rail's modifier off macOS)
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(is_rail_shortcut("Control+1"));
+            assert!(is_rail_shortcut("Control+Alt+Up"));
+        }
+    }
 
     #[test]
     fn the_rail_has_eleven_shortcuts() {

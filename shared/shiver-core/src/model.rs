@@ -53,8 +53,6 @@ fn is_hex_color(value: &str) -> bool {
     })
 }
 
-/// `#rrggbb` (lowercased), or `fallback`. Colours become CSS in every server page, so nothing else
-/// may pass.
 /// Which of a server's messages notify: reach the bell, a system notification or the phone's.
 /// Unread badges count every message either way.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -91,6 +89,8 @@ impl<'de> Deserialize<'de> for NotifyLevel {
     }
 }
 
+/// `#rrggbb` (lowercased), or `fallback`. Colours become CSS in every server page, so nothing else
+/// may pass.
 pub fn sanitised_color(value: &str, fallback: &str) -> String {
     if is_hex_color(value) {
         value.to_ascii_lowercase()

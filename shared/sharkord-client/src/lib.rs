@@ -34,6 +34,9 @@ const STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 /// How long a joined socket may be silent before it is treated as dead (tRPC pings every 30s).
 const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
+/// How long a connection must have lasted, if it delivered nothing, to count as having worked.
+const STABLE_CONNECTION: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Largest message accepted. The biggest real payload measured (a large server's `joinServer`) is
 /// about 2.6 MB; this is tungstenite's own frame default.
 const MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -464,10 +467,11 @@ fn mentioned(html: &str) -> Vec<i64> {
         })
     };
 
+    let mut close = NextClose::default();
+
     html.match_indices("<span")
         .filter_map(|(at, _)| {
-            let tag = &html[at..];
-            let tag = &tag[..tag.find('>')?];
+            let tag = &html[at..close.at_or_after(html, at)?];
 
             (attribute(tag, "data-type").as_deref() == Some("mention"))
                 .then(|| attribute(tag, "data-user-id")?.parse().ok())
@@ -491,6 +495,26 @@ fn parse_delta(data: &Value) -> Option<Event> {
     })
 }
 
+/// The next `>` in a text read front to back, looked for once and reused until the reader passes it,
+/// so a message of `<a<a<a…` with no `>` is scanned once rather than once per `<`.
+#[derive(Default)]
+struct NextClose(Option<Option<usize>>);
+
+impl NextClose {
+    /// The index of the first `>` in `text` at or after `from`; `from` never goes backwards.
+    fn at_or_after(&mut self, text: &str, from: usize) -> Option<usize> {
+        let found = match self.0 {
+            Some(Some(end)) if end >= from => Some(end),
+            Some(None) => None,
+            _ => text[from..].find('>').map(|offset| from + offset),
+        };
+
+        self.0 = Some(found);
+
+        found
+    }
+}
+
 /// Sharkord's message html as one line of text for a notification. Tags become word breaks, common
 /// entities are decoded (named and numeric) and whitespace collapses. Not a sanitiser: the result
 /// is never put back into html.
@@ -498,6 +522,8 @@ fn plain_text(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
     let mut pending_space = false;
     let mut rest = html;
+
+    let mut close = NextClose::default();
 
     let push = |text: &mut String, pending_space: &mut bool, piece: &str| {
         if *pending_space && !text.is_empty() {
@@ -515,12 +541,16 @@ fn plain_text(html: &str) -> String {
             // only a real tag: `<` followed by a letter, `/` or `!`, and closed by a `>`
             '<' if after.starts_with(|next: char| {
                 next.is_ascii_alphabetic() || next == '/' || next == '!'
-            }) && after.contains('>') =>
+            }) =>
             {
-                rest = &after[after.find('>').unwrap_or(0) + 1..];
-                pending_space = true;
+                if let Some(end) = close.at_or_after(html, html.len() - after.len()) {
+                    rest = &html[end + 1..];
+                    pending_space = true;
 
-                continue;
+                    continue;
+                }
+
+                push(&mut text, &mut pending_space, "<");
             }
             '&' => {
                 if let Some((decoded, length)) = entity(after) {
@@ -655,7 +685,8 @@ pub fn retry_delay(attempt: u32, key: &str) -> std::time::Duration {
 /// Where and how to connect for one attempt.
 pub struct Target {
     pub origin: String,
-    pub token: String,
+    /// wiped when the attempt is over
+    pub token: zeroize::Zeroizing<String>,
     pub accept_any_size: bool,
 }
 
@@ -685,12 +716,21 @@ pub async fn watch(key: &str, mut watcher: impl Watcher) {
 
         match open(origin, &target.token, target.accept_any_size).await {
             Ok(mut session) => {
-                failures = 0;
+                let opened = std::time::Instant::now();
+                let mut delivered = false;
+
                 refusals = 0;
                 watcher.joined(&session.joined);
 
                 while let Some(event) = session.next_event().await {
+                    delivered = true;
                     watcher.event(&session.joined, event);
+                }
+
+                // a connection that worked starts the backoff over; one closed straight after
+                // joining (a refused subscription) keeps backing off
+                if delivered || opened.elapsed() >= STABLE_CONNECTION {
+                    failures = 0;
                 }
 
                 eprintln!("[shiver] {origin} closed the connection");
@@ -888,6 +928,16 @@ impl Session {
                 Reply::Failed { id, message, .. } => {
                     eprintln!("[shiver] the server refused request {id:?}: {message}");
 
+                    // a refused subscription leaves a socket that answers pings and says nothing:
+                    // closed, so the watch reconnects (with backoff) rather than going quiet
+                    if id.is_some_and(|id| {
+                        [READ_STATE_ID, MESSAGE_ID, READ_STATE_UPDATE_ID]
+                            .iter()
+                            .any(|subscription| id == u64::from(*subscription))
+                    }) {
+                        return None;
+                    }
+
                     None
                 }
                 _ => None,
@@ -924,6 +974,13 @@ async fn call(socket: &mut Socket, id: u32, path: &str, input: Option<Value>) ->
             continue;
         };
 
+        // the server pings during a slow step too, and drops a socket that does not answer
+        if text == "PING" {
+            send(socket, "PONG".into()).await?;
+
+            continue;
+        }
+
         match parse_reply(&text) {
             Reply::Data {
                 id: Some(reply),
@@ -940,6 +997,12 @@ async fn call(socket: &mut Socket, id: u32, path: &str, input: Option<Value>) ->
                     Error::Refused(message)
                 })
             }
+            // an error naming no request (one the server could not read) ends the step now rather
+            // than at its timeout; retried like a dropped connection, since it says nothing about
+            // the session
+            Reply::Failed {
+                id: None, message, ..
+            } => return Err(Error::Unreachable(format!("{path}: {message}"))),
             _ => continue,
         }
     }
@@ -1030,6 +1093,20 @@ mod tests {
         assert_eq!(plain_text("<!-- note -->text"), "text");
         assert_eq!(plain_text("  spaced   out  "), "spaced out");
         assert_eq!(plain_text("<p></p>"), "");
+    }
+
+    #[test]
+    fn unclosed_tags_are_read_in_one_pass() {
+        // a message long past Sharkord's limit, so a rescan per `<` would show
+        let hostile = "<a".repeat(200_000);
+        let started = std::time::Instant::now();
+
+        assert_eq!(plain_text(&hostile), hostile);
+        assert!(mentioned(&"<span".repeat(200_000)).is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+
+        // a later `>` still closes the tags before it, and the text after it survives
+        assert_eq!(plain_text("<a<b>x</b>"), "x");
     }
 
     #[test]

@@ -149,7 +149,8 @@ const installFileNaming = (ctx) =>
 /** The muted-channel list and shared unread floor, validated and written through `rows`. */
 
 const MAX_MUTED_CHANNELS = 500;
-const MAX_FLOOR_CHANNELS = 5000;
+/** Sharkord stores at most 64 KiB per user row; at up to 28 bytes an entry this leaves room for the rest */
+const MAX_FLOOR_CHANNELS = 1500;
 
 /** Positive integer channel ids, de-duplicated and capped. */
 export const mutedFrom = (value) =>
@@ -453,6 +454,8 @@ export const endpointsFrom = (value) =>
     ? [...new Set(value.map(normaliseEndpoint).filter(Boolean))].slice(0, MAX_ENDPOINTS)
     : [];
 
+const LOOKUP_TIMEOUT_MS = 3_000;
+
 /** Resolves an endpoint and returns the address to connect to, or why it is refused. */
 export const vetEndpoint = async (endpoint, lookup = dnsLookup) => {
   const canonical = normaliseEndpoint(endpoint);
@@ -467,11 +470,20 @@ export const vetEndpoint = async (endpoint, lookup = dnsLookup) => {
   }
 
   let addresses;
+  let timer;
 
   try {
-    addresses = await lookup(host, { all: true, verbatim: true });
+    // a nameserver that never answers must not hold a delivery slot
+    addresses = await Promise.race([
+      lookup(host, { all: true, verbatim: true }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('lookup timed out')), LOOKUP_TIMEOUT_MS);
+      })
+    ]);
   } catch {
     return { ok: false, why: 'does not resolve' };
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!addresses?.length) return { ok: false, why: 'does not resolve' };
@@ -572,14 +584,17 @@ export const createPush = (
     }
   };
 
-  const changeEndpoints = (userId, change) =>
-    rows.updateRow(userId, (row) => {
-      const updated = { ...row, pushEndpoints: change(endpointsFrom(row.pushEndpoints)) };
+  /** Changes a user's endpoints; the cache follows only once the row is stored. */
+  const changeEndpoints = async (userId, change) => {
+    const updated = await rows.updateRow(userId, (row) => ({
+      ...row,
+      pushEndpoints: change(endpointsFrom(row.pushEndpoints))
+    }));
 
-      remember(userId, updated);
+    remember(userId, updated);
 
-      return updated;
-    });
+    return updated;
+  };
 
   /** Re-vets and posts one wake-up; drops the endpoint if the relay says it is gone (404/410). */
   const wake = async (userId, endpoint) => {
@@ -627,6 +642,25 @@ export const createPush = (
   };
 
   /**
+   * Whether a user may be woken about a channel: one Sharkord lets see it (which it grants anyone
+   * for a public channel, banned or not), not banned, and still allowed to use plugins (without
+   * which they could not take their endpoint back). Any failure to tell counts as no.
+   */
+  const mayWake = async (userId, channelId) => {
+    try {
+      const [user, usesPlugins, sees] = await Promise.all([
+        ctx.users.get(userId),
+        ctx.permissions.userCan(userId, 'USE_PLUGINS'),
+        ctx.permissions.userCanInChannel(userId, channelId, 'VIEW_CHANNEL')
+      ]);
+
+      return Boolean(user && !user.banned && usesPlugins && sees);
+    } catch {
+      return false;
+    }
+  };
+
+  /**
    * Users to wake for a message. The debounce slot is claimed synchronously so concurrent messages
    * cannot both pass; claims refused by the permission check are handed back.
    */
@@ -642,11 +676,7 @@ export const createPush = (
       lastPushAt.set(userId, at);
     }
 
-    const allowed = await Promise.all(
-      claimed.map(({ userId }) =>
-        ctx.permissions.userCanInChannel(userId, message.channelId, 'VIEW_CHANNEL').catch(() => false)
-      )
-    );
+    const allowed = await Promise.all(claimed.map(({ userId }) => mayWake(userId, message.channelId)));
 
     return claimed.filter((claim, index) => {
       if (allowed[index]) return true;
@@ -885,6 +915,11 @@ const onLoad = async (ctx) => {
     ctx.events.on('user:deleted', ({ userId }) => {
       statuses.forget(userId);
       push.forgetUser(userId);
+    }),
+    // a banned user's devices are not woken again; Shiver registers them anew if they come back
+    ctx.events.on('user:banned', ({ userId }) => {
+      push.forgetUser(userId);
+      void push.unregister(userId).catch((error) => ctx.logger.debug(`Could not clear user ${userId}'s endpoints: ${error?.message}`));
     })
   ];
 

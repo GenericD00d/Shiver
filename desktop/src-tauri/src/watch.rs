@@ -270,9 +270,17 @@ impl sharkord::Watcher for Watch {
             .server(&self.entry.id)
             .is_some_and(|server| server.accept_any_size);
 
+        // the socket joins the server, which Sharkord allows only a few times a minute
+        let place = self
+            .app
+            .state::<shiver_core::limit::Joins>()
+            .take(&self.entry.origin);
+
+        tokio::time::sleep(place.wait).await;
+
         Some(sharkord::Target {
             origin: self.entry.origin.clone(),
-            token,
+            token: zeroize::Zeroizing::new(token),
             accept_any_size,
         })
     }

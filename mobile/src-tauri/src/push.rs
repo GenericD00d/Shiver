@@ -176,6 +176,45 @@ pub fn set_wanted(app: &AppHandle, entry_id: &str, wanted: bool) -> Result<()> {
     result.map_err(|error| Error::Webview(error.to_string()))
 }
 
+/// Hands every server's endpoint to its page to clear, before Shiver moves to another distributor:
+/// the new one issues new endpoints, and the plugin would otherwise keep waking the old ones. An
+/// endpoint the new distributor hands back unchanged is not cleared (see `on_page_load`).
+pub fn retire_endpoints(app: &AppHandle) -> Result<()> {
+    let current: Vec<(String, String)> = {
+        let push = app.state::<Push>();
+        let store = app.state::<Store>();
+        let registry = store.registry();
+
+        registry
+            .servers
+            .iter()
+            .filter_map(|server| Some((server.id.clone(), push.endpoint(&server.id)?)))
+            .collect()
+    };
+
+    if current.is_empty() {
+        return Ok(());
+    }
+
+    app.state::<Store>().update(|registry| {
+        for (entry_id, endpoint) in &current {
+            if let Some(server) = registry.server_mut(entry_id) {
+                if !server.retired_push_endpoints.contains(endpoint) {
+                    server.retired_push_endpoints.push(endpoint.clone());
+                }
+            }
+        }
+
+        Ok(())
+    })?;
+
+    for (entry_id, _) in &current {
+        app.state::<Push>().update(entry_id, None, false);
+    }
+
+    Ok(())
+}
+
 /// Unregisters a server that is leaving the rail. Call before it is removed from the registry.
 pub fn unregister(app: &AppHandle, entry_id: &str) {
     app.state::<Push>().update(entry_id, None, false);

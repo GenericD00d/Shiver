@@ -24,8 +24,10 @@ import {
   DM_ITEM,
   DM_TOGGLE,
   type DmChannel,
+  dmRowName,
   findDmChannelIdByUserName,
   installMuteStyles,
+  isDmRowFor,
   markAllChannelsRead,
   NARROW,
   notificationFlags,
@@ -106,6 +108,8 @@ declare global {
       ready: boolean;
       /** the client refused the session and is asking for credentials */
       signedOut: boolean;
+      /** Sharkord's client never started in this page (the core revives it) */
+      stalled: boolean;
       voice: VoiceSnapshot | null;
       /** the channel on screen, which counts as reading it */
       viewingChannelId: number | null;
@@ -498,9 +502,6 @@ function resolveDmChannels(queue: QueuedNotification[], state: SharkordState) {
   return queue;
 }
 
-/** The name a DM row shows: its name span (not the avatar's initials fallback span). */
-const dmRowName = (row: HTMLElement) => row.querySelector<HTMLElement>('span.flex-1, span.truncate')?.textContent?.trim() ?? null;
-
 /**
  * The DM open in Sharkord's DM view. Not in the plugin store (`selectedDmChannelId` lives in
  * another slice), so it is read off the highlighted row, by the same name notifications resolve by.
@@ -579,12 +580,7 @@ function openDirectMessage(name: string) {
       toggle?.click();
       toggled ||= !!toggle;
     } else {
-      const row = rows.find((candidate) => {
-        const named = dmRowName(candidate);
-
-        // without the name span, any span that is exactly the name (never a substring)
-        return named !== null ? named === name : [...candidate.querySelectorAll('span')].some((span) => span.textContent?.trim() === name);
-      });
+      const row = rows.find((candidate) => isDmRowFor(candidate, name));
 
       if (row) {
         row.click();
@@ -731,13 +727,16 @@ function selectChannelWhenReady(channelId: number) {
   }, 250);
 }
 
+/** The `#` icon (lucide's `Hash`) Sharkord draws only in a text channel's row. */
+const TEXT_CHANNEL_ICON = 'svg.lucide-hash';
+
 let voiceLocked = false;
 let voiceNoticeTimer: number | null = null;
 
 /**
  * Refuses a click on a voice channel while another server holds the call (capture phase on the
  * document, before React sees it), so the second join never happens. Rows carry only a name, so
- * voice rows are recognised through the store.
+ * voice rows are recognised through the store, and a text row of the same name by its icon.
  */
 function installVoiceLock(initial: boolean, getState: () => SharkordState) {
   voiceLocked = initial;
@@ -753,6 +752,8 @@ function installVoiceLock(initial: boolean, getState: () => SharkordState) {
 
       const name = rowName(row);
 
+      // a text row draws Sharkord's `#` icon: one named like a voice channel is not one
+      if (row.querySelector(TEXT_CHANNEL_ICON)) return;
       if (!(getState().channels ?? []).some((channel) => channel.type === 'VOICE' && channel.name === name)) return;
 
       event.preventDefault();

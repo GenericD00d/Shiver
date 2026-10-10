@@ -55,6 +55,7 @@ pub async fn probe_server(origin: String) -> Result<ServerInfo> {
 #[tauri::command]
 pub async fn check_server(
     kept: State<'_, CheckedSessions>,
+    joins: State<'_, Joins>,
     origin: String,
     identity: Option<String>,
     password: Option<Password>,
@@ -64,6 +65,7 @@ pub async fn check_server(
         identity.as_deref(),
         password.as_deref().map(String::as_str),
         &kept,
+        &joins,
     )
     .await?)
 }
@@ -288,6 +290,8 @@ pub async fn set_push_server(app: AppHandle, entry_id: String, wanted: bool) -> 
 /// Chooses a distributor and registers the chosen servers with it (answers arrive as events).
 #[tauri::command]
 pub fn set_push_distributor(app: AppHandle, distributor: String) -> Result<()> {
+    crate::push::retire_endpoints(&app)?;
+
     app.shiver_push()
         .set_distributor(&distributor)
         .map_err(|error| Error::Webview(error.to_string()))?;
@@ -467,7 +471,7 @@ pub async fn select_server(
     let entry = entry_of(&store, &id)?;
     let ticket = app.state::<Showing>().begin_opening();
     let token = inbox::session_for(&app, &id).await;
-    let place = app.state::<Joins>().take(&id);
+    let place = app.state::<Joins>().take(&entry.origin);
 
     if !place.wait.is_zero() {
         webview::emit_home(
@@ -479,7 +483,7 @@ pub async fn select_server(
     }
 
     if !app.state::<Showing>().still_opening(ticket) {
-        app.state::<Joins>().give_back(&id, place);
+        app.state::<Joins>().give_back(&entry.origin, place);
 
         return Ok(());
     }

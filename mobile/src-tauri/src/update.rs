@@ -128,7 +128,7 @@ pub fn start(app: &AppHandle) {
             .builder()
             .id(NOTIFICATION_ID)
             .title(format!("Shiver {newest} is available"))
-            .body("Tap to open the releases page.")
+            .body("Get it from About in Shiver's settings.")
             .show();
     });
 }

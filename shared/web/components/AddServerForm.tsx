@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useState } from 'react';
+import { type ReactNode, useCallback, useRef, useState } from 'react';
 
 import { errorMessage } from '../errors';
 import type { ServerCheck } from '../types';
@@ -37,8 +37,12 @@ export const AddServerForm = ({ hint, check, add, onCancel }: Props) => {
   const [preview, setPreview] = useState<ServerCheck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // the address as typed now, for a check that answers after the user has changed it
+  const typedRef = useRef(origin);
 
   const handleCheck = useCallback(async () => {
+    const checking = origin.trim();
+
     setBusy(true);
     setError(null);
     setPreview(null);
@@ -46,21 +50,27 @@ export const AddServerForm = ({ hint, check, add, onCancel }: Props) => {
     try {
       // credentials are handed over when they are there: the plugin cannot be seen without a
       // session, so a check with an empty password can only answer what `/info` answers
-      setPreview(await check(origin.trim(), signInHere ? identity.trim() || null : null, signInHere ? password || null : null));
+      const found = await check(checking, signInHere ? identity.trim() || null : null, signInHere ? password || null : null);
+
+      // an answer about an address no longer in the field would name the wrong server
+      if (typedRef.current.trim() === checking) setPreview(found);
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (typedRef.current.trim() === checking) setError(errorMessage(cause));
     } finally {
       setBusy(false);
     }
   }, [check, identity, origin, password, signInHere]);
 
   const handleAdd = useCallback(async () => {
+    if (!preview) return;
+
     setBusy(true);
     setError(null);
 
     try {
+      // the address that was checked, whose name and logo the user saw: the password goes there
       await add({
-        origin: origin.trim(),
+        origin: preview.origin,
         identity: signInHere ? identity.trim() || null : null,
         password: signInHere ? password || null : null,
         accountLabel: accountLabel.trim() || null
@@ -70,7 +80,7 @@ export const AddServerForm = ({ hint, check, add, onCancel }: Props) => {
     } finally {
       setBusy(false);
     }
-  }, [accountLabel, add, identity, origin, password, signInHere]);
+  }, [accountLabel, add, identity, password, preview, signInHere]);
 
   const handleSubmit = useCallback(
     (event: React.FormEvent) => {
@@ -102,6 +112,7 @@ export const AddServerForm = ({ hint, check, add, onCancel }: Props) => {
           type="text"
           value={origin}
           onChange={(event) => {
+            typedRef.current = event.target.value;
             setOrigin(event.target.value);
             // the preview describes the address that was checked, so a further edit invalidates it
             setPreview(null);

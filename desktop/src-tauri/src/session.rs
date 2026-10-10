@@ -256,10 +256,14 @@ fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: &str) {
         (registry.settings.clone(), registry.muted_for(&entry.id))
     };
 
-    let was_showing = {
+    let (was_showing, conversation) = {
         let active = app.state::<ActiveServer>();
 
-        active.get().as_deref() == Some(entry.id.as_str()) && active.showing_server()
+        (
+            active.get().as_deref() == Some(entry.id.as_str()) && active.showing_server(),
+            // a conversation beside Shiver's DM list is on screen too, and closing forgets it
+            active.conversation_with(&entry.id),
+        )
     };
 
     if let Err(error) = webviews::close_server(app, &entry.id) {
@@ -278,7 +282,9 @@ fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: &str) {
         .holder()
         .is_some_and(|holder| holder != entry.id);
 
-    let built = if was_showing {
+    let built = if let Some(name) = conversation {
+        webviews::show_conversation(app, entry, &settings, Some(token), &muted, locked, &name)
+    } else if was_showing {
         webviews::show_server(app, entry, &settings, Some(token), &muted, locked)
     } else {
         webviews::preload_server(app, entry, &settings, Some(token), &muted, locked)

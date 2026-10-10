@@ -172,6 +172,8 @@ export const AboutSection = ({
   const [newer, setNewer] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState<string | null>(null);
+  // a second click while the first download runs would fetch and start the installer twice
+  const [taking, setTaking] = useState(false);
 
   useEffect(() => {
     appVersion().then(setVersion, () => setVersion(''));
@@ -195,12 +197,15 @@ export const AboutSection = ({
   }, [checkForUpdate]);
 
   const take = useCallback(async () => {
+    setTaking(true);
     setChecked(takingNote ?? null);
 
     try {
       await onTake();
     } catch (error) {
       setChecked(errorMessage(error));
+    } finally {
+      setTaking(false);
     }
   }, [onTake, takingNote]);
 
@@ -216,7 +221,7 @@ export const AboutSection = ({
         </button>
 
         {newer ? (
-          <button type="button" className="primary" onClick={() => void take()}>
+          <button type="button" className="primary" disabled={taking} onClick={() => void take()}>
             {takeLabel} {newer}
           </button>
         ) : (

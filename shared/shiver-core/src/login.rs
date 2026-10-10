@@ -26,8 +26,9 @@ pub(crate) fn unreachable(origin: &str, error: &(dyn std::error::Error + 'static
 
 /// Exchanges a username and password for a session token. Refuses anything but https.
 ///
-/// The request body is moved into the request rather than copied, so Shiver holds no second copy
-/// of the password; reqwest's own buffer is outside its control.
+/// The body is serialised straight from the borrowed password (no `Value` holding a copy) and moved
+/// into the request, so Shiver holds no second copy of it; reqwest's own buffer is outside its
+/// control.
 pub async fn sign_in(origin: &str, identity: &str, password: &str) -> Result<String> {
     if !origin.starts_with("https://") {
         return Err(Error::Refused(
@@ -36,7 +37,14 @@ pub async fn sign_in(origin: &str, identity: &str, password: &str) -> Result<Str
         ));
     }
 
-    let body = serde_json::json!({ "identity": identity, "password": password }).to_string();
+    #[derive(serde::Serialize)]
+    struct Login<'a> {
+        identity: &'a str,
+        password: &'a str,
+    }
+
+    let body = serde_json::to_vec(&Login { identity, password })
+        .map_err(|error| Error::InvalidInput(error.to_string()))?;
 
     let response = http::client()
         .post(format!("{origin}/login"))

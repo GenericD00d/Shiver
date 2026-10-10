@@ -20,14 +20,17 @@ export const membersOf = <T extends Placed & { folderId: string | null }>(server
 
 /**
  * Every server in the order the rail shows them: top-level servers and folders by position, each
- * folder's servers in their own order (collapsed or not).
+ * folder's servers in their own order (collapsed or not). A server naming a folder that is gone is
+ * top level, as the rail draws it.
  */
 export const railOrder = <T extends Placed & { folderId: string | null }>(
   servers: readonly T[],
   folders: readonly (Placed & { id: string })[]
 ) =>
   byPosition([
-    ...servers.filter((server) => !server.folderId).map((server) => ({ position: server.position, members: [server] })),
+    ...servers
+      .filter((server) => !server.folderId || !folders.some((folder) => folder.id === server.folderId))
+      .map((server) => ({ position: server.position, members: [server] })),
     ...folders.map((folder) => ({ position: folder.position, members: membersOf(servers, folder.id) }))
   ]).flatMap(({ members }) => members);
 

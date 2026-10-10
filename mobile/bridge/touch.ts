@@ -13,6 +13,7 @@ import {
   DM_ITEM,
   DM_TOGGLE,
   IMAGE_VIEWER,
+  isDmRowFor,
   markAllChannelsRead,
   MESSAGE_ITEM,
   SERVER_VIEW,
@@ -357,6 +358,8 @@ const REACTION_PILL = 'button[class~="h-9"][class~="gap-1"]';
 export function installReactionNames() {
   let timer = 0;
   let shown: HTMLElement | null = null;
+  /** the pill whose hold's click is still to be swallowed */
+  let held: HTMLElement | null = null;
   let startX = 0;
   let startY = 0;
   const options = { passive: true, capture: true } as const;
@@ -379,6 +382,11 @@ export function installReactionNames() {
 
       if (!touch) return;
 
+      // a hold whose finger lifted off the pill never clicked it: its flag must not eat this tap
+      if (held) delete held.dataset.shiverHeld;
+
+      held = null;
+
       const pill = (event.target as HTMLElement | null)?.closest<HTMLElement>(REACTION_PILL) ?? null;
 
       if (shown) tell(shown, false);
@@ -393,6 +401,7 @@ export function installReactionNames() {
         shown = pill;
         tell(pill, true);
         pill.dataset.shiverHeld = '1';
+        held = pill;
       }, HOLD_MS);
     },
     options
@@ -429,6 +438,7 @@ export function installReactionNames() {
       if (!pill?.dataset.shiverHeld) return;
 
       delete pill.dataset.shiverHeld;
+      held = null;
       event.preventDefault();
       event.stopPropagation();
     },
@@ -436,16 +446,16 @@ export function installReactionNames() {
   );
 }
 
-/** Calls `use` with the first element matching `selector`, now or once it appears (for a while). */
-function whenPresent(selector: string, use: (element: HTMLElement) => void) {
-  const existing = document.querySelector(selector);
+/** Calls `use` with what `find` finds, now or once it appears (for a while). */
+function whenFound(find: () => HTMLElement | null | undefined, use: (element: HTMLElement) => void) {
+  const existing = find();
 
-  if (existing instanceof HTMLElement) return use(existing);
+  if (existing) return use(existing);
 
   const observer = new MutationObserver(() => {
-    const found = document.querySelector(selector);
+    const found = find();
 
-    if (!(found instanceof HTMLElement)) return;
+    if (!found) return;
 
     observer.disconnect();
     use(found);
@@ -453,6 +463,15 @@ function whenPresent(selector: string, use: (element: HTMLElement) => void) {
 
   observer.observe(document.body, { childList: true, subtree: true });
   window.setTimeout(() => observer.disconnect(), APPEAR_TIMEOUT_MS);
+}
+
+/** Calls `use` with the first element matching `selector`, now or once it appears (for a while). */
+function whenPresent(selector: string, use: (element: HTMLElement) => void) {
+  whenFound(() => {
+    const found = document.querySelector(selector);
+
+    return found instanceof HTMLElement ? found : null;
+  }, use);
 }
 
 /** Whether Sharkord's drawer is on screen (always, above `md`). */
@@ -493,21 +512,14 @@ function openDirectMessages() {
 }
 
 /**
- * Opens the DM with `userName`. Rows carry no id; the text may start with an avatar initial when
- * there is no picture ("WWanderer"), so up to two leading characters are allowed.
+ * Opens the DM with `userName`. Rows carry no id, so the row is the one showing exactly that name
+ * (as on desktop), waited for until it renders: the first rows may not be it.
  */
 export function openConversation(userName: string) {
   openDirectMessages();
 
-  whenPresent(DM_ITEM, () => {
-    for (const row of document.querySelectorAll<HTMLElement>(DM_ITEM)) {
-      const text = row.textContent?.trim() ?? '';
-
-      if (text === userName || (text.endsWith(userName) && text.length - userName.length <= 2)) {
-        row.click();
-
-        return;
-      }
-    }
-  });
+  whenFound(
+    () => [...document.querySelectorAll<HTMLElement>(DM_ITEM)].find((row) => isDmRowFor(row, userName)),
+    (row) => row.click()
+  );
 }

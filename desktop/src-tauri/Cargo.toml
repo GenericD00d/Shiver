@@ -34,6 +34,10 @@ url.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 thiserror.workspace = true
+# the core trusts the system's certificates as the webviews do, so a server behind a private CA
+# that loads in its page can also be signed in to and watched (the bundled roots stay as well)
+reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
 
 # the os credential store; there is no android/ios backend
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]

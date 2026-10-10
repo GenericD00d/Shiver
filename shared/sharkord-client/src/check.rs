@@ -53,11 +53,13 @@ impl CheckedSessions {
 
 /// `/info`, plus — given credentials — whether the companion plugin is installed, which only the
 /// join payload of a signed-in connection reveals. The session is kept in `kept`, nothing is stored.
+/// That connection joins the server, so it takes its place in `joins` like any other.
 pub async fn check_server(
     origin: &str,
     identity: Option<&str>,
     password: Option<&str>,
     kept: &CheckedSessions,
+    joins: &shiver_core::limit::Joins,
 ) -> shiver_core::Result<ServerCheck> {
     let origin = normalize_origin(origin)?;
     let info = probe::fetch_info(&origin).await?;
@@ -72,6 +74,9 @@ pub async fn check_server(
     };
 
     let token = Zeroizing::new(login::sign_in(&origin, identity, password).await?);
+
+    tokio::time::sleep(joins.take(&origin).wait).await;
+
     let session = crate::open(&origin, &token, false).await?;
 
     kept.keep(&origin, identity, password, token);

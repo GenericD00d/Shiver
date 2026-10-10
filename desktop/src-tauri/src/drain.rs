@@ -364,11 +364,34 @@ fn drain_webview(app: &AppHandle, webview: &tauri::Webview, entry_id: String, fu
             }
         };
 
-        // off the UI thread: applying can write the registry to disk
-        let (app, entry_id) = (app.clone(), entry_id.clone());
-
-        tauri::async_runtime::spawn_blocking(move || apply(&app, &entry_id, result));
+        apply_in_order(&app, entry_id.clone(), result);
     });
+}
+
+/// Applies drains on one thread, in the order the pages answered. Off the UI thread, since applying
+/// can write the registry to disk; one thread, since a slow apply finishing after the next one
+/// would put older state (a call that ended) back over newer.
+fn apply_in_order(app: &AppHandle, entry_id: String, result: DrainResult) {
+    static APPLIER: std::sync::OnceLock<std::sync::mpsc::Sender<(String, DrainResult)>> =
+        std::sync::OnceLock::new();
+
+    let sender = APPLIER.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel::<(String, DrainResult)>();
+        let app = app.clone();
+
+        std::thread::Builder::new()
+            .name("shiver-drain".into())
+            .spawn(move || {
+                for (entry_id, result) in receiver {
+                    apply(&app, &entry_id, result);
+                }
+            })
+            .expect("the drain thread should start");
+
+        sender
+    });
+
+    let _ = sender.send((entry_id, result));
 }
 
 fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
@@ -458,33 +481,45 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
     // Mutes: the plugin's reconciled list replaces ours, then toggles from the channel menu apply on
     // top. One registry write for the lot.
     if result.synced_mutes.is_some() || !result.mutes.is_empty() {
-        let mut next: BTreeSet<i64> = result
-            .synced_mutes
-            .unwrap_or_else(|| muted.clone())
-            .into_iter()
-            .collect();
+        // from the registry as it is now, inside its update: a toggle made from Shiver's own menu
+        // since `muted` was read is kept
+        let next_from = |current: Vec<i64>| {
+            let mut next: BTreeSet<i64> = result
+                .synced_mutes
+                .clone()
+                .unwrap_or(current)
+                .into_iter()
+                .collect();
 
-        for mute in &result.mutes {
-            let _ = if mute.muted {
-                next.insert(mute.channel_id)
-            } else {
-                next.remove(&mute.channel_id)
-            };
+            for mute in &result.mutes {
+                let _ = if mute.muted {
+                    next.insert(mute.channel_id)
+                } else {
+                    next.remove(&mute.channel_id)
+                };
+            }
+
+            shiver_core::model::normalized_mutes(next)
+        };
+        let stored = app.state::<Store>().update(|registry| {
+            let current = registry.muted_for(entry_id);
+            let next = next_from(current.clone());
+
+            if next != current {
+                registry.set_muted_for(entry_id, next.clone());
+            }
+
+            Ok((current, next))
+        });
+
+        if let Ok((before, next)) = stored {
+            if !result.mutes.is_empty() {
+                webviews::push_muted(app, entry_id, &next);
+                crate::watch::mutes_changed(app, entry_id);
+            }
+
+            changed |= next != before;
         }
-
-        let next = shiver_core::model::normalized_mutes(next);
-        let stored = next == muted
-            || app
-                .state::<Store>()
-                .update(|registry| Ok(registry.set_muted_for(entry_id, next.clone())))
-                .is_ok();
-
-        if stored && !result.mutes.is_empty() {
-            webviews::push_muted(app, entry_id, &next);
-            crate::watch::mutes_changed(app, entry_id);
-        }
-
-        changed |= stored && next != muted;
     }
 
     // Only from the page Shiver asked to show a conversation, and named by what Shiver asked for: a

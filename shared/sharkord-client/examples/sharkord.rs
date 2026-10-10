@@ -81,7 +81,14 @@ impl Connection {
 
         self.next_id += 1;
 
-        let frame = json!({ "id": id, "jsonrpc": "2.0", "method": method, "params": { "path": path, "input": input } });
+        // `null` leaves `input` out, as the library does: void procedures refuse an explicit null
+        let mut params = json!({ "path": path });
+
+        if !input.is_null() {
+            params["input"] = input;
+        }
+
+        let frame = json!({ "id": id, "jsonrpc": "2.0", "method": method, "params": params });
 
         self.socket.send(Message::Text(frame.to_string())).await?;
 

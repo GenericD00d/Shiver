@@ -27,7 +27,7 @@ use crate::{
 };
 
 use sharkord_client::{CheckedSessions, ServerCheck};
-use shiver_core::{login, model::NotifyLevel, probe};
+use shiver_core::{limit::Joins, login, model::NotifyLevel, probe};
 
 /// Tells Shiver's own webviews the settings changed.
 const SETTINGS_EVENT: &str = "shiver://settings";
@@ -96,6 +96,7 @@ pub fn list_registry(store: State<'_, Store>) -> RegistryView {
 #[tauri::command]
 pub async fn check_server(
     kept: State<'_, CheckedSessions>,
+    joins: State<'_, Joins>,
     origin: String,
     identity: Option<String>,
     password: Option<Password>,
@@ -105,6 +106,7 @@ pub async fn check_server(
         identity.as_deref(),
         password.as_deref().map(String::as_str),
         &kept,
+        &joins,
     )
     .await?)
 }
@@ -255,6 +257,9 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
     })?;
 
     webviews::discard_profiles(&app, &id, Some(&entry));
+    // the account's messages and conversations go with it (the bell and DM list are told below)
+    app.state::<Feed>().forget_entry(&id);
+    app.state::<crate::notify::Posted>().forget_entry(&id);
     app.state::<Recovery>().forget_entry(&id);
     app.state::<Readiness>().forget_entry(&id);
 
@@ -797,6 +802,17 @@ pub async fn update_settings(
     store: State<'_, Store>,
     settings: Settings,
 ) -> Result<()> {
+    if settings
+        .mute_hotkey
+        .as_deref()
+        .is_some_and(hotkey::is_rail_shortcut)
+    {
+        return Err(Core::InvalidInput(
+            "That shortcut opens a server from the rail (Ctrl+1 to 9, Ctrl+Alt+Up or Down). Choose another for muting.".into(),
+        )
+        .into());
+    }
+
     let before = store.registry().settings.start_at_login;
     let saved = store.update(|registry| {
         registry.settings = Settings {

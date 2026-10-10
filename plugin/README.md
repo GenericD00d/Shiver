@@ -40,17 +40,19 @@ One row per user, in Sharkord's own per-plugin storage (the `plugin_user_data` t
 {
   "mutedChannels": [4, 17],
   "status": "back on Thursday",
-  "pushEndpoints": ["https://ntfy.example.com/up1a2b3c…"]
+  "pushEndpoints": ["https://ntfy.example.com/up1a2b3c…"],
+  "readFloor": { "4": 12, "17": 3 }
 }
 ```
 
-Three fields, and a row carries only the ones that user has actually set:
+Four fields, and a row carries only the ones that user has actually set:
 
 | Field | What it is | Who can see it |
 | --- | --- | --- |
 | `mutedChannels` | channels that user has muted in Shiver | them, and anyone who can read the database |
 | `status` | the line they wrote about themselves | **everyone on the server** — that is the point of it |
 | `pushEndpoints` | URLs this server posts an empty body to, to wake their devices | them, and anyone who can read the database |
+| `readFloor` | their shared unread floor, a count per channel, so their devices agree on one unread badge (at most 1,500 channels) | them, and anyone who can read the database |
 
 **No message content ever passes through the plugin**, and nothing else about a user is recorded.
 
@@ -122,12 +124,14 @@ to this plugin, which stores it against that user.
 
 What it then does, on every message:
 
-- Does **not** skip people who look connected. It used to, until 0.4.4: Sharkord reports a user
+- Does **not** skip people who look connected. An early version did: Sharkord reports a user
   as gone only when their *last* socket closes, and Shiver holds one per server from every device
   it runs on — so "online" meant "Shiver is installed somewhere", and no push was ever sent. The
   phone decides instead, which is where the knowledge is.
 - Skips channels that user has muted, using the same row this plugin already keeps.
-- Skips channels Sharkord says that user cannot view.
+- Skips channels Sharkord says that user cannot view, and users who are banned or may no longer use
+  plugins (Sharkord lets anyone view a public channel, banned or not). A ban also clears that
+  user's endpoints.
 - Posts an **empty body** to each remaining endpoint, at most once every ten seconds per user.
 
 The body is empty on purpose. The distributor is a relay outside this server, so anything in the

@@ -82,16 +82,25 @@ pub fn always(site: &str) -> String {
     format!("Always for {site}")
 }
 
-/// The site a link goes to, as the browser will see it (lowercase, punycode), for http(s) only.
+/// The site a link goes to, as the browser will see it (lowercase, punycode), for http(s) only:
+/// the host alone for an https link on the usual port, which is what the user reads, and the whole
+/// origin otherwise, so trusting `example.com` never lets `http://example.com:8080` open unasked.
 /// A link carrying credentials has none, so it is refused: `https://bank.example@evil.example/`
 /// reads as one site and goes to another.
 pub fn site(url: &Url) -> Option<String> {
     let plain = url.username().is_empty() && url.password().is_none();
 
-    (plain && matches!(url.scheme(), "http" | "https"))
-        .then(|| url.host_str())
-        .flatten()
-        .map(str::to_ascii_lowercase)
+    if !plain || !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+
+    let host = url.host_str()?.to_ascii_lowercase();
+
+    Some(if url.scheme() == "https" && url.port().is_none() {
+        host
+    } else {
+        url.origin().ascii_serialization()
+    })
 }
 
 /// The question put to the user, naming the site first, where no length of address can hide it.
@@ -143,6 +152,18 @@ mod tests {
         assert_eq!(
             site(&url("https://bücher.example/")).as_deref(),
             Some("xn--bcher-kva.example")
+        );
+        assert_eq!(
+            site(&url("https://example.com:443/")).as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            site(&url("http://Example.com:8080/")).as_deref(),
+            Some("http://example.com:8080")
+        );
+        assert_eq!(
+            site(&url("https://example.com:8443/")).as_deref(),
+            Some("https://example.com:8443")
         );
         assert_eq!(site(&url("mailto:someone@example.com")), None);
         assert_eq!(site(&url("https://bank.example@evil.example/")), None);
@@ -200,6 +221,13 @@ mod tests {
         let link = url("https://example.com/a");
 
         assert_eq!(decide(&trusted, "one", "Chat", &link), Decision::Open);
+        assert!(
+            matches!(
+                decide(&trusted, "one", "Chat", &url("http://example.com:8080/a")),
+                Decision::Ask { .. }
+            ),
+            "another scheme or port is another site"
+        );
         assert_eq!(
             decide(&trusted, "one", "Chat", &url("javascript:alert(1)")),
             Decision::Refuse

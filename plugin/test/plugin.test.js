@@ -53,7 +53,8 @@ const fakeCtx = (rows = {}) => {
         data.set(id, structuredClone(row));
       }
     },
-    permissions: { userCanInChannel: async () => true },
+    banned: new Set(),
+    permissions: { userCan: async () => true, userCanInChannel: async () => true },
     push: { toAll: (payload) => pushed.push(payload) },
     settings: {
       register: async (definitions) => {
@@ -62,7 +63,10 @@ const fakeCtx = (rows = {}) => {
         return { get: (key) => settingValues.get(key) };
       }
     },
-    users: { list: async () => [...data.keys()].map((id) => ({ id })) }
+    users: {
+      list: async () => [...data.keys()].map((id) => ({ id })),
+      get: async (id) => ({ id, banned: ctx.banned.has(id) })
+    }
   };
 
   return ctx;
@@ -274,6 +278,24 @@ test('mutes, permissions and the author are respected, without reading rows per 
   // user 2 was refused, so that message did not use up their debounce window
   ctx.permissions.userCanInChannel = async () => true;
   assert.deepEqual((await push.recipients({ userId: 5, channelId: 4 })).map((entry) => entry.userId).sort(), [1, 2]);
+});
+
+test('banned users and users without plugins are not woken', async () => {
+  const ctx = subscribed();
+  const { push } = await pushFor(ctx);
+
+  ctx.banned.add(1);
+  ctx.permissions.userCan = async (userId, permission) => !(userId === 2 && permission === 'USE_PLUGINS');
+
+  assert.deepEqual(await push.recipients({ userId: 9, channelId: 4 }), []);
+
+  ctx.users.get = async () => {
+    throw new Error('database unavailable');
+  };
+  ctx.banned.clear();
+  ctx.permissions.userCan = async () => true;
+
+  assert.deepEqual(await push.recipients({ userId: 9, channelId: 5 }), [], 'unknown counts as no');
 });
 
 test('a dead endpoint is dropped without touching the rest of the row', async () => {

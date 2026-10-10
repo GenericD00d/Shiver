@@ -324,3 +324,14 @@ export function closeDialog() {
 
   return true;
 }
+
+/** The name a DM row shows: its name span (not the avatar's initials fallback span). */
+export const dmRowName = (row: HTMLElement) => row.querySelector<HTMLElement>('span.flex-1, span.truncate')?.textContent?.trim() ?? null;
+
+/** Whether a DM row is the conversation with `name`: exactly that name, never a part of another. */
+export const isDmRowFor = (row: HTMLElement, name: string) => {
+  const named = dmRowName(row);
+
+  // without the name span, any span that is exactly the name
+  return named !== null ? named === name : [...row.querySelectorAll('span')].some((span) => span.textContent?.trim() === name);
+};

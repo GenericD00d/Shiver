@@ -125,10 +125,17 @@ export const App = () => {
   /** the rail's menu, while it is open */
   const [menu, setMenu] = useState<{ entries: MenuEntry[]; at: { x: number; y: number } } | null>(null);
   const [boot, setBoot] = useState<BootState>({ kind: 'waiting' });
+  // which `connect` is the latest, and the screen now, so an older one's answer does nothing
+  const connecting = useRef(0);
+  const screenRef = useRef(screen);
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
   /** a newer release on offer, until turned down or put off */
   const [update, setUpdate] = useState<string | null>(null);
+
+  useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
 
   useEffect(() => {
     api
@@ -180,21 +187,32 @@ export const App = () => {
    * chrome is drawn by the server's page). `dmUser` asks the bridge to open that conversation.
    */
   const connect = useCallback(async (server: ServerEntry, dmUser?: string) => {
+    const mine = ++connecting.current;
+    // a later choice, or the user going elsewhere, while `/info` was answering
+    const superseded = () => connecting.current !== mine || screenRef.current !== 'boot';
+
     setScreen('boot');
+    screenRef.current = 'boot';
     setBoot({ kind: 'connecting', server });
 
     try {
       await api.probeServer(server.origin);
     } catch {
-      setBoot({ kind: 'failed', server });
+      if (!superseded()) setBoot({ kind: 'failed', server });
 
       return;
     }
 
+    if (superseded()) return;
+
     try {
       await api.selectServer(server.id, dmUser);
     } catch (cause) {
+      if (superseded()) return;
+
+      // not left on a spinner: the failed screen offers to try again
       setError(errorMessage(cause));
+      setBoot({ kind: 'failed', server });
     }
   }, []);
 
@@ -380,9 +398,10 @@ export const App = () => {
   );
 
   /** Straight into a server just added. */
-  const handleAdded = useCallback(async () => {
+  const handleAdded = useCallback(async (id: string) => {
     const next = await refresh();
-    const added = byPosition(next.servers).at(-1);
+    // by id: a server in a folder is numbered within it, so the last by position may not be new
+    const added = next.servers.find((server) => server.id === id);
 
     if (added) {
       await connect(added);
@@ -390,8 +409,6 @@ export const App = () => {
       setScreen('boot');
     }
   }, [connect, refresh]);
-
-  const handleRemove = useCallback((id: string) => void change(() => api.removeServer(id)), [change]);
 
   /** Asks on the boot screen before a rail menu action runs. */
   const handleAsk = useCallback(
@@ -605,8 +622,9 @@ export const App = () => {
                 }
                 check={api.checkServer}
                 add={async ({ origin, identity, password, accountLabel }) => {
-                  await api.addServer(origin, identity, password, accountLabel, !!password);
-                  await handleAdded();
+                  const entry = await api.addServer(origin, identity, password, accountLabel, !!password);
+
+                  await handleAdded(entry.id);
                 }}
                 onCancel={servers.length > 0 ? () => void resume(registry) : null}
               />
@@ -714,7 +732,8 @@ export const App = () => {
               <ServerList
                 servers={servers}
                 onOpen={openById}
-                onRemove={handleRemove}
+                // asked first, as from the rail's menu
+                onRemove={(id) => handleAsk('remove', id)}
                 onAdd={() => setScreen('add')}
                 signedOut={signedOut}
                 problems={problems}

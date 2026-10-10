@@ -187,9 +187,13 @@ impl<S: RailServer> Rail<'_, S> {
             server.set_position(index as i32);
         }
 
-        self.folders.push(folder.clone());
+        let id = folder.id.clone();
 
-        Ok(folder)
+        self.folders.push(folder);
+        // the folder a member came from may stay, on the same place: the new one goes first
+        self.renumber(|kind, item| i32::from(!(kind == RailKind::Folder && item == id)));
+
+        Ok(self.folder_mut(&id)?.clone())
     }
 
     pub fn rename_folder(&mut self, id: &str, name: &str) -> Result<()> {
@@ -204,30 +208,61 @@ impl<S: RailServer> Rail<'_, S> {
         Ok(())
     }
 
-    /// Removes a folder; its servers move to the top level.
+    /// Removes a folder; its servers move to the top level, in their order, where it was.
     pub fn delete_folder(&mut self, id: &str) -> Result<()> {
-        self.folder_mut(id)?;
+        let place = self.folder_mut(id)?.position;
+        let mut freed: Vec<(String, i32)> = Vec::new();
 
         for server in self
             .servers
             .iter_mut()
             .filter(|server| server.folder_id() == Some(id))
         {
+            freed.push((server.id().to_string(), server.position()));
             server.set_folder_id(None);
+            server.set_position(place);
         }
 
         self.folders.retain(|folder| folder.id != id);
+        self.renumber(|kind, item| {
+            freed
+                .iter()
+                .find(|(freed, _)| kind == RailKind::Server && freed == item)
+                .map_or(0, |(_, within)| within.saturating_add(1))
+        });
 
         Ok(())
     }
 
-    /// Moves a server into a folder, or out of any with `None`.
+    /// Moves a server into a folder (last in it), or out of any with `None` (just after the folder
+    /// it left).
     pub fn set_server_folder(&mut self, id: &str, folder_id: Option<String>) -> Result<()> {
-        if let Some(folder_id) = &folder_id {
-            self.folder_mut(folder_id)?;
-        }
+        let position = match &folder_id {
+            Some(folder_id) => {
+                self.folder_mut(folder_id)?;
 
-        self.server_mut(id)?.set_folder_id(folder_id);
+                self.servers
+                    .iter()
+                    .filter(|server| server.folder_id() == Some(folder_id) && server.id() != id)
+                    .map(RailServer::position)
+                    .max()
+                    .map_or(0, |last| last + 1)
+            }
+            None => {
+                let server = self.server_mut(id)?;
+                let left = server.folder_id().map(str::to_string);
+                let own = server.position();
+
+                left.and_then(|left| self.folders.iter().find(|folder| folder.id == left))
+                    .map_or(own, |folder| folder.position)
+            }
+        };
+        let leaving = folder_id.is_none();
+        let server = self.server_mut(id)?;
+
+        server.set_folder_id(folder_id);
+        server.set_position(position);
+        self.renumber(|kind, item| i32::from(leaving && kind == RailKind::Server && item == id));
 
         Ok(())
     }
@@ -323,32 +358,32 @@ impl<S: RailServer> Rail<'_, S> {
 
         self.folders
             .retain(|folder| !doomed.iter().any(|(id, _)| id == &folder.id));
+        self.renumber(|_, _| 0);
 
-        let mut items: Vec<(i32, bool, String)> = self
+        true
+    }
+
+    /// Numbers the top level 0, 1, 2… by position, `tiebreak` ordering items that share one
+    /// (lowest first; servers before folders after that).
+    fn renumber(&mut self, tiebreak: impl Fn(RailKind, &str) -> i32) {
+        let mut items: Vec<((i32, i32), RailRef)> = self
             .servers
             .iter()
             .filter(|server| server.folder_id().is_none())
-            .map(|server| (server.position(), false, server.id().to_string()))
+            .map(|server| (server.position(), RailKind::Server, server.id().to_string()))
             .chain(
                 self.folders
                     .iter()
-                    .map(|folder| (folder.position, true, folder.id.clone())),
+                    .map(|folder| (folder.position, RailKind::Folder, folder.id.clone())),
             )
+            .map(|(position, kind, id)| ((position, tiebreak(kind, &id)), RailRef { kind, id }))
             .collect();
 
-        items.sort_by_key(|(position, _, _)| *position);
+        items.sort_by_key(|(key, _)| *key);
 
-        for (index, (_, is_folder, id)) in items.iter().enumerate() {
-            if *is_folder {
-                if let Ok(folder) = self.folder_mut(id) {
-                    folder.position = index as i32;
-                }
-            } else if let Ok(server) = self.server_mut(id) {
-                server.set_position(index as i32);
-            }
+        for (index, (_, item)) in items.iter().enumerate() {
+            let _ = self.place(item, index as i32);
         }
-
-        true
     }
 }
 
@@ -502,6 +537,120 @@ mod tests {
         assert_eq!(made.position, 1);
         assert!(rail.prune_folders());
         assert!(!folders.iter().any(|folder| folder.id == "old"));
+    }
+
+    /// The top level as `(id, position)`, in order.
+    fn top(servers: &[Entry], folders: &[Folder]) -> Vec<(String, i32)> {
+        let mut items: Vec<(String, i32)> = servers
+            .iter()
+            .filter(|server| server.folder_id.is_none())
+            .map(|server| (server.id.clone(), server.position))
+            .chain(
+                folders
+                    .iter()
+                    .map(|folder| (folder.id.clone(), folder.position)),
+            )
+            .collect();
+
+        items.sort_by_key(|(_, position)| *position);
+        items
+    }
+
+    fn named(items: &[(&str, i32)]) -> Vec<(String, i32)> {
+        items.iter().map(|(id, at)| (id.to_string(), *at)).collect()
+    }
+
+    #[test]
+    fn a_deleted_folders_servers_take_its_place_in_their_order() {
+        let mut servers = vec![
+            at("a", None, 0),
+            at("y", Some("mid"), 1),
+            at("x", Some("mid"), 0),
+            at("z", None, 2),
+        ];
+        let mut folders = vec![folder("mid", 1)];
+
+        Rail {
+            servers: &mut servers,
+            folders: &mut folders,
+        }
+        .delete_folder("mid")
+        .unwrap();
+
+        assert_eq!(
+            top(&servers, &folders),
+            named(&[("a", 0), ("x", 1), ("y", 2), ("z", 3)])
+        );
+    }
+
+    #[test]
+    fn a_server_moved_out_of_a_folder_that_stays_lands_after_it() {
+        let mut servers = vec![
+            at("a", None, 0),
+            at("x", Some("f"), 0),
+            at("y", Some("f"), 1),
+            at("w", Some("f"), 2),
+            at("z", None, 2),
+        ];
+        let mut folders = vec![folder("f", 1)];
+        let mut rail = Rail {
+            servers: &mut servers,
+            folders: &mut folders,
+        };
+
+        rail.set_server_folder("x", None).unwrap();
+        assert!(!rail.prune_folders());
+        assert_eq!(
+            top(&servers, &folders),
+            named(&[("a", 0), ("f", 1), ("x", 2), ("z", 3)])
+        );
+    }
+
+    #[test]
+    fn a_server_moved_into_a_folder_goes_last_in_it() {
+        let mut servers = vec![
+            at("x", Some("f"), 0),
+            at("y", Some("f"), 1),
+            at("a", None, 1),
+        ];
+        let mut folders = vec![folder("f", 0)];
+
+        Rail {
+            servers: &mut servers,
+            folders: &mut folders,
+        }
+        .set_server_folder("a", Some("f".into()))
+        .unwrap();
+
+        assert_eq!(servers[2].position, 2);
+        assert_eq!(top(&servers, &folders), named(&[("f", 0)]));
+    }
+
+    #[test]
+    fn a_folder_made_from_a_folder_that_stays_does_not_share_its_place() {
+        let mut servers = vec![
+            at("a", None, 0),
+            at("x", Some("old"), 0),
+            at("y", Some("old"), 1),
+            at("w", Some("old"), 2),
+            at("d", None, 2),
+        ];
+        let mut folders = vec![folder("old", 1)];
+        let mut rail = Rail {
+            servers: &mut servers,
+            folders: &mut folders,
+        };
+
+        let made = rail
+            .create_folder("new".into(), "New", &["w".into(), "d".into()])
+            .unwrap();
+
+        assert!(!rail.prune_folders());
+        assert_eq!(made.position, 1);
+        assert_eq!(
+            top(&servers, &folders),
+            named(&[("a", 0), ("new", 1), ("old", 2)])
+        );
     }
 
     #[test]

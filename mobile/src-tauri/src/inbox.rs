@@ -137,7 +137,7 @@ impl Inbox {
             state
                 .tokens
                 .insert(entry_id.to_string(), Zeroizing::new(token.to_string()))
-                .map_or(true, |previous| previous.as_str() != token)
+                .is_none_or(|previous| previous.as_str() != token)
         })
     }
 
@@ -430,6 +430,39 @@ fn keep_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) -> 
     true
 }
 
+/// Keeps a session a renewal brought back, unless the entry was logged out or forgotten while it
+/// was signing in (which takes the stored password, so a kept password is the sign it still
+/// stands). Checked, kept and queued for the store under one lock, so a forget that follows queues
+/// its removal after this write. Returns whether it was kept.
+fn keep_renewed(app: &AppHandle, entry_id: &str, token: &str) -> bool {
+    if token.len() > MAX_TOKEN {
+        return false;
+    }
+
+    let (kept, was_signed_out) = app.state::<Inbox>().with(|state| {
+        if !state.remembered.contains(entry_id) {
+            return (false, false);
+        }
+
+        state
+            .tokens
+            .insert(entry_id.to_string(), Zeroizing::new(token.to_string()));
+        store_off_thread(
+            app,
+            entry_id.to_string(),
+            Some(Zeroizing::new(token.to_string())),
+        );
+
+        (true, state.signed_out.remove(entry_id))
+    });
+
+    if was_signed_out {
+        publish(app);
+    }
+
+    kept
+}
+
 /// Keeps a session and connects with it.
 fn record_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) {
     if keep_session(app, entry_id, token, persist) {
@@ -476,7 +509,6 @@ fn forget_session(app: &AppHandle, entry_id: &str) {
 /// Drops everything Shiver holds for an entry, in memory and in the store.
 pub fn forget_everywhere(app: &AppHandle, entry_id: &str) {
     app.state::<Inbox>().forget(entry_id);
-    app.state::<Joins>().forget(entry_id);
     crate::notify::clear(app, entry_id);
 
     for key in [
@@ -508,7 +540,7 @@ pub fn sync(app: &AppHandle) {
         registry_ids.contains(id) && showing.as_ref() != Some(id) && !just_left.contains_key(id)
     };
 
-    let (wanted, unwanted) = app.state::<Inbox>().with(|state| {
+    let unwanted = app.state::<Inbox>().with(|state| {
         let unwanted: Vec<String> = state
             .running
             .keys()
@@ -534,18 +566,21 @@ pub fn sync(app: &AppHandle) {
             state.unread.remove(entry_id);
         }
 
-        (wanted, unwanted)
+        // spawned and recorded under the same lock that saw them missing, so two syncs at once
+        // cannot both start one (spawning does not block, and the task waits for the lock)
+        for entry_id in wanted {
+            let task = tauri::async_runtime::spawn(watch(app.clone(), entry_id.clone()));
+
+            if let Some(earlier) = state.running.insert(entry_id, task) {
+                earlier.abort();
+            }
+        }
+
+        unwanted
     });
 
     for entry_id in unwanted.iter().chain(showing.iter()) {
         crate::notify::clear(app, entry_id);
-    }
-
-    for entry_id in wanted {
-        let task = tauri::async_runtime::spawn(watch(app.clone(), entry_id.clone()));
-
-        app.state::<Inbox>()
-            .with(|state| state.running.insert(entry_id, task));
     }
 
     if let Some(rest) = just_left.into_values().min() {
@@ -635,13 +670,13 @@ impl sharkord::Watcher for Watch {
         };
 
         // each connection joins the server, which Sharkord allows only a few times a minute
-        let place = self.app.state::<Joins>().take(&self.entry_id);
+        let place = self.app.state::<Joins>().take(&origin);
 
         tokio::time::sleep(place.wait).await;
 
         Some(sharkord::Target {
             origin,
-            token,
+            token: Zeroizing::new(token),
             accept_any_size,
         })
     }
@@ -758,7 +793,6 @@ fn update_read_states(
     }
 }
 
-/// Replaces an entry's mutes with what its page reports (bounded), and recounts.
 /// The most conversations kept per server, and taken from one read of the page.
 const MAX_DMS: usize = 500;
 
@@ -828,6 +862,7 @@ fn page_dm_list(origin: &str, dms: Vec<PageDm>) -> Vec<sharkord::DirectMessage> 
         .collect()
 }
 
+/// Replaces an entry's mutes with what its page reports (bounded), and recounts.
 pub fn replace_mutes(app: &AppHandle, entry_id: &str, channels: &[i64]) {
     let store = app.state::<Store>();
     let next = shiver_core::model::normalized_mutes(channels.iter().copied());
@@ -934,11 +969,7 @@ async fn renew(app: &AppHandle, entry_id: &str) -> Option<String> {
         };
 
     match shiver_core::login::sign_in(&origin, &identity, &password).await {
-        Ok(session) => {
-            keep_session(app, entry_id, &session, true);
-
-            Some(session)
-        }
+        Ok(session) => keep_renewed(app, entry_id, &session).then_some(session),
         Err(error @ shiver_core::Error::Refused(_)) => {
             eprintln!("[shiver] {origin} refused Shiver's stored password: {error}");
             forget_password(app, entry_id);

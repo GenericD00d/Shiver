@@ -56,6 +56,11 @@ fn looks_like_link(word: &str) -> bool {
         || word.starts_with("www.")
         // a bare domain with a path: `evil.example/reset`
         || word.split('/').next().is_some_and(|host| host.contains('.') && word.contains('/'))
+        // or without one: `evil.example`, whose last label reads as a top-level domain (letters, two
+        // or more), which `e.g`, `v1.2` and `3.14` do not
+        || word.rsplit_once('.').is_some_and(|(name, top)| {
+            !name.is_empty() && top.len() >= 2 && top.chars().all(|character| character.is_ascii_alphabetic())
+        })
 }
 
 fn is_invisible(character: char) -> bool {
@@ -81,6 +86,10 @@ mod tests {
             Some(MAX_SERVER_MESSAGE)
         );
         assert_eq!(presentable("https://only.a.link"), None);
+        assert_eq!(
+            presentable("Reset at evil.example now, e.g. v1.2 or 3.14.").as_deref(),
+            Some("Reset at now, e.g. v1.2 or 3.14.")
+        );
     }
 
     #[test]

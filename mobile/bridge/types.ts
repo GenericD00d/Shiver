@@ -36,6 +36,8 @@ declare global {
     __SHIVER_SEEN__?: () => [number, number][];
     /** this server's conversations, when they changed since the last read; null otherwise */
     __SHIVER_DMS__?: () => { channelId: number; name: string; iconUrl: string | null }[] | null;
+    /** polled by the core: retired push endpoints the plugin confirmed clearing (handed over once) */
+    __SHIVER_CLEARED__?: () => string[];
     /** asked by the activity on a back press; true when the page used it */
     __SHIVER_BACK__?: () => boolean;
   }

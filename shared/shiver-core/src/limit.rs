@@ -34,7 +34,7 @@ impl Openings {
             .min(PER_SECOND.saturating_sub(this_second))
             .min(PER_WINDOW.saturating_sub(recent.len()));
 
-        recent.extend(std::iter::repeat(Instant::now()).take(granted));
+        recent.extend(std::iter::repeat_n(Instant::now(), granted));
 
         granted
     }
@@ -65,12 +65,15 @@ const JOINS: usize = 4;
 /// A little over Sharkord's minute, for the time a request takes to arrive.
 const JOIN_WINDOW: Duration = Duration::from_secs(62);
 
-/// When Shiver joined, or will join, each rail entry's server.
+/// When Shiver joined, or will join, each server (keyed by its origin).
 ///
 /// Sharkord refuses a join past its limit, and its client then drops the session as if it had been
-/// refused, leaving the sign-in form. Every join Shiver makes (a page loading, the core's own
-/// socket connecting) takes a place here first and waits for it, so none is refused for coming too
-/// often; places are handed out in order, so callers waiting at once queue.
+/// refused, leaving the sign-in form. The joins Shiver makes take a place here first and wait for
+/// it, so none is refused for coming too often: the core's own sockets and an add form's check on
+/// both platforms, and on Android each page load too. Desktop's pages are exempt (at most a few
+/// are kept loaded, and a page is not reloaded to retry). Places are handed out in order, so
+/// callers waiting at once queue. Keyed by server rather than account, which only errs slow: two
+/// accounts on one server share a pace meant for one.
 #[derive(Default)]
 pub struct Joins(Mutex<HashMap<String, VecDeque<Instant>>>);
 
@@ -114,10 +117,6 @@ impl Joins {
                 joins.remove(index);
             }
         }
-    }
-
-    pub fn forget(&self, key: &str) {
-        self.0.locked().remove(key);
     }
 }
 

@@ -53,6 +53,11 @@ CONTRACTS = [
         r"`DM - \$\{[^}]+\}:\$\{[^}]+\}`",
     ),
     (
+        "text channel rows draw lucide's `Hash` icon (the voice lock's TEXT_CHANNEL_ICON)",
+        "apps/client/src/components/left-sidebar/channels.tsx",
+        r"import \{[^}]*\bHash\b[^}]*\} from 'lucide-react'[\s\S]*<Hash className",
+    ),
+    (
         "the plugin store on `window.__SHARKORD_STORE__` (sharkordStore)",
         "apps/client/src/features/server/plugins/plugin-store.ts",
         r"window\.__SHARKORD_STORE__\s*=",
@@ -110,9 +115,7 @@ CONTRACTS = [
 ]
 
 
-def checkout(ref, latest):
-    directory = pathlib.Path(tempfile.mkdtemp(prefix="sharkord-"))
-
+def checkout(directory, ref, latest):
     def git(*args):
         subprocess.run(["git", *args], cwd=directory, check=True, stdout=subprocess.DEVNULL)
 
@@ -148,11 +151,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("checkout", nargs="?", type=pathlib.Path, help="an existing Sharkord checkout")
     which = parser.add_mutually_exclusive_group()
-    which.add_argument("--ref", default=SHARKORD_REF, help="commit or tag to clone")
+    which.add_argument("--ref", help=f"commit or tag to clone (default {SHARKORD_REF})")
     which.add_argument("--latest", action="store_true", help="clone Sharkord's default branch")
     args = parser.parse_args()
 
-    sharkord = args.checkout or checkout(args.ref, args.latest)
+    if args.checkout:
+        if args.ref or args.latest:
+            parser.error("a checkout is checked as it is; --ref and --latest only choose what to clone")
+
+        return check(args.checkout)
+
+    # removed afterwards, however the check ends (git's read-only objects do not stop that)
+    with tempfile.TemporaryDirectory(prefix="sharkord-", ignore_cleanup_errors=True) as directory:
+        return check(checkout(pathlib.Path(directory), args.ref or SHARKORD_REF, args.latest))
+
+
+def check(sharkord):
     ours = shiver_text()
     theirs = client_text(sharkord)
     test_ids = set(

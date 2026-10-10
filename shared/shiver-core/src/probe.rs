@@ -40,7 +40,16 @@ pub async fn fetch_info(origin: &str) -> Result<ServerInfo> {
         .await
         .map_err(|error| unreachable(origin, &error))?;
 
-    let body = match response.status().is_success() {
+    let status = response.status();
+
+    // a server restarting or busy answers like this for a while; that is no verdict on what it is
+    if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(Error::Unreachable(format!(
+            "{origin} (it answered {status})"
+        )));
+    }
+
+    let body = match status.is_success() {
         true => http::json_within_limit(response).await,
         false => None,
     };

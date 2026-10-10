@@ -63,10 +63,14 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
   // the result is shown inline, since this panel has nowhere to put a toast
   const [permissionsReset, setPermissionsReset] = useState<string | null>(null);
   const [linksForgotten, setLinksForgotten] = useState<string | null>(null);
+  // `settings` is not read again while the panel is open, so its count would stay as it was
+  const [linksCleared, setLinksCleared] = useState(false);
+  const trustedLinks = linksCleared ? 0 : settings.trustedLinks.length;
 
   const handleForgetLinks = useCallback(async () => {
     try {
       await api.forgetTrustedLinks();
+      setLinksCleared(true);
       setLinksForgotten('Done — every link asks again');
     } catch (error) {
       setLinksForgotten(errorMessage(error));
@@ -189,7 +193,7 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
                   <button
                     type="button"
                     className="ghost"
-                    disabled={settings.trustedLinks.length === 0}
+                    disabled={trustedLinks === 0}
                     onClick={handleForgetLinks}
                   >
                     {linksForgotten ?? 'Always ask again'}
@@ -198,7 +202,7 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
                 <small className="hint">
                   Shiver asks before opening a link a server's page wants opened, since a page can
                   claim a click that never happened. A site set to open without asking does so only
-                  from the server it was set on. Set so far: {settings.trustedLinks.length}.
+                  from the server it was set on. Set so far: {trustedLinks}.
                 </small>
               </label>
             </>

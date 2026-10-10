@@ -744,8 +744,16 @@ pub fn close_server(app: &AppHandle, entry_id: &str) -> Result<()> {
 
         screen.recent.retain(|held| held != entry_id);
     });
-    app.state::<crate::voice::VoiceState>()
-        .forget_entry(entry_id);
+
+    let voice = app.state::<crate::voice::VoiceState>();
+    let held_the_call = voice.holder().as_deref() == Some(entry_id);
+
+    voice.forget_entry(entry_id);
+
+    // the rail's call bar would otherwise stay up with buttons that reach nothing
+    if held_the_call {
+        let _ = app.emit_to(SHELL_WEBVIEW, crate::drain::VOICE_EVENT, ());
+    }
 
     Ok(())
 }

@@ -80,6 +80,10 @@ function install(shiver: ShiverConfig) {
   });
 
   const { pushEndpoint, retiredPushEndpoints } = shiver;
+  // endpoints the plugin confirmed clearing, until the core reads them: only those are forgotten
+  const cleared: string[] = [];
+
+  defineHook('__SHIVER_CLEARED__', () => cleared.splice(0));
 
   if (pushEndpoint || retiredPushEndpoints.length) {
     void waitForPlugin().then((present) => {
@@ -87,7 +91,12 @@ function install(shiver: ShiverConfig) {
 
       // the plugin checks the endpoint before storing it against this user
       if (pushEndpoint) void callPlugin('setPushEndpoint', { endpoint: pushEndpoint });
-      for (const endpoint of retiredPushEndpoints) void callPlugin('clearPushEndpoint', { endpoint });
+
+      for (const endpoint of retiredPushEndpoints) {
+        void callPlugin('clearPushEndpoint', { endpoint }).then((result) => {
+          if (result) cleared.push(endpoint);
+        });
+      }
     });
   }
 

@@ -144,7 +144,9 @@ class SecretsPlugin(private val activity: Activity) : Plugin(activity) {
                 cookies.getCookie(origin)?.split(';')?.forEach { pair ->
                     val name = pair.substringBefore('=').trim()
 
-                    if (name.isNotEmpty()) cookies.setCookie(origin, "$name=; Max-Age=0; Path=/")
+                    // `Secure`, or Chromium refuses to touch a `__Secure-`/`__Host-` cookie (origins are
+                    // https only); no `Domain`, which a `__Host-` cookie may not carry
+                    if (name.isNotEmpty()) cookies.setCookie(origin, "$name=; Max-Age=0; Path=/; Secure")
                 }
 
                 cookies.flush()

@@ -99,6 +99,8 @@ export const App = () => {
    * value; navigating elsewhere clears it, so a late ready event is ignored.
    */
   const pendingRef = useRef<string | null>(null);
+  /** bumped by every server or panel the user opens, so an older one's late answer does nothing */
+  const navigationRef = useRef(0);
 
   // openServer needs the current rail without taking it as a dependency: it is itself a dependency
   // of the boot effect, which must not re-run every time the registry is refreshed
@@ -163,8 +165,13 @@ export const App = () => {
    */
   const openServer = useCallback(
     async (id: string) => {
+      const mine = ++navigationRef.current;
+      const superseded = () => navigationRef.current !== mine;
+
       try {
         const isReady = await api.prepareServer(id);
+
+        if (superseded()) return;
 
         if (isReady) {
           await showServerNow(id);
@@ -175,6 +182,8 @@ export const App = () => {
         // the shell keeps the area rather than handing it to a client that would only show its own
         // connecting state
         await api.showShell();
+
+        if (superseded()) return;
 
         const serverName = serversRef.current.find((server) => server.id === id)?.name ?? 'the server';
 
@@ -204,6 +213,8 @@ export const App = () => {
           setPanel('connecting');
         }, CONNECT_TIMEOUT_MS);
       } catch (cause) {
+        if (superseded()) return;
+
         // the server webview is what would have covered the content area, so on failure the shell
         // has to take it back or the error would be reported into a region nobody can see
         await api.showShell().catch(() => undefined);
@@ -221,6 +232,8 @@ export const App = () => {
   );
 
   const openPanel = useCallback(async (next: Exclude<Panel, 'server'>) => {
+    navigationRef.current += 1;
+
     try {
       await api.showShell();
 
@@ -689,7 +702,7 @@ export const App = () => {
                     session and asks you again when it runs out.
                   </>
                 }
-                // off unless the user says so, the same opt-in the add form has
+                // off unless the user says so (the add form keeps any password it is given)
                 remembered={false}
                 onSubmit={(identity, password, remember) => handleSignIn(signingInServer.id, identity, password, remember)}
                 onCancel={closePanel}

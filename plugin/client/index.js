@@ -696,12 +696,17 @@ const readColors = (state) => {
   const users = state.users ?? [];
   const byName = new Map();
   const byId = new Map();
+  // names are not unique, and headers carry only the name: one held by two users is left plain,
+  // or anyone could take an admin's colour by taking their name
+  const holders = new Map();
+
+  for (const user of users) holders.set(user.name, (holders.get(user.name) ?? 0) + 1);
 
   for (const user of colorsAllowed ? users : []) {
     const color = roleColor(user, state.roles ?? []);
 
     if (color) {
-      byName.set(user.name, color);
+      if (holders.get(user.name) === 1) byName.set(user.name, color);
       byId.set(user.id, color);
     }
   }

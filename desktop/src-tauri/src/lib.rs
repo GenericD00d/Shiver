@@ -176,6 +176,7 @@ pub fn run() {
             app.manage(store::load(handle)?);
             app.manage(ActiveServer::default());
             app.manage(sharkord_client::CheckedSessions::default());
+            app.manage(shiver_core::limit::Joins::default());
             app.manage(Feed::default());
             app.manage(VoiceState::default());
             app.manage(Readiness::default());

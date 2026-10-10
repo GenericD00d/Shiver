@@ -24,7 +24,7 @@ use crate::{
     error::{Core, Error, Result},
     inbox,
     model::{is_same_origin, ServerEntry, Settings, MAX_SOUND_VOLUME},
-    store::Store,
+    store::{RegistryStore, Store},
 };
 
 pub const MAIN_WINDOW: &str = "main";
@@ -331,9 +331,7 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
 
 /// Polled by `inbox::watch_mutes`: reads the page's mutes and queued outside links (a read on
 /// departure would be torn down by the navigation before it answered).
-const READ_SCRIPT: &str = "JSON.stringify({ \
-    muted: window.__SHIVER_MUTED__ ? window.__SHIVER_MUTED__() : null, \
-    open: window.__SHIVER_OPEN__ ? window.__SHIVER_OPEN__() : null,     seen: window.__SHIVER_SEEN__ ? window.__SHIVER_SEEN__() : null,     dms: window.__SHIVER_DMS__ ? window.__SHIVER_DMS__() : null })";
+const READ_SCRIPT: &str = "JSON.stringify({     muted: window.__SHIVER_MUTED__ ? window.__SHIVER_MUTED__() : null,     open: window.__SHIVER_OPEN__ ? window.__SHIVER_OPEN__() : null,     seen: window.__SHIVER_SEEN__ ? window.__SHIVER_SEEN__() : null,     dms: window.__SHIVER_DMS__ ? window.__SHIVER_DMS__() : null,     cleared: window.__SHIVER_CLEARED__ ? window.__SHIVER_CLEARED__() : null })";
 
 #[derive(Default, Deserialize)]
 struct PageState {
@@ -346,6 +344,9 @@ struct PageState {
     /// the page's conversations, when they changed since the last read
     #[serde(default)]
     dms: Option<Vec<inbox::PageDm>>,
+    /// retired push endpoints the plugin has confirmed clearing
+    #[serde(default, deserialize_with = "null_as_default")]
+    cleared: Vec<String>,
 }
 
 fn null_as_default<'de, D: serde::Deserializer<'de>, T: Default + Deserialize<'de>>(
@@ -409,6 +410,18 @@ fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
     }
 
     inbox::messages_seen(app, entry_id, &state.seen);
+
+    if !state.cleared.is_empty() {
+        let _ = app.state::<Store>().update(|registry| {
+            if let Some(server) = registry.server_mut(entry_id) {
+                server
+                    .retired_push_endpoints
+                    .retain(|endpoint| !state.cleared.contains(endpoint));
+            }
+
+            Ok(())
+        });
+    }
 }
 
 /// Whether the webview may navigate to `target`; records home on the very first navigation (which
@@ -432,7 +445,7 @@ pub fn navigation_allowed(home: Option<&str>, server_origin: Option<&str>, targe
         return true;
     }
 
-    home.map_or(true, |home| same_place(home, target))
+    home.is_none_or(|home| same_place(home, target))
 }
 
 /// Same scheme, host and port as Shiver's home.

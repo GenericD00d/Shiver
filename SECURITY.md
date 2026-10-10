@@ -15,7 +15,8 @@ on-call rota, and saying so is more useful than a service level I cannot meet.
 
 Shiver is a desktop and Android client for [Sharkord](https://github.com/sharkord/sharkord). It
 handles session tokens and, by default, passwords; both live in the OS keychain on desktop and in
-`EncryptedSharedPreferences` on Android, never in a file.
+`EncryptedSharedPreferences` on Android (an encrypted file under a Keystore key), never stored
+unencrypted.
 
 **No independent security audit has been done.** The README says so and it is still true. What
 exists is a full internal review of the source, whose findings are fixed in the current tree.

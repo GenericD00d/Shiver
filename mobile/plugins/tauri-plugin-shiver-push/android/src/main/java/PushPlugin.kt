@@ -43,6 +43,10 @@ private const val EXTRA_MESSAGE_ID = "messageId"
 
 private const val PREFS = "shiver-push"
 private const val KEY_DISTRIBUTOR = "distributor"
+/** When the distributor last changed: the old one's `UNREGISTERED` answers arrive after it */
+private const val KEY_SWITCHED_AT = "switchedAt"
+/** How long after a switch an `UNREGISTERED` is taken for the old distributor's answer */
+private const val SWITCH_GRACE_MS = 60_000L
 private const val CHANNEL_ID = "shiver-push"
 
 /** Whether the Rust core is receiving events in this process; the cold-start receiver stays quiet while it is. */
@@ -53,7 +57,9 @@ internal object PushState {
 
 private fun pushPrefs(context: Context): SharedPreferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-private fun nameKey(token: String) = "name:$token"
+private const val NAME_PREFIX = "name:"
+
+private fun nameKey(token: String) = "$NAME_PREFIX$token"
 
 /** The server name stored when `token` was registered; null for a token Shiver did not issue. */
 private fun serverFor(prefs: SharedPreferences, token: String): String? = prefs.getString(nameKey(token), null)
@@ -132,7 +138,13 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
             when (intent.action) {
                 ACTION_NEW_ENDPOINT -> emit("endpoint", token, intent.getStringExtra(EXTRA_ENDPOINT) ?: return)
                 ACTION_REGISTRATION_FAILED -> emit("failed", token, null)
-                ACTION_UNREGISTERED -> emit("unregistered", token, null)
+                ACTION_UNREGISTERED -> {
+                    // below API 34 the sender is unknown, and the old distributor confirming a switch
+                    // must not undo the new one's registration
+                    val switchedAt = prefs.getLong(KEY_SWITCHED_AT, 0L)
+
+                    if (System.currentTimeMillis() - switchedAt > SWITCH_GRACE_MS) emit("unregistered", token, null)
+                }
                 ACTION_MESSAGE -> {
                     // the payload is never read: it travelled through a relay outside the server's origin
                     emit("message", token, null)
@@ -218,9 +230,26 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun setDistributor(invoke: Invoke) {
         val args = invoke.parseArgs(DistributorArgs::class.java)
+        val previous = prefs.getString(KEY_DISTRIBUTOR, null)
+        val editor = prefs.edit().putString(KEY_DISTRIBUTOR, args.distributor)
 
-        prefs.edit().putString(KEY_DISTRIBUTOR, args.distributor).apply()
+        // the old distributor keeps every registration until told, and below API 34 its broadcasts
+        // still reach Shiver; the tokens stay known, to register again with the new one
+        if (!previous.isNullOrEmpty() && previous != args.distributor) {
+            prefs.all.keys.filter { it.startsWith(NAME_PREFIX) }.forEach { key ->
+                activity.sendBroadcast(
+                    Intent(ACTION_UNREGISTER).apply {
+                        `package` = previous
+                        putExtra(EXTRA_TOKEN, key.removePrefix(NAME_PREFIX))
+                        putExtra(EXTRA_APPLICATION, activity.packageName)
+                    }
+                )
+            }
 
+            editor.putLong(KEY_SWITCHED_AT, System.currentTimeMillis())
+        }
+
+        editor.apply()
         invoke.resolve()
     }
 

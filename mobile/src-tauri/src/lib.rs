@@ -19,6 +19,10 @@ use crate::{
     webview::{Showing, MAIN_WINDOW},
 };
 
+/// How long a server page may take to arrive after a navigation inside it was refused before the
+/// load counts as failed (frames ask too, and a refused frame leaves the page loading fine).
+const REFUSAL_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Android attributes a call to the page last reported loaded, which lags a new page, so commands
 /// are refused whenever anything but Shiver's own page is on screen or being opened.
 fn only_home(
@@ -135,8 +139,20 @@ pub fn run() {
 
                     eprintln!("[shiver] the page tried to leave for {away}; refused");
 
+                    // a frame inside the page asks here too, and refusing it costs the page
+                    // nothing: only a server page that then never arrives failed to open
                     if handle.state::<Showing>().loading() {
-                        webview::show_failed(&handle);
+                        let (handle, server) = (handle.clone(), handle.state::<Showing>().server());
+
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(REFUSAL_GRACE).await;
+
+                            let showing = handle.state::<Showing>();
+
+                            if showing.loading() && showing.server() == server {
+                                webview::show_failed(&handle);
+                            }
+                        });
                     }
 
                     false
@@ -308,20 +324,6 @@ fn install_bridge_if_server(app: &AppHandle, url: &Url) {
         .filter(|endpoint| push_endpoint.as_ref() != Some(*endpoint))
         .cloned()
         .collect();
-
-    if !entry.retired_push_endpoints.is_empty() {
-        let (handle, id) = (app.clone(), entry_id.clone());
-
-        tauri::async_runtime::spawn_blocking(move || {
-            handle.state::<Store>().update(|registry| {
-                if let Some(server) = registry.server_mut(&id) {
-                    server.retired_push_endpoints.clear();
-                }
-
-                Ok(())
-            })
-        });
-    }
 
     webview::install_bridge(
         app,

@@ -75,8 +75,9 @@ where
     R: Default + Clone + Serialize + DeserializeOwned,
 {
     /// Loads `servers.json` from `dir`. A missing file is a first launch; a corrupt one is moved
-    /// aside (never overwritten) and the store starts empty; an unreadable one is an error rather
-    /// than something to replace with an empty registry.
+    /// (or copied) aside, never overwritten, and the store starts empty, or is an error if it
+    /// cannot be; an unreadable one is an error rather than something to replace with an empty
+    /// registry.
     pub fn load(dir: &Path) -> Result<Self> {
         fs::create_dir_all(dir).map_err(|error| {
             Error::Storage(format!(
@@ -90,10 +91,20 @@ where
 
         let registry = match fs::read_to_string(&path) {
             // editors on Windows add a BOM, which serde rejects
-            Ok(contents) => serde_json::from_str(contents.trim_start_matches('\u{feff}'))
-                .unwrap_or_else(|error| {
+            Ok(contents) => match serde_json::from_str(contents.trim_start_matches('\u{feff}')) {
+                Ok(registry) => registry,
+                Err(error) => {
                     let kept = path.with_extension(format!("json.corrupt-{}", unix_seconds()));
-                    let _ = fs::rename(&path, &kept);
+
+                    // the next edit replaces servers.json, so it starts empty only once the old
+                    // file is safe elsewhere
+                    if let Err(moving) =
+                        fs::rename(&path, &kept).or_else(|_| fs::copy(&path, &kept).map(drop))
+                    {
+                        return Err(Error::Storage(format!(
+                            "{REGISTRY_FILE} could not be parsed ({error}) or set aside ({moving})"
+                        )));
+                    }
 
                     eprintln!(
                         "[shiver] servers.json could not be parsed ({error}), starting empty; the old file is {}",
@@ -101,7 +112,8 @@ where
                     );
 
                     R::default()
-                }),
+                }
+            },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => R::default(),
             Err(error) => {
                 return Err(Error::Storage(format!(

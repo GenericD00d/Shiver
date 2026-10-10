@@ -6,8 +6,10 @@
 //! the page cannot draw over. The yes lasts until the user logs out of or removes the server, or
 //! forgets every yes; WebView2 is told to remember nothing, since its own memory would bypass this.
 //!
-//! Elsewhere the platform answers camera and microphone (macOS allows, WebKitGTK refuses), and
-//! downloads go through Tauri's download hook (`gate_downloads`), since WebKitGTK would save any.
+//! Elsewhere the platform answers camera and microphone, and downloads go through Tauri's download
+//! hook (`gate_downloads`), since WebKitGTK would save any. WebKitGTK refuses; on macOS wry grants
+//! every request from every page, hidden or not, which is a gap rather than a choice: a macOS build
+//! must not ship until this answers them itself (SECURITY.md).
 
 use tauri::{AppHandle, Manager};
 

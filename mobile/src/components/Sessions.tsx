@@ -8,12 +8,16 @@ type Props = {
 };
 
 /** Sites whose links open without asking, and the way to make them all ask again. */
-export const TrustedLinks = ({ count }: { count: number }) => {
+export const TrustedLinks = ({ count: stored }: { count: number }) => {
   const [note, setNote] = useState<string | null>(null);
+  // the registry passed in is not read again until the screen is left
+  const [cleared, setCleared] = useState(false);
+  const count = cleared ? 0 : stored;
 
   const forget = useCallback(async () => {
     try {
       await api.forgetTrustedLinks();
+      setCleared(true);
       setNote('Done. Every link asks again.');
     } catch (cause) {
       setNote(errorMessage(cause));
