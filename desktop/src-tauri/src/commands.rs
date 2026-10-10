@@ -412,12 +412,9 @@ pub async fn create_folder_with(
     member_ids: Vec<String>,
 ) -> Result<Folder> {
     store.update(|registry| {
-        let mut rail = registry.rail();
-        let folder = rail.create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?;
-
-        rail.prune_folders();
-
-        Ok(folder)
+        Ok(registry
+            .rail()
+            .create_folder(Uuid::new_v4().to_string(), &name, &member_ids)?)
     })
 }
 
@@ -439,14 +436,7 @@ pub async fn set_server_folder(
     id: String,
     folder_id: Option<String>,
 ) -> Result<()> {
-    store.update(|registry| {
-        let mut rail = registry.rail();
-
-        rail.set_server_folder(&id, folder_id)?;
-        rail.prune_folders();
-
-        Ok(())
-    })
+    store.update(|registry| Ok(registry.rail().set_server_folder(&id, folder_id)?))
 }
 
 #[tauri::command]

@@ -151,8 +151,8 @@ impl<S: RailServer> Rail<'_, S> {
     }
 
     /// A folder `id` holding `member_ids` (in that order), where its first member was (a member
-    /// taken from another folder was where that folder is). Callers prune after: a folder a member
-    /// left may now be too thin.
+    /// taken from another folder was where that folder is). A folder a member left that is now too
+    /// thin is dissolved.
     pub fn create_folder(
         &mut self,
         id: String,
@@ -193,7 +193,11 @@ impl<S: RailServer> Rail<'_, S> {
         // the folder a member came from may stay, on the same place: the new one goes first
         self.renumber(|kind, item| i32::from(!(kind == RailKind::Folder && item == id)));
 
-        Ok(self.folder_mut(&id)?.clone())
+        let made = self.folder_mut(&id)?.clone();
+
+        self.prune_folders();
+
+        Ok(made)
     }
 
     pub fn rename_folder(&mut self, id: &str, name: &str) -> Result<()> {
@@ -235,7 +239,7 @@ impl<S: RailServer> Rail<'_, S> {
     }
 
     /// Moves a server into a folder (last in it), or out of any with `None` (just after the folder
-    /// it left).
+    /// it left). A folder it left that is now too thin is dissolved.
     pub fn set_server_folder(&mut self, id: &str, folder_id: Option<String>) -> Result<()> {
         let position = match &folder_id {
             Some(folder_id) => {
@@ -263,6 +267,7 @@ impl<S: RailServer> Rail<'_, S> {
         server.set_folder_id(folder_id);
         server.set_position(position);
         self.renumber(|kind, item| i32::from(leaving && kind == RailKind::Server && item == id));
+        self.prune_folders();
 
         Ok(())
     }
@@ -535,8 +540,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(made.position, 1);
-        assert!(rail.prune_folders());
-        assert!(!folders.iter().any(|folder| folder.id == "old"));
+        assert!(
+            !folders.iter().any(|folder| folder.id == "old"),
+            "left too thin"
+        );
     }
 
     /// The top level as `(id, position)`, in order.
