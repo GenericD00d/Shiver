@@ -7,7 +7,14 @@
  */
 
 import { channelPressed, installChannelMenu, requestChannelMenu } from '../../shared/web/bridge/channel-menu';
-import { defineHook, ensureStyle, installExternalLinks, onDomSettled, touched, whenDocumentReady } from '../../shared/web/bridge/dom';
+import {
+  defineHook,
+  ensureStyle,
+  installExternalLinks,
+  onDomSettled,
+  touched,
+  whenDocumentReady
+} from '../../shared/web/bridge/dom';
 import {
   installAttachmentCards,
   installSidePanels,
@@ -18,140 +25,33 @@ import { watchDmActivity } from '../../shared/web/bridge/messages';
 import { pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
 import {
   CHANNEL_ITEM,
-  closeDialog,
   COMPOSE_EDITOR,
-  CONNECT_FORM,
-  DM_ITEM,
-  DM_TOGGLE,
   type DmChannel,
-  dmRowName,
-  findDmChannelIdByUserName,
   installMuteStyles,
-  isDmRowFor,
   markAllChannelsRead,
   NARROW,
-  notificationFlags,
   notificationTarget,
   notifyAllows,
   paintMuted,
   readDms,
-  RECONNECTING_OVERLAY,
-  rowName,
-  SERVER_VIEW,
-  SIDE_PANEL,
-  SIDEBAR,
-  sharkordStore,
   type SharkordState,
+  SIDE_PANEL,
   watchStore
 } from '../../shared/web/bridge/sharkord';
-import { applyPageTheme, type ShiverTheme } from '../../shared/web/bridge/theme';
-import type { NotifyLevel } from '../../shared/web/types';
-import { AUTO_LOGIN, AUTO_LOGIN_TOKEN, installSessionShim } from '../../shared/web/session';
-
-type ShiverConfig = {
-  entryId: string;
-  origin: string;
-  /** null while the user is on Sharkord's own colours */
-  theme: ShiverTheme | null;
-  /** the session Shiver signed in with; served to the page from memory, never stored */
-  token: string | null;
-  muted: number[];
-  /** the page was opened to show this conversation beside Shiver's DM list */
-  conversation: string | null;
-  /** another server holds the voice session (which one is never said), so joins are refused */
-  voiceLocked: boolean;
-  minimiseAttachments: boolean;
-  /** percentage of Sharkord's own sound level */
-  soundVolume: number;
-  /** which of this server's messages notify */
-  notify: NotifyLevel;
-};
-
-type QueuedNotification = {
-  channelId: number | null;
-  channelName: string | null;
-  author: string;
-  body: string;
-  iconUrl: string | null;
-  isDm: boolean;
-};
-
-type QueuedMute = { channelId: number; muted: boolean };
-
-/** The voice session on this server: channel from the store, mute flags read off Sharkord's controls. */
-type VoiceSnapshot = {
-  channelId: number;
-  channelName: string | null;
-  micMuted: boolean;
-  soundMuted: boolean;
-  /** Sharkord disables its mic button while deafened */
-  micLocked: boolean;
-};
-
-type VoiceAction = 'mic' | 'sound' | 'leave';
-
-declare global {
-  interface Window {
-    __SHIVER__?: ShiverConfig;
-    /** everything queued since the last call; null when nothing changed, unless `full` (the core drains it on a timer) */
-    __SHIVER_DRAIN__?: (full: boolean) => {
-      notifications: QueuedNotification[];
-      dms: DmChannel[] | null;
-      mutes: QueuedMute[];
-      /** "Mark all as read" was chosen in the channel menu, which marked Sharkord's side already */
-      markAllRead: boolean;
-      /** the plugin's reconciled mute list, sent once */
-      syncedMutes: number[] | null;
-      /** the conversation Shiver asked for could not be opened (the core knows which it asked for) */
-      openDmFailed: boolean;
-      /** the page has something to show, so Shiver's loading view can go */
-      ready: boolean;
-      /** the client refused the session and is asking for credentials */
-      signedOut: boolean;
-      /** Sharkord's client never started in this page (the core revives it) */
-      stalled: boolean;
-      voice: VoiceSnapshot | null;
-      /** the channel on screen, which counts as reading it */
-      viewingChannelId: number | null;
-      /** links to open in the browser */
-      open: string[];
-      /** something is fullscreen, so Shiver hides its overlay webviews */
-      fullscreen: boolean;
-    } | null;
-    __SHIVER_SET_MUTED__?: (muted: number[]) => void;
-    /** shows one conversation beside Shiver's DM list, or (null) goes back to the channels */
-    __SHIVER_CONVERSATION__?: (name: string | null) => void;
-    __SHIVER_SELECT_CHANNEL__?: (channelId: number) => void;
-    __SHIVER_SET_READ_FLOOR__?: (floor: Record<string, number>) => void;
-    __SHIVER_SET_THEME__?: (theme: ShiverTheme | null) => void;
-    /** the window is minimised, which the page cannot otherwise tell */
-    __SHIVER_SET_HIDDEN__?: (hidden: boolean) => void;
-    __SHIVER_SET_VOICE_LOCK__?: (locked: boolean) => void;
-    __SHIVER_VOICE__?: (action: VoiceAction) => void;
-    __SHIVER_MARK_ALL_READ__?: () => void;
-    /** the user changed which of this server's messages notify */
-    __SHIVER_SET_NOTIFY__?: (level: NotifyLevel) => void;
-  }
-}
-
-const OPEN_DM_TIMEOUT_MS = 25_000;
-/** Escapes one request may press, so a dialog that ignores Escape cannot hold it up */
-const MAX_ESCAPES = 3;
-
-/**
- * A retry loop's first step: closes an open dialog, since one (Sharkord's settings) would stay over
- * the conversation or channel being opened. True while it closed one.
- */
-function dialogCloser() {
-  let escapes = 0;
-
-  return () => escapes < MAX_ESCAPES && closeDialog() && ++escapes > 0;
-}
-
-// taken before the page's scripts run, so a page cannot fake fullscreen to hide Shiver's chrome
-const nativeFullscreenElement = Object.getOwnPropertyDescriptor(Document.prototype, 'fullscreenElement')?.get;
-const nativeApply = Reflect.apply;
-const isFullscreen = () => !!nativeFullscreenElement && nativeApply(nativeFullscreenElement, document, []) !== null;
+import { applyPageTheme } from '../../shared/web/bridge/theme';
+import { onOpenDmFailure, openDmChannelId, selectChannelWhenReady, showConversation } from './conversations';
+import {
+  installNotificationWrapper,
+  mentionsName,
+  ownName,
+  resolveDmChannels,
+  silenceMessagePing
+} from './notifications';
+import { isClientReady, isFullscreen, isSignedOut, isStalled } from './page-state';
+import { applyNotifyLevel, seedDefaults, seedSession } from './storage';
+import type { QueuedMute, QueuedNotification, ShiverConfig } from './types';
+import { setWindowHidden } from './visibility';
+import { installVoiceLock, readVoice, runVoiceAction, setVoiceLocked } from './voice';
 
 function install(shiver: ShiverConfig) {
   seedSession(shiver.token);
@@ -200,9 +100,9 @@ function install(shiver: ShiverConfig) {
 
   installExternalLinks((href) => openQueue.push(href));
 
-  reportOpenDmFailure = () => {
+  onOpenDmFailure(() => {
     openDmFailed = true;
-  };
+  });
 
   defineHook('__SHIVER_SET_MUTED__', (next) => {
     muted = new Set(next);
@@ -210,9 +110,7 @@ function install(shiver: ShiverConfig) {
     pushMutesToPlugin([...muted]);
   });
 
-  defineHook('__SHIVER_SET_VOICE_LOCK__', (locked) => {
-    voiceLocked = locked;
-  });
+  defineHook('__SHIVER_SET_VOICE_LOCK__', setVoiceLocked);
   defineHook('__SHIVER_VOICE__', runVoiceAction);
   defineHook('__SHIVER_MARK_ALL_READ__', markAllChannelsRead);
   defineHook('__SHIVER_SET_NOTIFY__', (level) => {
@@ -348,109 +246,6 @@ function install(shiver: ShiverConfig) {
 }
 
 /**
- * Serves Shiver's session to Sharkord's auto-login from memory (see `shared/web/session.ts`).
- * Without a session, any copy an older Shiver left in storage is removed so a log out sticks.
- */
-function seedSession(token: string | null) {
-  if (token) {
-    installSessionShim(token);
-
-    return;
-  }
-
-  try {
-    localStorage.removeItem(AUTO_LOGIN);
-    localStorage.removeItem(AUTO_LOGIN_TOKEN);
-  } catch {
-    // storage blocked: the page shows its own login
-  }
-}
-
-/**
- * Sharkord settings Shiver depends on: rejoining the last channel on connect, and its notification
- * switches (see `applyNotifyLevel`).
- */
-function seedDefaults(level: NotifyLevel) {
-  writeStorage({ 'sharkord-auto-join-last-channel': 'true' }, false);
-  applyNotifyLevel(level, false);
-}
-
-/** The level Shiver last wrote Sharkord's switches for, in the server's own storage. */
-const NOTIFY_MARK = 'shiver-notify-level';
-
-/**
- * Sharkord's notification switches for a level (Shiver's feed is built from its notifications). At
- * "all" they are written only when unset, so choices made in Sharkord's own settings stand, unless
- * Shiver wrote them for another level; any other level is Shiver's to keep, so it is written every
- * load. `force` writes them regardless (a change the user just made).
- */
-function applyNotifyLevel(level: NotifyLevel, force: boolean) {
-  let mark: string | null = null;
-
-  try {
-    mark = localStorage.getItem(NOTIFY_MARK);
-  } catch {
-    // storage blocked
-  }
-
-  writeStorage(notificationFlags(level), force || level !== 'all' || (mark !== null && mark !== level));
-  writeStorage({ [NOTIFY_MARK]: level }, true);
-}
-
-function writeStorage(values: Record<string, string>, overwrite: boolean) {
-  try {
-    for (const [key, value] of Object.entries(values)) {
-      if (overwrite || localStorage.getItem(key) === null) localStorage.setItem(key, value);
-    }
-  } catch {
-    // storage blocked
-  }
-}
-
-const ownName = (state: SharkordState) => (state.users ?? []).find((user) => user.id === state.ownUserId)?.name ?? '';
-
-/** Whether a notification's text mentions `name` (`@name`, as Sharkord writes a mention in text). */
-const mentionsName = (text: string, name: string) => name !== '' && text.includes(`@${name}`);
-
-/** Sharkord's incoming-message tone: a single 600 Hz sine (`sfxMessageReceived`). */
-const MESSAGE_PING_HZ = 600;
-
-/**
- * Swallows Sharkord's incoming-message ping, which it plays for every message regardless of
- * Shiver's mutes; Shiver plays its own for the notifications that survive them. Only that tone is
- * dropped (matched on the frequency Sharkord requested): every other sound still plays.
- */
-function silenceMessagePing() {
-  const AudioContextCtor =
-    window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-
-  if (!AudioContextCtor?.prototype) return;
-
-  const createOscillator = AudioContextCtor.prototype.createOscillator;
-  const connect = AudioNode.prototype.connect as (this: AudioNode, destination: AudioNode) => AudioNode;
-
-  AudioContextCtor.prototype.createOscillator = function patched(this: AudioContext) {
-    const oscillator = createOscillator.call(this);
-    const frequency = oscillator.frequency;
-    const setValueAtTime = frequency.setValueAtTime.bind(frequency);
-    let requestedHz: number | null = null;
-
-    frequency.setValueAtTime = (value: number, when: number) => {
-      requestedHz = value;
-
-      return setValueAtTime(value, when);
-    };
-
-    // returning the destination keeps chained `.connect()` calls working
-    oscillator.connect = function patchedConnect(this: OscillatorNode, destination: AudioNode) {
-      return this.type === 'sine' && requestedHz === MESSAGE_PING_HZ ? destination : connect.call(this, destination);
-    } as OscillatorNode['connect'];
-
-    return oscillator;
-  };
-}
-
-/**
  * Keeps Sharkord's controls clear of Shiver's bell, a 48px webview (`BELL_SIZE` in `webviews.rs`)
  * over the top-right corner: pads the top bar (the only `h-12 w-full` element with `lg:grid`) and a
  * side panel's header while it covers a narrow page, and moves a right-hand sheet's close button
@@ -462,330 +257,6 @@ function reserveTopBarSpace() {
 @media ${NARROW} { ${SIDE_PANEL} .h-12.border-b { padding-right: 48px !important; } }
 [data-slot="sheet-content"][class~="right-0"] > button[class~="top-4"][class~="right-4"] { right: 64px !important; }
 `;
-}
-
-/**
- * Replaces `window.Notification` so the page's notifications go to `handle` instead of the OS.
- * Claims permission, since Sharkord composes nothing without it.
- */
-function installNotificationWrapper(handle: (title: string, options?: NotificationOptions) => void) {
-  const Wrapped = function (title: string, options?: NotificationOptions) {
-    handle(title, options);
-
-    return {
-      close: () => undefined,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-      dispatchEvent: () => false
-    } as unknown as Notification;
-  } as unknown as typeof Notification;
-
-  Object.defineProperty(Wrapped, 'permission', { get: () => 'granted' });
-  Wrapped.requestPermission = () => Promise.resolve('granted' as NotificationPermission);
-
-  try {
-    Object.defineProperty(window, 'Notification', { configurable: true, writable: true, value: Wrapped });
-  } catch {
-    // cannot be replaced: the page keeps its own
-  }
-}
-
-/**
- * Retries the channel of queued DM notifications captured before the store had users and DM
- * channels; a notification without a channel could never be cleared by reading.
- */
-function resolveDmChannels(queue: QueuedNotification[], state: SharkordState) {
-  for (const queued of queue) {
-    if (queued.isDm && queued.channelId === null) queued.channelId = findDmChannelIdByUserName(state, queued.author);
-  }
-
-  return queue;
-}
-
-/**
- * The DM open in Sharkord's DM view. Not in the plugin store (`selectedDmChannelId` lives in
- * another slice), so it is read off the highlighted row, by the same name notifications resolve by.
- */
-function openDmChannelId(state: SharkordState) {
-  const row = [...document.querySelectorAll<HTMLElement>(DM_ITEM)].find((candidate) => candidate.classList.contains('bg-accent'));
-
-  if (!row) return null;
-
-  let name = dmRowName(row);
-
-  if (name === null) {
-    // markup changed: the longest user name in the row, so "Ana" never beats "Ana B"
-    const text = row.textContent ?? '';
-
-    for (const user of state.users ?? []) {
-      if (user.name && text.includes(user.name) && user.name.length > (name?.length ?? 0)) name = user.name;
-    }
-  }
-
-  return name ? findDmChannelIdByUserName(state, name) : null;
-}
-
-/** whether the page left Sharkord's channels to show a conversation, so leaving goes back to them */
-let conversationLeftChannels: boolean | null = null;
-
-/**
- * Shows the conversation with `name` beside Shiver's DM list, hiding Sharkord's sidebar (Shiver's
- * list stands in for it); `null` shows the sidebar again and, if the page was on its channels
- * before, goes back to them.
- */
-function showConversation(name: string | null) {
-  if (name === null) {
-    if (conversationLeftChannels === null) return;
-
-    ensureStyle('shiver-dm-mode').textContent = '';
-
-    if (conversationLeftChannels && document.querySelector(DM_ITEM)) document.querySelector<HTMLElement>(DM_TOGGLE)?.click();
-
-    conversationLeftChannels = null;
-
-    return;
-  }
-
-  conversationLeftChannels ??= !document.querySelector(DM_ITEM);
-  ensureStyle('shiver-dm-mode').textContent = `${SIDEBAR} { display: none !important; }`;
-  openDirectMessage(name);
-}
-
-let openDmTimer: number | null = null;
-/** set by `install`, so a failed open reaches the next drain */
-let reportOpenDmFailure: () => void = () => undefined;
-
-/**
- * Opens the DM with `name` by clicking Sharkord's own controls: the DM toggle (pressed at most
- * once, only while no DM rows exist, since it is a toggle) and then the row. Retries until a
- * deadline long enough to outlast a cold page connecting; a newer request replaces an older one.
- */
-function openDirectMessage(name: string) {
-  if (openDmTimer !== null) window.clearInterval(openDmTimer);
-
-  openDmTimer = null;
-
-  let toggled = false;
-  const deadline = Date.now() + OPEN_DM_TIMEOUT_MS;
-  const closing = dialogCloser();
-
-  const attempt = () => {
-    if (closing()) return false;
-
-    const rows = [...document.querySelectorAll<HTMLElement>(DM_ITEM)];
-
-    if (rows.length === 0) {
-      const toggle = toggled ? null : document.querySelector<HTMLElement>(DM_TOGGLE);
-
-      toggle?.click();
-      toggled ||= !!toggle;
-    } else {
-      const row = rows.find((candidate) => isDmRowFor(candidate, name));
-
-      if (row) {
-        row.click();
-
-        return true;
-      }
-    }
-
-    if (Date.now() <= deadline) return false;
-
-    reportOpenDmFailure();
-
-    return true;
-  };
-
-  if (attempt()) return;
-
-  openDmTimer = window.setInterval(() => {
-    if (!attempt()) return;
-
-    if (openDmTimer !== null) window.clearInterval(openDmTimer);
-
-    openDmTimer = null;
-  }, 150);
-}
-
-/**
- * Whether the client gave up on the session: the connect form is up and auto-login is no longer
- * `true` (Sharkord sets it false when it refuses a token; absent means nothing was seeded).
- */
-function isSignedOut() {
-  if (!document.querySelector(CONNECT_FORM)) return false;
-
-  try {
-    return localStorage.getItem(AUTO_LOGIN) !== 'true';
-  } catch {
-    return true;
-  }
-}
-
-/** How long a page may go without Sharkord's client starting before it is counted as stalled. */
-const STALL_MS = 20_000;
-const startedAt = Date.now();
-
-/**
- * Whether the page will not recover by itself, so the core should reload it once the server
- * answers: Sharkord's "connection lost" screen, shown when its own retries (a few seconds' worth)
- * are spent, or no Sharkord client at all (a proxy's error page while the server is down). Not a
- * kick or a ban, whose screens the user should see.
- */
-function isStalled() {
-  if (document.querySelector(SIDEBAR) || document.querySelector(RECONNECTING_OVERLAY)) return false;
-
-  // the wifi-off icon is also in the voice controls and Sharkord's retry overlay, both ruled out above
-  if (hasLucideIcon(document.documentElement, 'wifi-off')) return true;
-
-  return Date.now() - startedAt > STALL_MS && !sharkordStore();
-}
-
-/** Connected (own user known and the server view mounted), or showing its connect form. */
-function isClientReady(state: SharkordState) {
-  if (document.querySelector(CONNECT_FORM)) return true;
-
-  return typeof state.ownUserId === 'number' && document.querySelector(SERVER_VIEW) !== null;
-}
-
-/** Whether `element` contains lucide icon `name` (whole class token: `mic` is a prefix of `mic-off`). */
-function hasLucideIcon(element: Element, name: string) {
-  return [...element.querySelectorAll('svg')].some(
-    (icon) => icon.classList.contains(`lucide-${name}`) || icon.classList.contains(`lucide-${name}-icon`)
-  );
-}
-
-/**
- * Sharkord's own voice controls. Mic and deafen are the pair of buttons sharing a parent (the same
- * icons appear per participant in a voice channel's user list, but not as sibling buttons).
- */
-function findVoiceButtons(): Record<VoiceAction, HTMLButtonElement | null> {
-  const scope = document.querySelector(SIDEBAR) ?? document.body;
-  const buttons = [...scope.querySelectorAll<HTMLButtonElement>('button')];
-  const isMic = (button: Element) => hasLucideIcon(button, 'mic') || hasLucideIcon(button, 'mic-off');
-  const isSound = (button: Element) => hasLucideIcon(button, 'headphones') || hasLucideIcon(button, 'headphone-off');
-  const soundBeside = (button: Element) =>
-    ([...(button.parentElement?.children ?? [])].find((sibling) => sibling !== button && isSound(sibling)) as HTMLButtonElement | undefined) ?? null;
-
-  const mic = buttons.find((button) => isMic(button) && soundBeside(button)) ?? null;
-
-  return {
-    mic,
-    sound: mic ? soundBeside(mic) : null,
-    leave: buttons.find((button) => hasLucideIcon(button, 'phone-off')) ?? null
-  };
-}
-
-function readVoice(state: SharkordState): VoiceSnapshot | null {
-  const channelId = state.currentVoiceChannelId;
-
-  if (typeof channelId !== 'number') return null;
-
-  const { mic, sound } = findVoiceButtons();
-
-  // missing controls read as unmuted: claiming a live mic is muted would be worse
-  return {
-    channelId,
-    channelName: (state.channels ?? []).find((channel) => channel.id === channelId)?.name ?? null,
-    micMuted: mic ? hasLucideIcon(mic, 'mic-off') : false,
-    soundMuted: sound ? hasLucideIcon(sound, 'headphone-off') : false,
-    micLocked: mic?.disabled ?? false
-  };
-}
-
-/** Clicks one of Sharkord's voice controls; unknown actions and disabled controls do nothing. */
-function runVoiceAction(action: VoiceAction) {
-  const buttons = findVoiceButtons();
-  const button = Object.hasOwn(buttons, action) ? buttons[action] : null;
-
-  if (button && !button.disabled) button.click();
-}
-
-/** Selects a channel (for a clicked notification) once the client can, until a deadline. */
-function selectChannelWhenReady(channelId: number) {
-  const deadline = Date.now() + OPEN_DM_TIMEOUT_MS;
-  const closing = dialogCloser();
-
-  const attempt = () => {
-    if (closing()) return false;
-
-    const store = sharkordStore();
-    const selectChannel = store?.actions?.selectChannel;
-
-    if (selectChannel && (store.getState().channels ?? []).some((channel) => channel.id === channelId)) {
-      selectChannel(channelId);
-
-      return true;
-    }
-
-    return Date.now() > deadline;
-  };
-
-  if (attempt()) return;
-
-  const timer = window.setInterval(() => {
-    if (attempt()) window.clearInterval(timer);
-  }, 250);
-}
-
-/** The `#` icon (lucide's `Hash`) Sharkord draws only in a text channel's row. */
-const TEXT_CHANNEL_ICON = 'svg.lucide-hash';
-
-let voiceLocked = false;
-let voiceNoticeTimer: number | null = null;
-
-/**
- * Refuses a click on a voice channel while another server holds the call (capture phase on the
- * document, before React sees it), so the second join never happens. Rows carry only a name, so
- * voice rows are recognised through the store, and a text row of the same name by its icon.
- */
-function installVoiceLock(initial: boolean, getState: () => SharkordState) {
-  voiceLocked = initial;
-
-  document.addEventListener(
-    'click',
-    (event) => {
-      if (!voiceLocked) return;
-
-      const row = (event.target as Element | null)?.closest?.(CHANNEL_ITEM);
-
-      if (!row) return;
-
-      const name = rowName(row);
-
-      // a text row draws Sharkord's `#` icon: one named like a voice channel is not one
-      if (row.querySelector(TEXT_CHANNEL_ICON)) return;
-      if (!(getState().channels ?? []).some((channel) => channel.type === 'VOICE' && channel.name === name)) return;
-
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      showVoiceNotice();
-    },
-    true
-  );
-}
-
-/** Says, where the user clicked, why the voice channel did not open (without naming the other server). */
-function showVoiceNotice() {
-  const id = 'shiver-voice-notice';
-  const notice = document.getElementById(id) ?? document.body.appendChild(document.createElement('div'));
-
-  notice.id = id;
-  notice.textContent = 'You are already in a voice channel on another server in Shiver.';
-  notice.setAttribute('role', 'status');
-  notice.setAttribute(
-    'style',
-    'position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 2147483647; ' +
-      'padding: 10px 16px; border-radius: 8px; font-size: 13px; pointer-events: none; ' +
-      'background: var(--popover, #171717); color: var(--popover-foreground, #fafafa); ' +
-      'border: 1px solid var(--border, rgba(250,250,250,0.12)); box-shadow: 0 8px 24px rgba(0,0,0,0.35)'
-  );
-
-  if (voiceNoticeTimer !== null) window.clearTimeout(voiceNoticeTimer);
-
-  voiceNoticeTimer = window.setTimeout(() => {
-    notice.remove();
-    voiceNoticeTimer = null;
-  }, 4000);
 }
 
 /** Right-click on a sidebar channel opens the channel menu (`channel-menu.ts`), not the browser's. */
@@ -811,40 +282,6 @@ function installChannelRightClick() {
     cancelNativeFor = null;
     event.preventDefault();
   });
-}
-
-let windowHidden = false;
-let visibilityPatched = false;
-
-/**
- * Makes `document.hidden` true while Shiver is minimised (a child webview stays "visible"), so
- * Sharkord notifies for messages in the channel on screen. Falls back to the real value otherwise.
- */
-function setWindowHidden(hidden: boolean) {
-  if (!visibilityPatched) {
-    const native = (name: 'hidden' | 'visibilityState') => Object.getOwnPropertyDescriptor(Document.prototype, name)?.get;
-    const nativeHidden = native('hidden');
-    const nativeState = native('visibilityState');
-
-    try {
-      Object.defineProperty(document, 'hidden', {
-        configurable: true,
-        get: () => windowHidden || (nativeHidden?.call(document) ?? false)
-      });
-      Object.defineProperty(document, 'visibilityState', {
-        configurable: true,
-        get: () => (windowHidden ? 'hidden' : (nativeState?.call(document) ?? 'visible'))
-      });
-      visibilityPatched = true;
-    } catch {
-      // sealed by the page
-    }
-  }
-
-  if (windowHidden === hidden) return;
-
-  windowHidden = hidden;
-  document.dispatchEvent(new Event('visibilitychange'));
 }
 
 /**

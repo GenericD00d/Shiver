@@ -53,7 +53,7 @@ CONTRACTS = [
         r"`DM - \$\{[^}]+\}:\$\{[^}]+\}`",
     ),
     (
-        "text channel rows draw lucide's `Hash` icon (the voice lock's TEXT_CHANNEL_ICON)",
+        "text channel rows draw lucide's `Hash` icon (the voice lock tells text rows by it)",
         "apps/client/src/components/left-sidebar/channels.tsx",
         r"import \{[^}]*\bHash\b[^}]*\} from 'lucide-react'[\s\S]*<Hash className",
     ),
