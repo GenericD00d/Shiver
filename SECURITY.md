@@ -112,18 +112,21 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   user signs in on the page; logging out of or removing a server clears what its page stored
   (on Android every account on one address shares that storage, so it is cleared for all of them).
 - **What a server's page can learn on Android.** There is one app webview, and the rail is never in
-  the server's page: the quick rail is drawn over it in a WebView of the rail plugin's own, which
-  shares no script world with the page, loads only the rail's page from the app's assets with network
-  loads blocked, and has no IPC (it talks to the plugin over a message channel offered to its own
-  origin alone, and the plugin passes on only its known choices, which the core checks again); the
-  full rail is on Shiver's own page. A server's page is handed its own entry's
+  the server's page: the quick rail, and the menus, settings and direct messages it opens, are drawn
+  over it in a WebView of the rail plugin's own, which shares no script world with the page, loads
+  only the rail's page from the app's assets (its policy lets it load https pictures, for the avatars
+  in the DM list, and nothing else), and has no IPC. It talks to the plugin over a message channel
+  offered to its own origin alone; the plugin passes on only its known choices, and calls by
+  command name, which the core runs only from its own list for that page (none opens or adds a
+  server; those go through Shiver's page). A server's page is handed its own entry's
   settings, mutes, session and push endpoint, and the address of Shiver's page (asking for the rail
   is a navigation there, which the core turns into the quick rail); nothing about other servers. It
-  can navigate to Shiver's page, whose fragment can only ask for the rail or one of Shiver's screens
-  (direct messages, adding a server, settings), or open a server (or say it failed) by id; nothing
-  is changed from a URL. The core's events (unread counts, push, updates)
-  are sent only while Shiver's page is up, because the one webview keeps that page's event
-  listeners after it navigates to a server.
+  can navigate to Shiver's page, whose fragment can only ask for the rail or the screen for adding a
+  server, or open a server (or say it failed) by id; nothing is changed from a URL. The core's
+  events (unread counts, push, updates) reach Shiver's page only while it is up, because the one
+  webview keeps that page's event listeners after it navigates to a server; the screens over a page
+  get them through the rail's channel. A conversation chosen in the DM list over a server's page is
+  opened in that page by the user's name, which is all it is told.
 - **The plugin's push delivery is pinned.** The endpoint is resolved once, every address is
   checked, and the request is sent over TLS on port 443 to that vetted address with the hostname as
   SNI, so DNS rebinding cannot redirect it. Deliveries in flight are capped server-wide, and the

@@ -40,6 +40,10 @@ import java.io.ByteArrayInputStream
  * of its own over the server page, never inside it. It loads only that page and talks only to this
  * plugin, over one channel offered to its origin. Here: the overlay, scrim, slide-in, back press and
  * the channel; the core sends what to draw (`show`, `refresh`) and hears what was chosen.
+ *
+ * The page is also Shiver's screens over the server page (a tile's menu, settings, direct messages),
+ * so the page behind keeps running. For those it asks to fill the overlay (`expand`), and its calls
+ * to the core pass through here (`call`), which the core answers with `post`.
  */
 
 /** the rail's width, as on Shiver's own page (`--shiver-rail-width`) */
@@ -57,10 +61,25 @@ private const val PAGE_PATH = "/assets/rail/"
 private const val PAGE = "$ORIGIN${PAGE_PATH}index.html"
 /** the page's end of the channel: `window.shiverRail` */
 private const val CHANNEL = "shiverRail"
+/** what the page is told when back is pressed while it fills the overlay */
+private const val BACK = "{\"back\":true}"
+/** what an asset or picture request that is neither gets */
+private fun notFound() = WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
 /** what the user can choose, closing the rail; anything else the page says is dropped */
-private val CHOICES = setOf("dms", "add", "settings", "closed")
+private val CHOICES = setOf("add", "closed")
 /** an entry or folder id: a uuid, bounded */
 private val ID = Regex("^[A-Za-z0-9-]{1,64}$")
+/** a core command's name; the core decides which it takes */
+private val COMMAND = Regex("^[a-z_]{1,48}$")
+/** the longest message the page may send (a call's arguments are small) */
+private const val MAX_MESSAGE = 64 * 1024
+/** the longest user name a conversation may be opened with */
+private const val MAX_USER = 128
+
+@InvokeArg
+class PostArgs {
+    lateinit var message: String
+}
 
 @InvokeArg
 class EventsArgs {
@@ -85,6 +104,8 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
     private var revealing: Triple<Int, Invoke, JSArray>? = null
     /** the logo key the page has been given for each entry */
     private val given = HashMap<String, String>()
+    /** the page fills the overlay (a menu or one of Shiver's screens) rather than the rail's width */
+    private var expanded = false
 
     /** Made at start-up rather than on the first swipe, so the page is loaded before it is wanted. */
     override fun load(webView: WebView) {
@@ -113,6 +134,17 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun refresh(invoke: Invoke) = draw(invoke, reveal = false)
 
+    /** An answer to one of the page's calls, or an event of the core's; dropped while the page is not loaded. */
+    @Command
+    fun post(invoke: Invoke) {
+        val message = invoke.parseArgs(PostArgs::class.java).message
+
+        activity.runOnUiThread {
+            page?.postMessage(message)
+            invoke.resolve()
+        }
+    }
+
     @Command
     fun hide(invoke: Invoke) {
         activity.runOnUiThread {
@@ -138,7 +170,8 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
             val number = ++sequence
 
             takeLogos(view, missing)
-            send(JSONObject().put("seq", number).put("view", view).toString())
+            // a rail sliding in starts on the rail, whatever screen it last showed
+            send(JSONObject().put("seq", number).put("reveal", reveal && !up).put("view", view).toString())
 
             if (!reveal || (up && revealing == null)) return@runOnUiThread invoke.resolve(drawn(missing))
 
@@ -233,9 +266,10 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
             isVerticalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
 
+            // the page's own policy lets it load https pictures (the avatars in its DM list) and
+            // nothing else from the network
             settings.apply {
                 javaScriptEnabled = true
-                blockNetworkLoads = true
                 allowFileAccess = false
                 allowContentAccess = false
                 domStorageEnabled = false
@@ -246,9 +280,9 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
             }
 
             webViewClient = object : WebViewClientCompat() {
-                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse =
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
                     loader.shouldInterceptRequest(request.url)
-                        ?: WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+                        ?: if (isPicture(request)) null else notFound()
 
                 // the rail's page, and nowhere else
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) =
@@ -272,6 +306,10 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
         return web
     }
 
+    /** A request the network may answer: an https GET elsewhere than the page's own origin. */
+    private fun isPicture(request: WebResourceRequest) =
+        request.url.scheme == "https" && request.method == "GET" && request.url.host != Uri.parse(ORIGIN).host
+
     /** The WebView's renderer is gone: a new one, and a fresh page, next time the rail is wanted. */
     private fun forget(web: WebView) {
         dismiss()
@@ -284,8 +322,12 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
 
     /** What the page said: that it is ready, that a view is drawn, or what the user chose. */
     private fun heard(message: WebMessageCompat, reply: JavaScriptReplyProxy) {
+        val data = message.data ?: return
+
+        if (data.length > MAX_MESSAGE) return
+
         val said = try {
-            JSONObject(message.data ?: return)
+            JSONObject(data)
         } catch (ex: JSONException) {
             return
         }
@@ -315,7 +357,25 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
 
     private fun chosen(kind: String, said: JSONObject) {
         when (kind) {
-            "open" -> said.optString("entryId").takeIf { ID.matches(it) }?.let { choose("open", it) }
+            "open" -> {
+                val entryId = said.optString("entryId").takeIf { ID.matches(it) } ?: return
+                val user = said.optString("dmUser").takeIf { !said.isNull("dmUser") && it.isNotEmpty() && it.length <= MAX_USER }
+
+                choose("open", entryId, user)
+            }
+            "expand" -> (said.opt("full") as? Boolean)?.let { expand(it) }
+            "call" -> {
+                val id = (said.opt("id") as? Int)?.takeIf { it >= 0 } ?: return
+                val command = said.optString("cmd").takeIf { COMMAND.matches(it) } ?: return
+                val args = said.optJSONObject("args") ?: JSONObject()
+
+                events?.send(JSObject().apply {
+                    put("kind", "call")
+                    put("id", id)
+                    put("cmd", command)
+                    put("args", args)
+                })
+            }
             "folder" -> {
                 val folderId = said.optString("folderId").takeIf { ID.matches(it) } ?: return
                 val expanded = said.opt("expanded") as? Boolean ?: return
@@ -331,6 +391,16 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /** The page over the whole overlay (a menu or a screen), or back to the rail's width. */
+    private fun expand(full: Boolean) {
+        val web = rail ?: return
+
+        expanded = full
+        web.layoutParams = web.layoutParams.apply {
+            width = if (full) ViewGroup.LayoutParams.MATCH_PARENT else dp(RAIL_DP)
+        }
+    }
+
     /**
      * Up but not yet seen, so the page draws before it slides in: a WebView that is hidden, or whose
      * overlay is fully transparent, is not drawn at all, and neither is its page.
@@ -342,6 +412,7 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
         root.isClickable = false
         root.visibility = View.VISIBLE
         rail?.translationX = 0f
+        expand(false)
     }
 
     private fun slideIn() {
@@ -357,7 +428,12 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
         if (back == null) {
             (activity as? ComponentActivity)?.let { owner ->
                 val callback = object : OnBackPressedCallback(false) {
-                    override fun handleOnBackPressed() = choose("closed", null)
+                    // a screen or menu the page has open is the page's to close
+                    override fun handleOnBackPressed() {
+                        val proxy = page
+
+                        if (expanded && proxy != null) proxy.postMessage(BACK) else choose("closed", null)
+                    }
                 }
 
                 owner.onBackPressedDispatcher.addCallback(callback)
@@ -373,18 +449,20 @@ class RailPlugin(private val activity: Activity) : Plugin(activity) {
         rail?.animate()?.cancel()
         overlay?.visibility = View.GONE
         back?.isEnabled = false
+        expand(false)
     }
 
     /**
-     * Closes the rail and tells the core what was chosen: `closed`, `open` with an entry id, or one of
-     * Shiver's own screens (`dms`, `add`, `settings`).
+     * Closes the rail and tells the core what was chosen: `closed`, `open` with an entry id (and the
+     * user whose conversation to open there), or `add`, Shiver's screen for adding a server.
      */
-    private fun choose(kind: String, entryId: String?) {
+    private fun choose(kind: String, entryId: String?, dmUser: String? = null) {
         dismiss()
 
         events?.send(JSObject().apply {
             put("kind", kind)
             if (entryId != null) put("entryId", entryId)
+            if (dmUser != null) put("dmUser", dmUser)
         })
     }
 }

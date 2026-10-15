@@ -2,8 +2,10 @@
 //! does not unload it; coming back to the same server only closes the rail.
 //!
 //! A server's page asks for it by navigating to Shiver's page with `#home` (a swipe past the drawer,
-//! or back); that navigation is cancelled and the rail drawn instead. Another server, or one of
-//! Shiver's screens, is reached through Shiver's page (`#open=<id>`, `#dms`, `#add`, `#settings`).
+//! or back); that navigation is cancelled and the rail drawn instead. Another server, or the screen
+//! for adding one, is reached through Shiver's page (`#open=<id>`, `#add`). A tile's menu, the
+//! settings and the direct messages are drawn over the page by the rail's (`overlay`), and a
+//! conversation on the server behind opens in its page.
 
 use std::{
     collections::HashMap,
@@ -54,6 +56,11 @@ pub fn open(app: &AppHandle) {
     std::thread::spawn(move || draw(&app, true));
 }
 
+/// Whether the rail (or a screen it opened) is over the page.
+pub fn is_open(app: &AppHandle) -> bool {
+    app.state::<QuickRail>().open.load(Ordering::Acquire)
+}
+
 /// Redraws the rail if it is up (new unread counts).
 pub fn refresh(app: &AppHandle) {
     if !app.state::<QuickRail>().open.load(Ordering::Acquire) {
@@ -82,9 +89,11 @@ pub fn close(app: &AppHandle) {
     });
 }
 
-/// What the user chose. The rail has already closed itself, unless a folder was opened or shut.
+/// What the user chose. The rail has already closed itself, unless a folder was opened or shut or
+/// its screens called the core.
 pub fn chosen(app: &AppHandle, event: RailEvent) {
     let screen = match event {
+        RailEvent::Call { id, cmd, args } => return crate::overlay::call(app, id, cmd, args),
         RailEvent::Folder {
             folder_id,
             expanded,
@@ -97,15 +106,22 @@ pub fn chosen(app: &AppHandle, event: RailEvent) {
             return refresh(app);
         }
         RailEvent::Closed => None,
-        RailEvent::Dms => Some("dms".to_string()),
         RailEvent::Add => Some("add".to_string()),
-        RailEvent::Settings => Some("settings".to_string()),
-        // opened by Shiver's page, which waits for the server to take another join if need be
-        RailEvent::Open { entry_id } => app
-            .state::<Store>()
-            .registry()
-            .server(&entry_id)
-            .map(|_| format!("open={entry_id}")),
+        // opened by Shiver's page, which waits for the server to take another join if need be; a
+        // conversation on the server behind opens in its page instead
+        RailEvent::Open { entry_id, dm_user } => {
+            let entry = app.state::<Store>().registry().server(&entry_id).cloned();
+
+            match (entry, dm_user) {
+                (Some(entry), Some(user)) if webview::open_dm_in_page(app, &entry, &user) => None,
+                (Some(_), user) => {
+                    app.state::<webview::Showing>().queue_dm(&entry_id, user);
+
+                    Some(format!("open={entry_id}"))
+                }
+                (None, _) => None,
+            }
+        }
     };
 
     let quick = app.state::<QuickRail>();

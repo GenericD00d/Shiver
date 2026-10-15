@@ -18,6 +18,7 @@ import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, wai
 import { CHANNEL_ITEM, installMuteStyles, paintMuted, readDms, sharkordStore } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme } from '../../shared/web/bridge/theme';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
+import { installEditInComposer } from './edit';
 import { installRailSwipe, openRail, setHome } from './home';
 import { installAutoReconnect, installQuietReconnect } from './reconnect';
 import {
@@ -49,6 +50,7 @@ function install(shiver: ShiverConfig) {
   installReactionNames();
   installImageZoom();
   installReturnMakesALine();
+  installEditInComposer();
   installAutoReconnect(shiver.session, shiver.entryId);
   installQuietReconnect();
 
@@ -107,6 +109,11 @@ function install(shiver: ShiverConfig) {
   installRailSwipe();
 
   if (shiver.openDmUser) openConversation(shiver.openDmUser);
+
+  // chosen in Shiver's DM list over this page, which stays loaded
+  defineHook('__SHIVER_OPEN_DM__', (userName) => {
+    if (typeof userName === 'string' && userName) openConversation(userName);
+  });
 }
 
 /**

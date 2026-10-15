@@ -49,6 +49,9 @@ pub async fn select_server(
         return Ok(());
     }
 
+    // or the one the screens over the last page asked for on the way here
+    let dm_user = dm_user.or_else(|| app.state::<Showing>().take_queued_dm(&id));
+
     app.state::<Showing>().set_pending_dm_user(dm_user);
 
     webview::show_server(&app, &entry, token.as_deref())?;

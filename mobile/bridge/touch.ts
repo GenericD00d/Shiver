@@ -174,13 +174,14 @@ export function installLongPress(mutes: ChannelMutes) {
 /**
  * Makes the phone keyboard's return key insert a line break in the message composer (Sharkord
  * sends on Enter and breaks on Shift+Enter, and a phone has no shift to hold) by re-dispatching it
- * with `shiftKey`. Other fields, and the mention/emoji suggestion popovers, keep Enter.
+ * with `shiftKey`. Other fields, and the mention/emoji suggestion popovers, keep Enter, and so does
+ * Shiver's own (untrusted) Enter, which is how Send saves an edit (`edit.ts`).
  */
 export function installReturnMakesALine() {
   window.addEventListener(
     'keydown',
     (event) => {
-      if (event.key !== 'Enter' || event.shiftKey) return;
+      if (event.key !== 'Enter' || event.shiftKey || !event.isTrusted) return;
 
       const target = event.target as HTMLElement | null;
 

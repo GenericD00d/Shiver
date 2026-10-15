@@ -1,5 +1,12 @@
 /** DOM helpers shared by the desktop and mobile bridges. */
 
+/** Whether `element` contains lucide icon `name` (whole class token: `mic` is a prefix of `mic-off`). */
+export function hasLucideIcon(element: Element, name: string) {
+  return [...element.querySelectorAll('svg')].some(
+    (icon) => icon.classList.contains(`lucide-${name}`) || icon.classList.contains(`lucide-${name}-icon`)
+  );
+}
+
 /** The `<style>` element with `id`, created on first use. */
 export function ensureStyle(id: string): HTMLStyleElement {
   const existing = document.getElementById(id);

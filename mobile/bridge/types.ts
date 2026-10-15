@@ -40,5 +40,7 @@ declare global {
     __SHIVER_CLEARED__?: () => string[];
     /** asked by the activity on a back press; true when the page used it */
     __SHIVER_BACK__?: () => boolean;
+    /** asked by the core: open the conversation with this user, chosen in Shiver's DM list over the page */
+    __SHIVER_OPEN_DM__?: (userName: unknown) => void;
   }
 }

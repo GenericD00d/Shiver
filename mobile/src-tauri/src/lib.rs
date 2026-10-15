@@ -4,6 +4,7 @@ mod icons;
 mod inbox;
 mod model;
 mod notify;
+mod overlay;
 mod push;
 mod rail;
 pub use sharkord_client as sharkord;

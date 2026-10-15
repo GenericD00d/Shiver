@@ -5,6 +5,11 @@
 //! The core hands it what to draw ([`RailView`]) and hears what the user chose ([`RailEvent`]). A
 //! logo travels once: a tile names it by a key and carries it only with a key not sent before; the
 //! rail reports the keys it lacks.
+//!
+//! The page is also Shiver's screens over the server page (its menus, settings and direct messages),
+//! so reaching them does not unload it. Those screens call the core by command name
+//! ([`RailEvent::Call`]), which the core checks against its own list, and hear the answers and the
+//! core's events through [`Rail::post`].
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -61,21 +66,19 @@ pub struct RailView {
     pub folders: Vec<RailFolder>,
 }
 
-/// What the user did with the rail. Each but `Folder` has already closed it.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// What the user did with the rail. Each but `Folder` and `Call` has already closed it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum RailEvent {
-    /// open another server
+    /// open a server, and on it the conversation with `dm_user` when there is one
     Open {
         #[serde(rename = "entryId")]
         entry_id: String,
+        #[serde(default, rename = "dmUser")]
+        dm_user: Option<String>,
     },
-    /// Shiver's direct messages
-    Dms,
-    /// Shiver's screen for adding a server
+    /// Shiver's screen for adding a server (the rail's page draws the others itself)
     Add,
-    /// Shiver's settings
-    Settings,
     /// back to the page behind
     Closed,
     /// a folder opened or shut; the rail stays up
@@ -83,6 +86,14 @@ pub enum RailEvent {
         #[serde(rename = "folderId")]
         folder_id: String,
         expanded: bool,
+    },
+    /// one of the core's commands, from the screens over the page; answered through [`Rail::post`]
+    /// as `{ reply: id, ok, value }`
+    Call {
+        id: u32,
+        cmd: String,
+        #[serde(default)]
+        args: Value,
     },
 }
 
@@ -136,6 +147,13 @@ impl<R: Runtime> Rail<R> {
         self.call::<Value>("hide", Value::Null).map(drop)
     }
 
+    /// Hands the page a message (an answer to a call, or one of the core's events). Dropped while
+    /// the page is not loaded, which re-reads everything once it is.
+    pub fn post(&self, message: &Value) -> Result<()> {
+        self.call::<Value>("post", json!({ "message": message.to_string() }))
+            .map(drop)
+    }
+
     /// Where the user's choices go. Until this is called they are dropped (the rail still closes).
     pub fn on_event<F>(&self, handler: F) -> Result<()>
     where
@@ -159,7 +177,6 @@ impl<R: Runtime> Rail<R> {
         #[cfg(not(target_os = "android"))]
         {
             drop(handler);
-            let _ = json!(null);
 
             Ok(())
         }
@@ -205,12 +222,28 @@ mod tests {
         assert_eq!(
             read(r#"{"kind":"open","entryId":"a"}"#),
             Some(RailEvent::Open {
-                entry_id: "a".into()
+                entry_id: "a".into(),
+                dm_user: None
             })
         );
-        assert_eq!(read(r#"{"kind":"dms"}"#), Some(RailEvent::Dms));
+        assert_eq!(
+            read(r#"{"kind":"open","entryId":"a","dmUser":"ana"}"#),
+            Some(RailEvent::Open {
+                entry_id: "a".into(),
+                dm_user: Some("ana".into())
+            })
+        );
+        assert_eq!(
+            read(r#"{"kind":"call","id":3,"cmd":"list_dms","args":{}}"#),
+            Some(RailEvent::Call {
+                id: 3,
+                cmd: "list_dms".into(),
+                args: json!({})
+            })
+        );
+        assert_eq!(read(r#"{"kind":"call","cmd":"list_dms"}"#), None);
         assert_eq!(read(r#"{"kind":"add"}"#), Some(RailEvent::Add));
-        assert_eq!(read(r#"{"kind":"settings"}"#), Some(RailEvent::Settings));
+        assert_eq!(read(r#"{"kind":"settings"}"#), None);
         assert_eq!(read(r#"{"kind":"closed"}"#), Some(RailEvent::Closed));
         assert_eq!(
             read(r#"{"kind":"folder","folderId":"f","expanded":true}"#),

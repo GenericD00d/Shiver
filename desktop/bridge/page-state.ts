@@ -1,5 +1,6 @@
 /** What the core asks about the page: signed out, stalled, ready, fullscreen. */
 
+import { hasLucideIcon } from '../../shared/web/bridge/dom';
 import {
   CONNECT_FORM,
   RECONNECTING_OVERLAY,
@@ -9,7 +10,6 @@ import {
   SIDEBAR
 } from '../../shared/web/bridge/sharkord';
 import { AUTO_LOGIN } from '../../shared/web/session';
-import { hasLucideIcon } from './voice';
 
 // taken before the page's scripts run, so a page cannot fake fullscreen to hide Shiver's chrome
 const nativeFullscreenElement = Object.getOwnPropertyDescriptor(Document.prototype, 'fullscreenElement')?.get;

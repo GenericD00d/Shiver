@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, errorMessage } from './api';
-import { BackgroundNotifications } from './components/BackgroundNotifications';
-import { Boot, type BootState, type ConfirmAction } from './components/Boot';
+import type { ConfirmAction } from './components/ActionConfirm';
+import { Boot, type BootState } from './components/Boot';
 import { DirectMessages } from './components/DirectMessages';
-import type { SettingsSection } from './components/SettingsScreen';
-import { ServerList } from './components/ServerList';
-import { Sessions, TrustedLinks } from './components/Sessions';
-import { SettingsScreen } from './components/SettingsScreen';
+import { ServerSignIn } from './components/ServerSignIn';
+import { SettingsView } from './components/SettingsView';
+import { chooseMenuItem, railMenu, runConfirmed } from './rail-menu';
+import { useSessions } from './sessions';
 import { AddServerForm } from '../../shared/web/components/AddServerForm';
 import { Menu } from '../../shared/web/components/Menu';
 import { Rail } from '../../shared/web/components/Rail';
 import { RenameFolderForm } from '../../shared/web/components/RenameFolderForm';
-import { SignInForm } from '../../shared/web/components/SignInForm';
 import { UpdateNotice } from '../../shared/web/components/UpdateNotice';
 import { applyTheme } from '../../shared/web/theme';
 import {
@@ -22,7 +21,7 @@ import {
   type ServerEntry,
   type Settings
 } from './types';
-import { folderMenu, type MenuEntry, notifyLevelOf, readMenuId, serverMenu } from '../../shared/web/menus';
+import type { MenuEntry } from '../../shared/web/menus';
 import { byPosition, type RailRef, type RailStep, runRailSteps } from '../../shared/web/rail';
 
 /**
@@ -31,18 +30,11 @@ import { byPosition, type RailRef, type RailStep, runRailSteps } from '../../sha
  */
 type Screen = 'boot' | 'add' | 'settings' | 'signIn' | 'dms' | 'folder';
 
-/** The screens the quick rail can open, each by the fragment of the same name. */
-const RAIL_SCREENS = ['dms', 'add', 'settings'] as const;
+/** The screens the quick rail opens on Shiver's page, each by the fragment of the same name (it draws
+ * the settings and the direct messages over the server's page itself). */
+const RAIL_SCREENS = ['add'] as const;
 
 type RailScreen = (typeof RAIL_SCREENS)[number];
-
-/** The settings sections, in the order they are listed. */
-const SETTINGS_SECTIONS: { id: SettingsSection | 'servers'; label: string }[] = [
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'notifications', label: 'Notifications' },
-  { id: 'servers', label: 'Servers' },
-  { id: 'about', label: 'About' }
-];
 
 const EMPTY: Registry = {
   servers: [],
@@ -67,9 +59,8 @@ const EMPTY: Registry = {
  */
 const PASSING_THROUGH_MS = 2000;
 
-/** The screens with a bar across the top; the others are a card with its own title and Cancel. */
+/** The screens with a bar across the top (settings draws its own); the others are a card with its own title and Cancel. */
 const TITLES: Partial<Record<Screen, string>> = {
-  settings: 'Settings',
   dms: 'Direct messages'
 };
 
@@ -116,8 +107,6 @@ const lastUsed = (registry: Registry) => {
 export const App = () => {
   const [registry, setRegistry] = useState<Registry>(EMPTY);
   const [screen, setScreen] = useState<Screen>('boot');
-  const [settingsSection, setSettingsSection] = useState<SettingsSection | 'servers'>('appearance');
-  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   /** the server the sign-in screen is for */
   const [signingIn, setSigningIn] = useState<string | null>(null);
   /** the folder the rename screen is for */
@@ -249,9 +238,7 @@ export const App = () => {
         const { action, server } = boot;
 
         try {
-          const run = { remove: api.removeServer, forgetpw: api.forgetPassword, logout: api.logOutServer }[action];
-
-          await run(server.id);
+          await runConfirmed(action, server.id);
         } catch (cause) {
           setError(errorMessage(cause));
         }
@@ -366,36 +353,10 @@ export const App = () => {
   }, []);
 
   // session state per server, re-read whenever the counts change (which is when the core publishes)
-  const [signedOut, setSignedOut] = useState<string[]>([]);
-  const [problems, setProblems] = useState<Record<string, string>>({});
-  const [remembered, setRemembered] = useState<string[]>([]);
-  /** companion plugin version per connected server */
-  const [plugins, setPlugins] = useState<Record<string, string | null>>({});
+  // and, while settings is open, every few seconds: problems can appear or clear without any count moving
+  const { sessions, read: readSessions } = useSessions(unread, screen === 'settings');
 
   const signingInServer = servers.find((server) => server.id === signingIn) ?? null;
-
-  const readSessions = useCallback(() => {
-    api
-      .sessionStates()
-      .then((states) => {
-        setSignedOut(states.signedOut);
-        setRemembered(states.remembered);
-        setProblems(states.problems);
-        setPlugins(states.plugins);
-      })
-      .catch(() => undefined);
-  }, []);
-
-  useEffect(readSessions, [readSessions, unread]);
-
-  // while settings is open, problems can appear or clear without any count moving
-  useEffect(() => {
-    if (screen !== 'settings') return;
-
-    const timer = window.setInterval(readSessions, 10_000);
-
-    return () => window.clearInterval(timer);
-  }, [screen, readSessions]);
 
   const openById = useCallback(
     (id: string, dmUser?: string) => {
@@ -437,85 +398,29 @@ export const App = () => {
   /** A server's or folder's menu, from the item model both clients share. */
   const openMenu = useCallback(
     (target: RailRef, at: { x: number; y: number }) => {
-      if (target.kind === 'folder') {
-        setMenu({ entries: folderMenu(target.id), at });
+      const entries = railMenu(target, servers, registry.folders, sessions);
 
-        return;
-      }
-
-      const server = servers.find((candidate) => candidate.id === target.id);
-
-      if (!server) return;
-
-      setMenu({
-        entries: serverMenu(server, {
-          folders: registry.folders,
-          hasPassword: remembered.includes(server.id),
-          plugin: server.id in plugins ? plugins[server.id] : undefined,
-          // a problem watching it is what the size limit raises; the settings list offers the same
-          tooLarge: server.id in problems,
-          canMarkRead: false
-        }),
-        at
-      });
+      if (entries) setMenu({ entries, at });
     },
-    [plugins, problems, registry.folders, remembered, servers]
+    [registry.folders, servers, sessions]
   );
 
   const chooseFromMenu = useCallback(
-    (id: string) => {
-      const chosen = readMenuId(id);
-
-      if (!chosen) return;
-
-      const { action, target } = chosen;
-
-      switch (action) {
-        case 'open':
-          openById(target);
-          break;
-        case 'refresh':
-          void change(() => api.refreshServerInfo(target)).then(loadIcons);
-          break;
-        case 'notify-all':
-        case 'notify-mentions':
-        case 'notify-dms':
-          void change(() => api.setNotifyLevel(target, notifyLevelOf(action) ?? 'all'));
-          break;
-        case 'anysize':
-        case 'normalsize':
-          void change(() => api.setAcceptAnySize(target, action === 'anysize'));
-          break;
-        case 'forgetpw':
-        case 'logout':
-        case 'remove':
-          handleAsk(action, target);
-          break;
-        case 'signin':
+    (id: string) =>
+      chooseMenuItem(id, {
+        open: openById,
+        change,
+        ask: handleAsk,
+        signIn: (target) => {
           setSigningIn(target);
           setScreen('signIn');
-          break;
-        case 'move': {
-          const [serverId, folderId] = target.split(':');
-
-          void change(() => api.setServerFolder(serverId, folderId));
-          break;
-        }
-        case 'unfolder':
-          void change(() => api.setServerFolder(target, null));
-          break;
-        case 'rename-folder':
+        },
+        rename: (target) => {
           setRenamingFolder(target);
           setScreen('folder');
-          break;
-        case 'delete-folder':
-          void change(() => api.deleteFolder(target));
-          break;
-        case 'markread':
-        case 'plugin':
-          break;
-      }
-    },
+        },
+        iconsChanged: loadIcons
+      }),
     [change, handleAsk, loadIcons, openById]
   );
 
@@ -526,6 +431,22 @@ export const App = () => {
   );
 
   const renaming = registry.folders.find((folder) => folder.id === renamingFolder);
+
+  const notices = (
+    <>
+      {error ? <p className="error app-error">{error}</p> : null}
+
+      {/* Shiver cannot install packages itself (that would need `REQUEST_INSTALL_PACKAGES`), so "Get
+          it" opens the releases page */}
+      <UpdateNotice
+        version={update}
+        takeLabel="Get it"
+        onTake={api.openReleases}
+        onLater={() => setUpdate(null)}
+        onSkip={api.skipUpdate}
+      />
+    </>
+  );
 
   // on its way to a server (a wait for a join is a stay, not a pass)
   const passingThrough =
@@ -562,210 +483,100 @@ export const App = () => {
       )}
 
       <div className="main">
-        {!TITLES[screen] ? null : (
-          <header className="bar">
-            {screen === 'settings' ? (
-              <button
-                type="button"
-                className="ghost settings-menu"
-                aria-label="Settings sections"
-                aria-expanded={settingsDrawerOpen}
-                onClick={() => setSettingsDrawerOpen((open) => !open)}
-              >
-                ☰
-              </button>
-            ) : null}
-
-            <h1>{TITLES[screen]}</h1>
-
-            <button type="button" className="ghost" onClick={() => void resume(registry)}>
-              Back
-            </button>
-          </header>
-        )}
-
-        {error ? <p className="error app-error">{error}</p> : null}
-
-        <main className="content">
-          {/* Shiver cannot install packages itself (that would need `REQUEST_INSTALL_PACKAGES`), so
-              "Get it" opens the releases page */}
-          <UpdateNotice
-            version={update}
-            takeLabel="Get it"
-            onTake={api.openReleases}
-            onLater={() => setUpdate(null)}
-            onSkip={api.skipUpdate}
+        {screen === 'settings' ? (
+          <SettingsView
+            registry={registry}
+            servers={servers}
+            sessions={sessions}
+            onSessionsChanged={readSessions}
+            onSave={handleSettings}
+            change={change}
+            onOpen={openById}
+            onAsk={handleAsk}
+            onAdd={() => setScreen('add')}
+            onSignIn={(id) => {
+              setSigningIn(id);
+              setScreen('signIn');
+            }}
+            onBack={() => void resume(registry)}
+            notices={notices}
           />
+        ) : (
+          <>
+            {!TITLES[screen] ? null : (
+              <header className="bar">
+                <h1>{TITLES[screen]}</h1>
 
-          {screen === 'boot' ? (
-            <Boot
-              state={boot}
-              onRetry={connect}
-              onAdd={() => setScreen('add')}
-              onConfirm={(confirmed) => void confirmAction(confirmed)}
-            />
-          ) : null}
+                <button type="button" className="ghost" onClick={() => void resume(registry)}>
+                  Back
+                </button>
+              </header>
+            )}
 
-          {screen === 'folder' && renaming ? (
-            <div className="modal-backdrop">
-              <RenameFolderForm
-                key={renaming.id}
-                name={renaming.name}
-                onSave={(name) => void change(() => api.renameFolder(renaming.id, name)).then(() => resume(registry))}
-                onCancel={() => void resume(registry)}
-              />
-            </div>
-          ) : null}
+            <main className="content">
+              {notices}
 
-          {screen === 'add' ? (
-            <div className="modal-backdrop">
-              <AddServerForm
-                hint={
-                  <>
-                    Shiver signs in for you, so the server opens straight into the app. Your password goes only to
-                    this server, and both it and the session are kept in Android's encrypted store, under a key the
-                    phone's Keystore holds — so Shiver can sign you in again when the session runs out, which
-                    Sharkord makes it do every seven days. Take it back whenever you like by holding the server in
-                    the rail.
-                  </>
-                }
-                check={api.checkServer}
-                add={async ({ origin, identity, password, accountLabel }) => {
-                  const entry = await api.addServer(origin, identity, password, accountLabel, !!password);
-
-                  await handleAdded(entry.id);
-                }}
-                onCancel={servers.length > 0 ? () => void resume(registry) : null}
-              />
-            </div>
-          ) : null}
-
-          {screen === 'dms' ? (
-            <DirectMessages onOpen={openById} />
-          ) : null}
-
-          {screen === 'signIn' && signingInServer ? (
-            <div className="modal-backdrop">
-              <SignInForm
-                key={signingInServer.id}
-                serverName={signingInServer.name}
-                identity={signingInServer.identity}
-                hint={
-                  <>
-                    Sharkord expires a session after seven days and offers no way to renew one, so Shiver's watch of{' '}
-                    {signingInServer.origin.replace(/^https?:\/\//, '')} ends with it. Signing in gives Shiver a fresh
-                    session.
-                  </>
-                }
-                rememberHint={
-                  <>
-                    Shiver keeps the password and signs in again by itself, so this server never goes quiet. Stored
-                    encrypted under a key the phone's Keystore holds and Shiver cannot read out. Left unticked, you sign
-                    in here again when the session next expires.
-                  </>
-                }
-                remembered={remembered.includes(signingInServer.id)}
-                onSubmit={async (identity, password, remember) => {
-                  await api.signInServer(signingInServer.id, identity, password, remember);
-                  readSessions();
-                  setScreen('settings');
-                }}
-                onCancel={() => setScreen('settings')}
-              />
-            </div>
-          ) : null}
-
-          {screen === 'settings' ? (
-            <>
-              {/* sections in a drawer over a scrim, as Sharkord's own settings do on a phone */}
-              {settingsDrawerOpen ? (
-                <div
-                  className="settings-scrim"
-                  onClick={() => setSettingsDrawerOpen(false)}
-                  aria-hidden="true"
+              {screen === 'boot' ? (
+                <Boot
+                  state={boot}
+                  onRetry={connect}
+                  onAdd={() => setScreen('add')}
+                  onConfirm={(confirmed) => void confirmAction(confirmed)}
                 />
               ) : null}
 
-              <nav
-                className={settingsDrawerOpen ? 'settings-drawer open' : 'settings-drawer'}
-                aria-label="Settings sections"
-              >
-                {SETTINGS_SECTIONS.map((entry) => (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className={
-                      entry.id === settingsSection ? 'settings-section active' : 'settings-section'
-                    }
-                    aria-current={entry.id === settingsSection}
-                    onClick={() => {
-                      setSettingsSection(entry.id);
-                      setSettingsDrawerOpen(false);
-                    }}
-                  >
-                    {entry.label}
-                  </button>
-                ))}
-              </nav>
-
-              <h2 className="section">
-                {SETTINGS_SECTIONS.find((entry) => entry.id === settingsSection)?.label}
-              </h2>
-
-              {settingsSection === 'appearance' || settingsSection === 'about' ? (
-                <SettingsScreen
-                  settings={registry.settings}
-                  onSave={handleSettings}
-                  section={settingsSection}
-                />
-              ) : null}
-
-              {settingsSection === 'notifications' ? (
-                <>
-                  <SettingsScreen
-                    settings={registry.settings}
-                    onSave={handleSettings}
-                    section="notifications"
+              {screen === 'folder' && renaming ? (
+                <div className="modal-backdrop">
+                  <RenameFolderForm
+                    key={renaming.id}
+                    name={renaming.name}
+                    onSave={(name) => void change(() => api.renameFolder(renaming.id, name)).then(() => resume(registry))}
+                    onCancel={() => void resume(registry)}
                   />
-
-                  <h2 className="section">While Shiver is closed</h2>
-
-                  <BackgroundNotifications />
-                </>
+                </div>
               ) : null}
-            </>
-          ) : null}
 
-          {screen === 'settings' && settingsSection === 'servers' ? (
-            <>
-              <ServerList
-                servers={servers}
-                onOpen={openById}
-                // asked first, as from the rail's menu
-                onRemove={(id) => handleAsk('remove', id)}
-                onAdd={() => setScreen('add')}
-                signedOut={signedOut}
-                problems={problems}
-                onAcceptAnySize={(id, accept) => void change(() => api.setAcceptAnySize(id, accept))}
-                onNotifyLevel={(id, level) => void change(() => api.setNotifyLevel(id, level))}
-                remembered={remembered}
-                plugins={plugins}
-                onSignIn={(id: string) => {
-                  setSigningIn(id);
-                  setScreen('signIn');
-                }}
-              />
+              {screen === 'add' ? (
+                <div className="modal-backdrop">
+                  <AddServerForm
+                    hint={
+                      <>
+                        Shiver signs in for you, so the server opens straight into the app. Your password goes only to
+                        this server, and both it and the session are kept in Android's encrypted store, under a key the
+                        phone's Keystore holds — so Shiver can sign you in again when the session runs out, which
+                        Sharkord makes it do every seven days. Take it back whenever you like by holding the server in
+                        the rail.
+                      </>
+                    }
+                    check={api.checkServer}
+                    add={async ({ origin, identity, password, accountLabel }) => {
+                      const entry = await api.addServer(origin, identity, password, accountLabel, !!password);
 
-              <h2 className="section">Background sessions</h2>
+                      await handleAdded(entry.id);
+                    }}
+                    onCancel={servers.length > 0 ? () => void resume(registry) : null}
+                  />
+                </div>
+              ) : null}
 
-              <Sessions onCleared={readSessions} />
+              {screen === 'dms' ? (
+                <DirectMessages onOpen={openById} />
+              ) : null}
 
-              <h2 className="section">Links</h2>
-
-              <TrustedLinks count={registry.settings.trustedLinks.length} />
-            </>
-          ) : null}
-        </main>
+              {screen === 'signIn' && signingInServer ? (
+                <ServerSignIn
+                  server={signingInServer}
+                  remembered={sessions.remembered.includes(signingInServer.id)}
+                  onDone={() => {
+                    readSessions();
+                    setScreen('settings');
+                  }}
+                  onCancel={() => setScreen('settings')}
+                />
+              ) : null}
+            </main>
+          </>
+        )}
       </div>
 
       {menu ? <Menu entries={menu.entries} at={menu.at} onChoose={chooseFromMenu} onClose={() => setMenu(null)} /> : null}

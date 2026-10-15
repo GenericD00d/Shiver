@@ -1,14 +1,8 @@
 /** Sharkord's voice controls, read and pressed, and the lock that refuses a second call. */
 
+import { hasLucideIcon } from '../../shared/web/bridge/dom';
 import { CHANNEL_ITEM, rowName, type SharkordState, SIDEBAR } from '../../shared/web/bridge/sharkord';
 import type { VoiceAction, VoiceSnapshot } from './types';
-
-/** Whether `element` contains lucide icon `name` (whole class token: `mic` is a prefix of `mic-off`). */
-export function hasLucideIcon(element: Element, name: string) {
-  return [...element.querySelectorAll('svg')].some(
-    (icon) => icon.classList.contains(`lucide-${name}`) || icon.classList.contains(`lucide-${name}-icon`)
-  );
-}
 
 /**
  * Sharkord's own voice controls. Mic and deafen are the pair of buttons sharing a parent (the same

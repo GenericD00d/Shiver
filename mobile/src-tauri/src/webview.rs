@@ -84,6 +84,9 @@ struct ShowingState {
     stray: bool,
     /// open the conversation with this user on arrival (consumed once)
     pending_dm_user: Option<String>,
+    /// the conversation to open on the next server opened, if it is this entry (from the screens
+    /// over a page, which reach a server through Shiver's page)
+    queued_dm: Option<(String, String)>,
     /// when each server was last left
     left: HashMap<String, Instant>,
     /// when Shiver went to the background (Android's `onPause`), while it is there
@@ -219,12 +222,58 @@ impl Showing {
     pub fn take_pending_dm_user(&self) -> Option<String> {
         self.0.locked().pending_dm_user.take()
     }
+
+    /// Opens the conversation with `user` (or none) once `entry_id` is next opened.
+    pub fn queue_dm(&self, entry_id: &str, user: Option<String>) {
+        self.0.locked().queued_dm = user.map(|user| (entry_id.to_string(), user));
+    }
+
+    /// The conversation queued for `entry_id`; any queued is dropped either way.
+    pub fn take_queued_dm(&self, entry_id: &str) -> Option<String> {
+        self.0
+            .locked()
+            .queued_dm
+            .take()
+            .filter(|(queued, _)| queued == entry_id)
+            .map(|(_, user)| user)
+    }
+
+    /// Whether `entry_id`'s page is the one on screen, loaded.
+    fn has_loaded(&self, entry_id: &str) -> bool {
+        let state = self.0.locked();
+
+        state.loaded && state.server.as_deref() == Some(entry_id)
+    }
+}
+
+/// Opens the conversation with `user` in `entry`'s page, when that is the page on screen and
+/// loaded; otherwise false, and nothing is done.
+pub fn open_dm_in_page(app: &AppHandle, entry: &ServerEntry, user: &str) -> bool {
+    if !app.state::<Showing>().has_loaded(&entry.id) {
+        return false;
+    }
+
+    let Ok(window) = main_window(app) else {
+        return false;
+    };
+
+    // checked again in the page: it may have moved on meanwhile
+    window
+        .eval(format!(
+            "if (location.origin === {} && window.__SHIVER_OPEN_DM__) window.__SHIVER_OPEN_DM__({});",
+            json!(entry.origin),
+            json!(user)
+        ))
+        .is_ok()
 }
 
 /// Tells Shiver's own page something, but only while it is on screen: the one webview keeps the
 /// page's listeners across navigations, so an event sent while a server's page is up would be
 /// evaluated in that page. Shiver's page re-reads everything when it next loads.
 pub fn emit_home(app: &AppHandle, event: &str, payload: impl Serialize + Clone) {
+    // and to the screens over a server's page, which have no listeners in it
+    crate::overlay::emit(app, event, &payload);
+
     if app.state::<Showing>().at_home() {
         let _ = app.emit(event, payload);
     }
@@ -686,6 +735,12 @@ mod tests {
         showing.set_pending_dm_user(Some("ana".into()));
         assert_eq!(showing.take_pending_dm_user().as_deref(), Some("ana"));
         assert_eq!(showing.take_pending_dm_user(), None);
+
+        showing.queue_dm("a", Some("ana".into()));
+        assert_eq!(showing.take_queued_dm("b"), None);
+        assert_eq!(showing.take_queued_dm("a"), None);
+        showing.queue_dm("a", Some("ana".into()));
+        assert_eq!(showing.take_queued_dm("a").as_deref(), Some("ana"));
 
         showing.set_home_if_unset("http://localhost:1421/".into());
         showing.set_home_if_unset("http://tauri.localhost/".into());
