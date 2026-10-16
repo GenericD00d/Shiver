@@ -69,16 +69,31 @@ function composerOf(row: HTMLElement) {
   return null;
 }
 
+/**
+ * Whether a computed colour is fully opaque. Painted to a pixel and read back, since Sharkord's are
+ * `oklab()`/`oklch()` with a `/ alpha`, which no pattern over `rgba()` would read.
+ */
+function isOpaque(colour: string) {
+  const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+
+  if (!context) return false;
+
+  context.clearRect(0, 0, 1, 1);
+  context.fillStyle = colour;
+  context.fillRect(0, 0, 1, 1);
+
+  return context.getImageData(0, 0, 1, 1).data[3] === 255;
+}
+
 /** The first opaque background behind `element`, so the edit box hides what it covers. */
 function backgroundBehind(element: HTMLElement) {
   for (let node: HTMLElement | null = element; node; node = node.parentElement) {
     const colour = getComputedStyle(node).backgroundColor;
-    const alpha = colour.match(/rgba?\([^)]*,\s*([\d.]+)\)/)?.[1];
 
-    if (colour && colour !== 'transparent' && (alpha === undefined || Number(alpha) >= 1)) return colour;
+    if (colour && isOpaque(colour)) return colour;
   }
 
-  return getComputedStyle(document.body).backgroundColor || '#0a0a0a';
+  return '#0a0a0a';
 }
 
 function editorIn(box: HTMLElement) {

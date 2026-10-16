@@ -209,7 +209,7 @@ overlay for a menu or screen) and back press (the page's while it fills the over
 - **mobile/bridge**: `index.ts` (install, `seedSession`, `installDmList`: `__SHIVER_DMS__`, this server's conversations once joined, when they changed; `__SHIVER_OPEN_DM__`), `edit.ts` (`installEditInComposer`: an open edit's box over the composer's text area, Send saves it, a bar with Cancel above), `home.ts` (`setHome`, `goHome`, `openRail` and `installRailSwipe`: back (after closing a menu or
   side panel) and a swipe past the drawer ask for the rail, which the core draws over the page), `touch.ts` (`installTouchStyles`, `installReturnMakesALine` (Shiver's own untrusted Enter passes), `installReactionNames`, `installImageZoom` (pinch, pan and
   double tap in Sharkord's full-screen picture, which only knows the mouse),
-  `installLongPress`: a held message shows Sharkord's toolbar, a held channel opens the channel menu; `drawerIsOpen`, `openConversation`), `reconnect.ts` (`installAutoReconnect`; `installQuietReconnect`: Sharkord's own reconnecting dialog hidden, an accent spinner above the chat box while it retries), `document-start.ts` (seed,
+  `installLongPress`: a held message shows Sharkord's toolbar, a held channel opens the channel menu; `drawerIsOpen`, `openConversation` (then closes the drawer over it)), `reconnect.ts` (`installAutoReconnect`; `installQuietReconnect`: Sharkord's own reconnecting dialog hidden, an accent spinner above the chat box while it retries), `document-start.ts` (seed,
   `__SHIVER_OPEN__`, `__SHIVER_SEEN__` (each channel's latest message, read by the core with the mutes), theme), `types.ts` (`ShiverConfig`).
 
 ## plugin (Sharkord companion)

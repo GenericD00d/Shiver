@@ -28,6 +28,10 @@ const HOLD_SLOP = 10;
 const CLICK_GRACE_MS = 700;
 /** Tailwind's `md`, where Sharkord stops hiding its sidebar */
 const WIDE_LAYOUT = 768;
+/** the scrim beside Sharkord's open drawer, which closes it when pressed */
+const DRAWER_SCRIM = `${SERVER_VIEW} [class~="md:hidden"][class~="inset-0"][class~="z-30"]`;
+/** how long after the row is pressed the drawer is closed, so the press lands first */
+const CLOSE_AFTER_MS = 120;
 const MESSAGE_ACTIONS_CLASS = 'shiver-message-actions';
 const APPEAR_TIMEOUT_MS = 15_000;
 
@@ -503,6 +507,11 @@ function openDrawer() {
   }
 }
 
+/** Closes Sharkord's drawer, as pressing beside it does. */
+function closeDrawer() {
+  document.querySelector<HTMLElement>(DRAWER_SCRIM)?.click();
+}
+
 /** Opens the drawer and Sharkord's DM list, once the client has rendered its toggle. */
 function openDirectMessages() {
   whenPresent(DM_TOGGLE, (toggle) => {
@@ -513,14 +522,18 @@ function openDirectMessages() {
 }
 
 /**
- * Opens the DM with `userName`. Rows carry no id, so the row is the one showing exactly that name
- * (as on desktop), waited for until it renders: the first rows may not be it.
+ * Opens the DM with `userName`, and closes the drawer over it. Rows carry no id, so the row is the
+ * one showing exactly that name (as on desktop), waited for until it renders: the first rows may not
+ * be it.
  */
 export function openConversation(userName: string) {
   openDirectMessages();
 
   whenFound(
     () => [...document.querySelectorAll<HTMLElement>(DM_ITEM)].find((row) => isDmRowFor(row, userName)),
-    (row) => row.click()
+    (row) => {
+      row.click();
+      window.setTimeout(closeDrawer, CLOSE_AFTER_MS);
+    }
   );
 }
