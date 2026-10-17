@@ -267,6 +267,7 @@ mod tests {
             plugin_id: None,
             text: text.to_string(),
             mentioned: Vec::new(),
+            mentioned_roles: Vec::new(),
         }
     }
 

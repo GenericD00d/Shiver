@@ -1,11 +1,19 @@
 //! Sharkord's message html, read for what a notification needs: its text and who it mentions.
 
-/// Mentioned users won't be many; a message listing more is not read further.
+/// Mentions won't be many; a message listing more is not read further.
 const MAX_MENTIONS: usize = 100;
 
-/// The users a message's html mentions: `<span>`s carrying both `data-type="mention"` and
-/// `data-user-id="<id>"`, in either order (Sharkord's own `hasMention` reads them the same way).
-pub(crate) fn mentioned(html: &str) -> Vec<i64> {
+/// Who a message's html mentions, users and roles.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Mentions {
+    pub users: Vec<i64>,
+    pub roles: Vec<i64>,
+}
+
+/// The users and roles a message's html mentions: `<span>`s carrying `data-type="mention"` and
+/// `data-user-id="<id>"`, or `data-type="role-mention"` and `data-role-id="<id>"` (Sharkord 0.0.27
+/// and newer), in either order. Sharkord's own `getMentions` reads them the same way.
+pub(crate) fn mentioned(html: &str) -> Mentions {
     let attribute = |tag: &str, name: &str| -> Option<String> {
         tag.match_indices(name).find_map(|(at, _)| {
             if !tag[..at].ends_with(char::is_whitespace) {
@@ -19,17 +27,29 @@ pub(crate) fn mentioned(html: &str) -> Vec<i64> {
     };
 
     let mut close = NextClose::default();
+    let mut mentions = Mentions::default();
 
-    html.match_indices("<span")
-        .filter_map(|(at, _)| {
-            let tag = &html[at..close.at_or_after(html, at)?];
+    for (at, _) in html.match_indices("<span") {
+        if mentions.users.len() + mentions.roles.len() >= MAX_MENTIONS {
+            break;
+        }
 
-            (attribute(tag, "data-type").as_deref() == Some("mention"))
-                .then(|| attribute(tag, "data-user-id")?.parse().ok())
-                .flatten()
-        })
-        .take(MAX_MENTIONS)
-        .collect()
+        let Some(end) = close.at_or_after(html, at) else {
+            break;
+        };
+        let tag = &html[at..end];
+        let (list, id) = match attribute(tag, "data-type").as_deref() {
+            Some("mention") => (&mut mentions.users, attribute(tag, "data-user-id")),
+            Some("role-mention") => (&mut mentions.roles, attribute(tag, "data-role-id")),
+            _ => continue,
+        };
+
+        if let Some(id) = id.and_then(|id| id.parse().ok()) {
+            list.push(id);
+        }
+    }
+
+    mentions
 }
 
 /// The next `>` in a text read front to back, looked for once and reused until the reader passes it,
@@ -160,7 +180,7 @@ mod tests {
     /// Sharkord's own `hasMention` cases.
     #[test]
     fn mentions_are_read_as_sharkord_reads_them() {
-        let one = |html: &str| mentioned(html);
+        let one = |html: &str| mentioned(html).users;
 
         assert_eq!(
             one(r#"<p>Hi <span data-type="mention" data-user-id="123">@a</span></p>"#),
@@ -196,11 +216,49 @@ mod tests {
             plugin_id: None,
             text: String::new(),
             mentioned: vec![1234, 123],
+            mentioned_roles: Vec::new(),
         };
 
         assert!(message.mentions_me(&joined));
         assert!(!NewMessage {
             mentioned: vec![12],
+            ..message
+        }
+        .mentions_me(&joined));
+    }
+
+    /// Sharkord 0.0.27's role mentions: a mention of a role the user holds is a mention of them.
+    #[test]
+    fn role_mentions_reach_the_roles_holders() {
+        let mentions = mentioned(
+            r#"<p><span data-role-id="5" data-type="role-mention">@Mods</span> <span data-type="mention" data-user-id="7">@a</span> <span data-type="role-mention">@x</span> <span data-type="mention" data-role-id="6">@y</span></p>"#,
+        );
+
+        assert_eq!(
+            mentions,
+            Mentions {
+                users: vec![7],
+                roles: vec![5]
+            }
+        );
+
+        let joined = Joined {
+            own_user_id: Some(123),
+            own_role_ids: vec![1, 5],
+            ..Joined::default()
+        };
+        let message = NewMessage {
+            channel_id: 1,
+            user_id: Some(9),
+            plugin_id: None,
+            text: String::new(),
+            mentioned: Vec::new(),
+            mentioned_roles: vec![5],
+        };
+
+        assert!(message.mentions_me(&joined));
+        assert!(!NewMessage {
+            mentioned_roles: vec![2],
             ..message
         }
         .mentions_me(&joined));
@@ -226,7 +284,7 @@ mod tests {
         let started = std::time::Instant::now();
 
         assert_eq!(plain_text(&hostile), hostile);
-        assert!(mentioned(&"<span".repeat(200_000)).is_empty());
+        assert_eq!(mentioned(&"<span".repeat(200_000)), Mentions::default());
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
 
         // a later `>` still closes the tags before it, and the text after it survives

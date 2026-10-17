@@ -23,9 +23,9 @@ import subprocess
 import sys
 import tempfile
 
-# The Sharkord commit the bridges were last checked against (client 0.0.25). Bump it after checking
+# The Sharkord commit the bridges were last checked against (client 0.0.28). Bump it after checking
 # the bridges against a newer release.
-SHARKORD_REF = "0eea660e02b0eb7c8784baa27580552fa4e1231f"
+SHARKORD_REF = "07ab40f7bd8b5102cedb55fa04ed03d22590be6d"
 SHARKORD_REPO = "https://github.com/sharkord/sharkord"
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -68,14 +68,49 @@ CONTRACTS = [
         r"getElementById\('imagePortal'\)",
     ),
     (
-        "every DM conversation's latest message time from `dms.get` (watchDmActivity)",
+        "every DM conversation's latest message time (watchDmActivity, the core's `parse_dms`)",
         "apps/server/src/db/queries/dms.ts",
         r"lastMessageAt:\s*max\(messages\.createdAt\)",
     ),
     (
-        "`dms.get` routed and asked of the page's own connection after it joins (watchDmActivity)",
+        "each conversation carrying when this user closed it (`closedDms`, `parse_dms`)",
+        "apps/server/src/db/queries/dms.ts",
+        r"closedAt:\s*row\[getClosedAtKey\(row, userId\)\]",
+    ),
+    (
+        "the join listing the conversations as `directMessages` (watchDmActivity, the core's `join_dms`)",
+        "apps/server/src/routers/others/join.ts",
+        r"getDirectMessageConversations\(ctx\.user\.id\)[\s\S]*\bdirectMessages\b",
+    ),
+    (
+        "`dms.onConversationUpdate` publishing a conversation that opened, closed or moved (watchDmActivity)",
         "apps/server/src/routers/dms/index.ts",
-        r"get:\s*getDirectMessagesRoute",
+        r"onConversationUpdate:\s*onDmConversationUpdateRoute",
+    ),
+    (
+        "Sharkord reading its mutes from storage once, at load (`watchSharkordMutes` sees that read)",
+        "apps/client/src/features/app/slice.ts",
+        r"mutedChannelIds:\s*getLocalStorageItemAsJSON<number\[\]>\(LocalStorageKey\.MUTED_CHANNEL_IDS\)",
+    ),
+    (
+        "each mute toggle writing the whole list back to storage (`watchSharkordMutes` diffs the writes)",
+        "apps/client/src/features/app/actions.ts",
+        r"export const toggleChannelMuted[\s\S]*setLocalStorageItemAsJSON\(\s*LocalStorageKey\.MUTED_CHANNEL_IDS",
+    ),
+    (
+        "a muted channel's name span dimmed `opacity-50` (its unread pill hidden, `installMuteStyles`)",
+        "apps/client/src/components/left-sidebar/channels.tsx",
+        r"cn\('flex-1', \{ 'opacity-50': isMuted \}\)",
+    ),
+    (
+        "the channel menu given to everyone, with its mute item (Shiver adds only \"Mark all as read\")",
+        "apps/client/src/components/context-menus/channel/index.tsx",
+        r"<ContextMenuItem onClick=\{onToggleMuteClick\}>",
+    ),
+    (
+        "role mentions as `data-type=\"role-mention\"` spans with `data-role-id` (the core's `mentioned`)",
+        "packages/shared/src/helpers/has-mention.ts",
+        r"ROLE_ID_PATTERN = /\\bdata-role-id=",
     ),
     (
         "the client subscribing to new messages only once it has joined (watchDmActivity asks then)",

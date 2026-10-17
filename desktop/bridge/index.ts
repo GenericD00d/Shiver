@@ -7,21 +7,15 @@
  */
 
 import { channelPressed, installChannelMenu, requestChannelMenu } from '../../shared/web/bridge/channel-menu';
-import {
-  defineHook,
-  ensureStyle,
-  installExternalLinks,
-  onDomSettled,
-  touched,
-  whenDocumentReady
-} from '../../shared/web/bridge/dom';
+import { defineHook, ensureStyle, installExternalLinks, whenDocumentReady } from '../../shared/web/bridge/dom';
 import {
   installAttachmentCards,
   installSidePanels,
   installSoundVolume,
   installVoiceColors
 } from '../../shared/web/bridge/features';
-import { watchDmActivity } from '../../shared/web/bridge/messages';
+import { closedDms, watchDmActivity } from '../../shared/web/bridge/messages';
+import { seedSharkordMutes, watchSharkordMutes } from '../../shared/web/bridge/mutes';
 import { pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
 import {
   CHANNEL_ITEM,
@@ -32,7 +26,6 @@ import {
   NARROW,
   notificationTarget,
   notifyAllows,
-  paintMuted,
   readDms,
   type SharkordState,
   SIDE_PANEL,
@@ -42,8 +35,8 @@ import { applyPageTheme } from '../../shared/web/bridge/theme';
 import { onOpenDmFailure, openDmChannelId, selectChannelWhenReady, showConversation } from './conversations';
 import {
   installNotificationWrapper,
-  mentionsName,
-  ownName,
+  mentionsAny,
+  ownMentionNames,
   resolveDmChannels,
   silenceMessagePing
 } from './notifications';
@@ -95,6 +88,10 @@ function install(shiver: ShiverConfig) {
     onMessage: noteMessage,
     onDmTimes: (times) => {
       for (const [channelId, at] of times) noteMessage(channelId, at);
+    },
+    onClosedChanged: () => {
+      lastSeenVersion += 1;
+      refreshDms();
     }
   });
 
@@ -104,9 +101,14 @@ function install(shiver: ShiverConfig) {
     openDmFailed = true;
   });
 
+  // Sharkord's mute is the face of Shiver's: each toggle there goes to the core, which keeps the list
+  // and hands it back through `__SHIVER_SET_MUTED__`
+  watchSharkordMutes((channelId, isMuted) => muteQueue.push({ channelId, muted: isMuted }));
+  seedSharkordMutes(muted);
+
   defineHook('__SHIVER_SET_MUTED__', (next) => {
     muted = new Set(next);
-    paintMuted(muted);
+    seedSharkordMutes(muted);
     pushMutesToPlugin([...muted]);
   });
 
@@ -171,7 +173,7 @@ function install(shiver: ShiverConfig) {
     if (channelId !== null && muted.has(channelId)) return;
 
     // Sharkord applied the level it loaded with exactly; one changed since is guessed from the text
-    const mentionsMe = !notifyChangedLive || mentionsName(options?.body ?? '', ownName(state));
+    const mentionsMe = !notifyChangedLive || mentionsAny(options?.body ?? '', ownMentionNames(state));
 
     if (!notifyAllows(notify, isDm, mentionsMe)) return;
 
@@ -193,7 +195,7 @@ function install(shiver: ShiverConfig) {
 
     let dmInputs: unknown[] = [];
 
-    // the DM list only changes with channels, users or a newly seen message
+    // the DM list only changes with channels, users, a newly seen message or a conversation closed
     refreshDms = () => {
       const next = state;
       const inputs = [next.channels, next.users, next.ownUserId, lastSeenVersion];
@@ -202,7 +204,7 @@ function install(shiver: ShiverConfig) {
 
       dmInputs = inputs;
 
-      const list = readDms(shiver.origin, next, lastSeen);
+      const list = readDms(shiver.origin, next, lastSeen, closedDms());
 
       // avatar urls carry expiring tokens, so they are left out of the comparison
       const signature = JSON.stringify(list.map(({ channelId, name, lastMessageAt }) => [channelId, name, lastMessageAt]));
@@ -219,11 +221,6 @@ function install(shiver: ShiverConfig) {
     });
 
     installChannelMenu({
-      mutes: {
-        has: (channelId) => muted.has(channelId),
-        // the core stores it and hands the page its new list
-        toggle: (channelId) => muteQueue.push({ channelId, muted: !muted.has(channelId) })
-      },
       markAllRead: () => {
         markAllChannelsRead();
         markAllRead = true;
@@ -237,11 +234,8 @@ function install(shiver: ShiverConfig) {
 
       muted = new Set(merged);
       syncedMutes = merged;
-      paintMuted(muted);
+      seedSharkordMutes(muted);
     });
-
-    // rows Sharkord adds or redraws
-    onDomSettled((changed) => paintMuted(muted, touched(changed, CHANNEL_ITEM)));
   });
 }
 
@@ -270,7 +264,7 @@ function installChannelRightClick() {
       const row = (event.target as Element | null)?.closest?.(CHANNEL_ITEM) ?? null;
 
       channelPressed(row);
-      cancelNativeFor = row && requestChannelMenu(row, event.clientX, event.clientY) ? event : null;
+      cancelNativeFor = row && requestChannelMenu(row) ? event : null;
     },
     true
   );

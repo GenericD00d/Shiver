@@ -3,10 +3,18 @@
 import { findDmChannelIdByUserName, type SharkordState } from '../../shared/web/bridge/sharkord';
 import type { QueuedNotification } from './types';
 
-export const ownName = (state: SharkordState) => (state.users ?? []).find((user) => user.id === state.ownUserId)?.name ?? '';
+/** What a mention of the user reads as: their name, and each role they hold (role mentions, 0.0.27). */
+export const ownMentionNames = (state: SharkordState) => {
+  const own = (state.users ?? []).find((user) => user.id === state.ownUserId);
+  const held = new Set(own?.roleIds ?? []);
 
-/** Whether a notification's text mentions `name` (`@name`, as Sharkord writes a mention in text). */
-export const mentionsName = (text: string, name: string) => name !== '' && text.includes(`@${name}`);
+  return [own?.name ?? '', ...(state.roles ?? []).filter((role) => held.has(role.id)).map((role) => role.name)].filter(
+    (name) => name !== ''
+  );
+};
+
+/** Whether a notification's text mentions any of `names` (`@name`, as Sharkord writes a mention in text). */
+export const mentionsAny = (text: string, names: readonly string[]) => names.some((name) => text.includes(`@${name}`));
 
 /** Sharkord's incoming-message tone: a single 600 Hz sine (`sfxMessageReceived`). */
 const MESSAGE_PING_HZ = 600;

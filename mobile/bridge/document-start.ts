@@ -8,7 +8,8 @@
  *    and a server that reads its own key learns nothing usable on another. Sharkord auto-logs in
  *    only after its plugins load, well after the digest.
  * 2. On a server's page, queues what the user opens away from it for the core to open in the browser
- *    (`__SHIVER_OPEN__`), defined before the page can claim the name.
+ *    (`__SHIVER_OPEN__`), defined before the page can claim the name; follows each conversation's
+ *    latest message (`__SHIVER_SEEN__`); and watches Sharkord read its mutes (`mutes.ts`).
  * 3. Applies Sharkord's light/dark class before first paint (its own effect runs only after React
  *    mounts, so its light-first stylesheet would flash white on every server switch). Same rule as
  *    Sharkord's `ThemeProvider`: the stored `vite-ui-theme`, default dark, `system` follows the OS.
@@ -16,6 +17,7 @@
 
 import { defineHook, installExternalLinks, isTopFrame } from '../../shared/web/bridge/dom';
 import { watchDmActivity } from '../../shared/web/bridge/messages';
+import { watchSharkordMutes } from '../../shared/web/bridge/mutes';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
 
 declare const SHIVER_SEED_KEY: string;
@@ -75,6 +77,9 @@ try {
       onMessage: note,
       onDmTimes: (times) => times.forEach((at, channelId) => note(channelId, at))
     });
+
+    // sees Sharkord read its mutes as it loads, before the bridge (installed after the load) listens
+    watchSharkordMutes();
   }
 } catch {
   // the page then opens nothing outside, and its messages move nothing up the DM list

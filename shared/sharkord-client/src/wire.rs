@@ -175,6 +175,20 @@ pub(crate) fn parse_join(data: &Value) -> Joined {
         ..Joined::default()
     };
 
+    joined.own_role_ids = joined
+        .own_user_id
+        .and_then(|own| {
+            data.get("users")?
+                .as_array()?
+                .iter()
+                .find(|user| user.get("id").and_then(Value::as_i64) == Some(own))
+        })
+        .and_then(|user| user.get("roleIds")?.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_i64)
+        .collect();
+
     for channel in data
         .get("channels")
         .and_then(Value::as_array)
@@ -257,8 +271,25 @@ fn plugin_version(data: &Value, plugin_id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// `dms.get`'s answer, named and pictured from the join's user list. Unknown users read as
-/// "Unknown".
+/// A millisecond time from json, accepting a double.
+fn as_time(value: &Value) -> Option<u64> {
+    value.as_u64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|at| *at >= 0.0)
+            .map(|at| at.round() as u64)
+    })
+}
+
+/// The conversations the join lists (`directMessages`, Sharkord 0.0.28 and newer), or `None` from an
+/// older server, which answers `dms.get` instead.
+pub(crate) fn join_dms(data: &Value) -> Option<&[Value]> {
+    data.get("directMessages")?.as_array().map(Vec::as_slice)
+}
+
+/// A conversation list (the join's, or `dms.get`'s on an older server), named and pictured from the
+/// join's user list. Unknown users read as "Unknown". One the user closed is left out until a message
+/// arrives after it was closed, as Sharkord's own list does.
 pub(crate) fn parse_dms(
     conversations: &[Value],
     joined: &Joined,
@@ -268,6 +299,13 @@ pub(crate) fn parse_dms(
         .iter()
         .filter_map(|dm| {
             let user_id = dm.get("userId").and_then(Value::as_i64)?;
+            let last_message_at = dm.get("lastMessageAt").and_then(as_time);
+
+            if let Some(closed_at) = dm.get("closedAt").and_then(as_time) {
+                if last_message_at.is_none_or(|at| at <= closed_at) {
+                    return None;
+                }
+            }
 
             Some(DirectMessage {
                 avatar_url: joined
@@ -280,13 +318,7 @@ pub(crate) fn parse_dms(
                     .get(&user_id)
                     .cloned()
                     .unwrap_or_else(|| "Unknown".into()),
-                last_message_at: dm.get("lastMessageAt").and_then(|at| {
-                    at.as_u64().or_else(|| {
-                        at.as_f64()
-                            .filter(|at| *at >= 0.0)
-                            .map(|at| at.round() as u64)
-                    })
-                }),
+                last_message_at,
             })
         })
         .collect()
@@ -299,6 +331,7 @@ pub(crate) fn parse_shared_floor(stored: &Value) -> Option<HashMap<i64, u32>> {
 
 pub(crate) fn parse_message(data: &Value) -> Option<Event> {
     let content = data.get("content").and_then(Value::as_str).unwrap_or("");
+    let mentions = mentioned(content);
 
     Some(Event::Posted(NewMessage {
         channel_id: data.get("channelId").and_then(Value::as_i64)?,
@@ -308,7 +341,8 @@ pub(crate) fn parse_message(data: &Value) -> Option<Event> {
             .and_then(Value::as_str)
             .map(str::to_string),
         text: plain_text(content),
-        mentioned: mentioned(content),
+        mentioned: mentions.users,
+        mentioned_roles: mentions.roles,
     }))
 }
 
@@ -434,9 +468,12 @@ mod tests {
             "serverId": "019c1482",
             "readStates": { "1": 0, "8": 3, "140": 2.0 },
             "channels": [{ "id": 1, "isDm": false, "name": "README" }, { "id": 9, "isDm": true, "name": "x" }],
-            "users": [{ "id": 2, "name": "Smiddy" }],
+            "ownUserId": 2,
+            "users": [{ "id": 2, "name": "Smiddy", "roleIds": [1, 4] }, { "id": 3, "name": "Other", "roleIds": [9] }],
             "pluginsMetadata": [{ "pluginId": "other", "version": "2.0.0" }, { "pluginId": "shiver", "version": "0.1.0" }]
         }));
+
+        assert_eq!(joined.own_role_ids, vec![1, 4]);
 
         assert_eq!(joined.read_states.get(&140), Some(&2));
         assert_eq!(joined.dm_channels, vec![9]);
@@ -499,6 +536,32 @@ mod tests {
         );
     }
 
+    /// Sharkord 0.0.28 lists the conversations in the join, each with when the user closed it.
+    #[test]
+    fn the_join_lists_conversations_and_closed_ones_stay_closed_until_a_message() {
+        let data = serde_json::json!({
+            "users": [{ "id": 2, "name": "Smiddy" }],
+            "directMessages": [
+                { "channelId": 9, "userId": 2, "lastMessageAt": 200, "closedAt": null },
+                { "channelId": 10, "userId": 2, "lastMessageAt": 200, "closedAt": 300 },
+                { "channelId": 11, "userId": 2, "lastMessageAt": 400, "closedAt": 300 },
+                { "channelId": 12, "userId": 2, "closedAt": 300 }
+            ]
+        });
+        let joined = parse_join(&data);
+        let listed = join_dms(&data).unwrap();
+        let dms = parse_dms(listed, &joined, "https://chat.example.com");
+
+        assert_eq!(
+            dms.iter().map(|dm| dm.channel_id).collect::<Vec<_>>(),
+            [9, 11]
+        );
+        assert!(
+            join_dms(&serde_json::json!({ "users": [] })).is_none(),
+            "an older server"
+        );
+    }
+
     #[test]
     fn read_state_frames_accept_doubles() {
         assert_eq!(
@@ -540,9 +603,19 @@ mod tests {
                 plugin_id: None,
                 text: "shape check".into(),
                 mentioned: Vec::new(),
+                mentioned_roles: Vec::new(),
             }))
         );
         assert_eq!(parse_message(&serde_json::json!({ "content": "hi" })), None);
+
+        let Some(Event::Posted(message)) = parse_message(&serde_json::json!({
+            "content": r#"<p><span data-type="role-mention" data-role-id="3">@Mods</span></p>"#,
+            "channelId": 8
+        })) else {
+            panic!("a message");
+        };
+
+        assert_eq!(message.mentioned_roles, [3]);
     }
 
     #[test]

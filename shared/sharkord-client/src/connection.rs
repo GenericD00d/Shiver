@@ -10,7 +10,7 @@ use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
 use crate::{
     wire::{
-        params_frame, parse_delta, parse_dms, parse_join, parse_message, parse_reply,
+        join_dms, params_frame, parse_delta, parse_dms, parse_join, parse_message, parse_reply,
         parse_shared_floor, request_frame, ws_url, Reply, DMS_ID, HANDSHAKE_ID, JOIN_ID,
         MESSAGE_ID, PLUGIN_DATA_ID, READ_STATE_ID, READ_STATE_UPDATE_ID, SHIVER_PLUGIN_ID,
         SUBSCRIPTIONS,
@@ -207,22 +207,30 @@ pub(crate) async fn join(socket: &mut Socket, origin: &str, token: &str) -> Resu
         .ok_or_else(|| Error::NotSharkord(origin.to_string()))?
         .to_string();
 
-    let mut joined = parse_join(
-        &call(
-            socket,
-            JOIN_ID,
-            "others.joinServer",
-            Some(serde_json::json!({ "handshakeHash": hash })),
-        )
-        .await?,
-    );
+    let data = call(
+        socket,
+        JOIN_ID,
+        "others.joinServer",
+        Some(serde_json::json!({ "handshakeHash": hash })),
+    )
+    .await?;
+    let mut joined = parse_join(&data);
 
-    // Optional extras: failing either costs that feature, not the connection.
-    match call(socket, DMS_ID, "dms.get", None).await {
-        Ok(Value::Array(conversations)) => joined.dms = parse_dms(&conversations, &joined, origin),
-        Ok(_) => eprintln!("[shiver] {origin}: dms.get did not answer with a list"),
-        Err(error) => eprintln!("[shiver] could not read {origin}'s direct messages: {error}"),
+    // Optional extras: failing either costs that feature, not the connection. Sharkord 0.0.28 lists
+    // the conversations in the join and dropped `dms.get`, which an older server still needs.
+    if let Some(conversations) = join_dms(&data) {
+        joined.dms = parse_dms(conversations, &joined, origin);
+    } else {
+        match call(socket, DMS_ID, "dms.get", None).await {
+            Ok(Value::Array(conversations)) => {
+                joined.dms = parse_dms(&conversations, &joined, origin)
+            }
+            Ok(_) => eprintln!("[shiver] {origin}: dms.get did not answer with a list"),
+            Err(error) => eprintln!("[shiver] could not read {origin}'s direct messages: {error}"),
+        }
     }
+
+    drop(data);
 
     if joined.plugin_version.is_some() {
         let input = serde_json::json!({ "pluginId": SHIVER_PLUGIN_ID });

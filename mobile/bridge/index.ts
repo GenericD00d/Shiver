@@ -5,8 +5,8 @@
  * this page (`home.ts`), and the core polls the hooks in `types.ts`. The session was served from memory since document start (`document-start.ts`).
  */
 
-import { closeChannelMenu } from '../../shared/web/bridge/channel-menu';
-import { defineHook, isTopFrame, onDomSettled, touched } from '../../shared/web/bridge/dom';
+import { closeOpenMenu } from '../../shared/web/bridge/channel-menu';
+import { defineHook, isTopFrame } from '../../shared/web/bridge/dom';
 import {
   closeSidePanel,
   installAttachmentCards,
@@ -14,8 +14,10 @@ import {
   installSoundVolume,
   installVoiceColors
 } from '../../shared/web/bridge/features';
+import { closedDms } from '../../shared/web/bridge/messages';
+import { seedSharkordMutes, watchSharkordMutes } from '../../shared/web/bridge/mutes';
 import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, waitForPlugin } from '../../shared/web/bridge/plugin';
-import { CHANNEL_ITEM, installMuteStyles, paintMuted, readDms, sharkordStore } from '../../shared/web/bridge/sharkord';
+import { installMuteStyles, readDms, sharkordStore } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme } from '../../shared/web/bridge/theme';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
 import { installEditInComposer } from './edit';
@@ -55,21 +57,20 @@ function install(shiver: ShiverConfig) {
   installQuietReconnect();
 
   const muted = new Set(shiver.muted);
-  const paint = () => paintMuted(muted);
 
   defineHook('__SHIVER_MUTED__', () => [...muted]);
   installDmList(shiver.origin);
-  installLongPress({
-    has: (channelId) => muted.has(channelId),
-    toggle: (channelId) => {
-      if (!muted.delete(channelId)) muted.add(channelId);
+  installLongPress();
 
-      paint();
-      pushMutesToPlugin([...muted]);
-    }
+  // Sharkord's mute is the face of Shiver's: a toggle there changes Shiver's list, which the core polls
+  watchSharkordMutes((channelId, isMuted) => {
+    if (isMuted) muted.add(channelId);
+    else muted.delete(channelId);
+
+    seedSharkordMutes(muted);
+    pushMutesToPlugin([...muted]);
   });
-  paint();
-  onDomSettled((changed) => paintMuted(muted, touched(changed, CHANNEL_ITEM)));
+  seedSharkordMutes(muted);
 
   void syncMutesWithPlugin([...muted]).then((merged) => {
     if (!merged) return;
@@ -78,7 +79,7 @@ function install(shiver: ShiverConfig) {
 
     for (const id of merged) muted.add(id);
 
-    paint();
+    seedSharkordMutes(muted);
   });
 
   const { pushEndpoint, retiredPushEndpoints } = shiver;
@@ -105,7 +106,7 @@ function install(shiver: ShiverConfig) {
   // arriving at a server is what moves its shared unread floor
   if (shiver.readFloor) void storeReadFloor(shiver.readFloor);
 
-  defineHook('__SHIVER_BACK__', () => closeChannelMenu() || closeSidePanel() || openRail());
+  defineHook('__SHIVER_BACK__', () => closeOpenMenu() || closeSidePanel() || openRail());
   installRailSwipe();
 
   if (shiver.openDmUser) openConversation(shiver.openDmUser);
@@ -131,7 +132,7 @@ function installDmList(origin: string) {
 
     if (typeof state?.ownUserId !== 'number') return null;
 
-    const list = readDms(origin, state, new Map()).map(({ channelId, name, iconUrl }) => ({ channelId, name, iconUrl }));
+    const list = readDms(origin, state, new Map(), closedDms()).map(({ channelId, name, iconUrl }) => ({ channelId, name, iconUrl }));
     // avatar urls carry expiring tokens, so they are left out of the comparison
     const signature = JSON.stringify(list.map(({ channelId, name }) => [channelId, name]));
 

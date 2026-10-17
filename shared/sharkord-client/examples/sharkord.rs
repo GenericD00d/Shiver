@@ -4,7 +4,7 @@
 //!   SHIVER_PASSWORD='…' cargo run -p sharkord-client --example sharkord -- <origin> <identity> post <channel> [text]
 //!   SHIVER_PASSWORD='…' cargo run -p sharkord-client --example sharkord -- <origin> <identity> cleanup <channel>
 //!
-//! `probe` prints the join payload's shape, `dms.get`, and 20 s of `messages.onNew` /
+//! `probe` prints the join payload's shape (its conversations, or `dms.get` before 0.0.28), and 20 s of `messages.onNew` /
 //! `channels.onReadStateDelta` frames. `post` sends a message as a second person (a user's own
 //! messages never count as unread, so badge tests need one); `cleanup` deletes that identity's
 //! recent messages in a channel. The password comes from the environment, never argv.
@@ -179,16 +179,24 @@ async fn probe(connection: &mut Connection, joined: &Value) -> Result<(), Failur
         keys.sort();
         println!("joinServer keys: {keys:?}");
 
-        for key in ["channelsReadStates", "readStates", "channels"] {
+        for key in [
+            "channelsReadStates",
+            "readStates",
+            "channels",
+            "directMessages",
+        ] {
             if let Some(value) = data.get(key) {
                 println!("  {key} = {}", cut(&value.to_string()));
             }
         }
     }
 
-    let dms = connection.request("query", "dms.get", Value::Null).await?;
+    // Sharkord 0.0.28 lists the conversations in the join and has no `dms.get`
+    if joined.pointer("/result/data/directMessages").is_none() {
+        let dms = connection.request("query", "dms.get", Value::Null).await?;
 
-    println!("dms.get -> {}", cut(&dms.to_string()));
+        println!("dms.get -> {}", cut(&dms.to_string()));
+    }
 
     for path in ["messages.onNew", "channels.onReadStateDelta"] {
         connection.send("subscription", path, Value::Null).await?;

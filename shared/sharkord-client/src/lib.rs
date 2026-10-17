@@ -6,7 +6,8 @@
 //! 3. Send `{ method: "connectionParams", data: { token } }` to authenticate.
 //! 4. Query `others.handshake`, then `others.joinServer` with its hash. Only after the join are
 //!    protected procedures allowed; the join returns the initial state, including `readStates`.
-//! 5. Query `dms.get` and (if the companion plugin is installed) `plugins.getUserData`.
+//! 5. Read the conversations from the join (Sharkord 0.0.28 and newer) or, on an older server,
+//!    query `dms.get`; and (if the companion plugin is installed) `plugins.getUserData`.
 //! 6. Subscribe to read-state deltas, read-state updates and new messages.
 //!
 //! It never sends anything on the user's behalf. Unread is accumulated the way Sharkord's own client
@@ -64,6 +65,8 @@ impl Avatar {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Joined {
     pub own_user_id: Option<i64>,
+    /// the roles the user holds, which a role mention reaches
+    pub own_role_ids: Vec<i64>,
     /// unread per channel id, the baseline later events are applied to
     pub read_states: HashMap<i64, u32>,
     pub dm_channels: Vec<i64>,
@@ -90,6 +93,8 @@ pub struct NewMessage {
     pub text: String,
     /// the users it mentions
     pub mentioned: Vec<i64>,
+    /// the roles it mentions
+    pub mentioned_roles: Vec<i64>,
 }
 
 impl NewMessage {
@@ -98,11 +103,15 @@ impl NewMessage {
         self.user_id.is_some() && self.user_id == joined.own_user_id
     }
 
-    /// Whether it mentions the user.
+    /// Whether it mentions the user, by name or through a role they hold.
     pub fn mentions_me(&self, joined: &Joined) -> bool {
         joined
             .own_user_id
             .is_some_and(|own| self.mentioned.contains(&own))
+            || self
+                .mentioned_roles
+                .iter()
+                .any(|role| joined.own_role_ids.contains(role))
     }
 
     /// Who wrote it: a plugin by its id, a user by the name the join gave them.

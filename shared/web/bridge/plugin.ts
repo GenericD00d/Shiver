@@ -20,8 +20,8 @@ type PluginResponse = { source?: string; id?: string; ok?: boolean; result?: Plu
 const REQUEST = 'shiver-bridge';
 const RESPONSE = 'shiver-plugin';
 const TIMEOUT_MS = 8000;
-/** the client imports plugin bundles after connecting, so the relay appears late */
-const WAIT_MS = 15000;
+/** the relay appears after the client connects, and can be asked once the page has joined */
+const WAIT_MS = 30000;
 /** this device's own mutes have been merged into the plugin's list once */
 const MUTES_ADOPTED = 'shiver-mutes-adopted';
 
@@ -56,16 +56,23 @@ export function callPlugin(action: string, payload?: unknown): Promise<PluginRes
 let waiting: Promise<boolean> | null = null;
 
 /**
- * Resolves true once the relay is present, false after `WAIT_MS` without it. Callers waiting at the
- * same time share one wait.
+ * Whether the relay can be asked: it is present, and the page has joined its server. A cached plugin
+ * bundle can load before the page has signed in, and its server actions then answer "You must be
+ * authenticated", which read as no plugin.
+ */
+const pluginReady = () => !!window.__SHIVER_PLUGIN__ && typeof sharkordStore()?.getState().ownUserId === 'number';
+
+/**
+ * Resolves true once the relay can be asked (`pluginReady`), false after `WAIT_MS` without it.
+ * Callers waiting at the same time share one wait.
  */
 export function waitForPlugin(): Promise<boolean> {
-  if (window.__SHIVER_PLUGIN__) return Promise.resolve(true);
+  if (pluginReady()) return Promise.resolve(true);
 
   waiting ??= new Promise<boolean>((resolve) => {
     const started = Date.now();
     const timer = window.setInterval(() => {
-      const present = !!window.__SHIVER_PLUGIN__;
+      const present = pluginReady();
 
       if (present || Date.now() - started > WAIT_MS) {
         window.clearInterval(timer);

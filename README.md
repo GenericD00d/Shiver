@@ -49,9 +49,11 @@ will serve you perfectly well.
 - **A direct message inbox across servers**, ordered by its latest message, sent or received, and labelled
   with the server it is on. It lives on Shiver's own screen rather than inside a server's page,
   which is what keeps one server from being handed the name of everyone you talk to on the others
-- **Per-channel mute** — dimmed in the channel list, no notification, no sound
+- **Per-channel mute that follows you** — Sharkord's own "Mute Channel" (0.0.27 and newer), kept
+  in step across your devices and Shiver's background connections: no notification, no sound, no
+  unread badge
 - **A notification level per server** — every message, only mentions and direct messages, or
-  only direct messages. Unread badges still count everything
+  only direct messages. A mention of a role you hold counts. Unread badges still count everything
 - **Your colours** applied to Shiver and to each server's client. On the defaults Shiver restyles
   nothing, so servers look exactly as they do in a browser
 - **A sound volume slider that goes to 250%**, for a notification tone that has to carry over a call

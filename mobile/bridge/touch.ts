@@ -1,12 +1,6 @@
 /** Adapting Sharkord's desktop-shaped client to a finger. */
 
-import {
-  channelPressed,
-  type ChannelMutes,
-  installChannelMenu,
-  isInChannelMenu,
-  requestChannelMenu
-} from '../../shared/web/bridge/channel-menu';
+import { channelPressed, installChannelMenu, requestChannelMenu } from '../../shared/web/bridge/channel-menu';
 import { ensureStyle } from '../../shared/web/bridge/dom';
 import {
   CHANNEL_ITEM,
@@ -74,9 +68,10 @@ function clearMessageActions() {
 
 /**
  * Long presses on channels and messages. On a message it reveals Sharkord's toolbar; on a channel it
- * asks for the channel menu (`channel-menu.ts`). The press's own click is swallowed.
+ * asks for Shiver's item in the channel menu Sharkord opens for the hold (`channel-menu.ts`). The
+ * press's own click is swallowed.
  */
-export function installLongPress(mutes: ChannelMutes) {
+export function installLongPress() {
   let timer = 0;
   let startX = 0;
   let startY = 0;
@@ -91,7 +86,6 @@ export function installLongPress(mutes: ChannelMutes) {
   };
 
   installChannelMenu({
-    mutes,
     markAllRead: markAllChannelsRead,
     touch: true,
     // Sharkord's menu can open before the hold fires, and is then what the press opened
@@ -134,7 +128,7 @@ export function installLongPress(mutes: ChannelMutes) {
         heldAt = Date.now();
 
         if (held.matches(MESSAGE_ITEM)) held.classList.add(MESSAGE_ACTIONS_CLASS);
-        else requestChannelMenu(held, startX, startY);
+        else requestChannelMenu(held);
       }, HOLD_MS);
     },
     { passive: true, capture: true }
@@ -159,8 +153,8 @@ export function installLongPress(mutes: ChannelMutes) {
 
       const target = event.target instanceof Node ? event.target : null;
 
-      // taps inside Shiver's menu or Sharkord's are theirs
-      if (target && (isInChannelMenu(target) || (target instanceof Element && target.closest('[role="menu"]')))) return;
+      // taps inside Sharkord's menu are its own
+      if (target instanceof Element && target.closest('[role="menu"]')) return;
 
       const wasThePress = Date.now() - heldAt < CLICK_GRACE_MS;
 

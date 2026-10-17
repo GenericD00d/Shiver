@@ -17,11 +17,14 @@ export type SharkordChannel = {
   type?: string;
 };
 
-export type SharkordUser = { id: number; name: string; avatar?: SharkordFile | null };
+export type SharkordUser = { id: number; name: string; avatar?: SharkordFile | null; roleIds?: number[] };
+
+export type SharkordRole = { id: number; name: string };
 
 export type SharkordState = {
   channels?: SharkordChannel[];
   users?: SharkordUser[];
+  roles?: SharkordRole[];
   ownUserId?: number;
   selectedChannelId?: number;
   currentVoiceChannelId?: number | null;
@@ -191,14 +194,20 @@ export function fileUrl(origin: string, file: SharkordFile | null | undefined) {
 /**
  * This server's DMs, newest first (by `lastSeen`, per channel), then by name, so the list does not
  * reorder under the pointer. A DM whose partner is not in the store yet is skipped rather than
- * listed under its raw channel name.
+ * listed under its raw channel name, and one the user closed (`closed`) is left out, as Sharkord's
+ * own list does.
  */
-export function readDms(origin: string, state: SharkordState, lastSeen: ReadonlyMap<number, number>): DmChannel[] {
+export function readDms(
+  origin: string,
+  state: SharkordState,
+  lastSeen: ReadonlyMap<number, number>,
+  closed: ReadonlySet<number> = new Set()
+): DmChannel[] {
   const users = new Map((state.users ?? []).map((user) => [user.id, user]));
   const list: DmChannel[] = [];
 
   for (const channel of state.channels ?? []) {
-    if (!channel.isDm) continue;
+    if (!channel.isDm || closed.has(channel.id)) continue;
 
     const partner = users.get(dmPartnerId(channel, state.ownUserId) ?? -1);
 
@@ -282,35 +291,22 @@ export function markAllChannelsRead() {
   if (typeof selectedChannelId === 'number') selectChannel(selectedChannelId);
 }
 
-/** an attribute rather than a class: React rewrites a row's classes, never an attribute it did not set */
-const MUTED = 'data-shiver-muted';
+/** a muted channel's name, as Sharkord (0.0.27 and newer) dims it in the sidebar */
+const MUTED_NAME = 'span[class~="flex-1"][class~="opacity-50"]';
 
-/** Styles muted channel rows (dimmed, unread pill hidden) and reaction pills the user is part of (tinted in the accent). */
+/**
+ * Hides a muted channel's unread pill, which Sharkord keeps showing (Shiver's badges leave muted
+ * channels out, so the pill would disagree with them), and tints reaction pills the user is part of
+ * in the accent.
+ */
 export function installMuteStyles() {
   ensureStyle('shiver-mute-style').textContent = `
-[${MUTED}] { opacity: 0.45; }
-[${MUTED}] ${UNREAD_COUNT} { display: none !important; }
+${CHANNEL_ITEM}:has(> ${MUTED_NAME}) ${UNREAD_COUNT} { display: none !important; }
 ${REACTED_PILL} {
   background-color: color-mix(in srgb, var(--primary) 22%, transparent) !important;
   border-color: var(--primary) !important;
 }
 `;
-}
-
-/**
- * Marks the sidebar rows of muted channels: `rows`, or every row. Rows carry no channel id, so
- * they are matched by name (two channels sharing a name dim together; the mute is keyed on the id).
- */
-export function paintMuted(muted: ReadonlySet<number>, rows: Iterable<Element> = document.querySelectorAll(CHANNEL_ITEM)) {
-  const list = [...rows];
-
-  if (!list.length) return;
-
-  const names = new Set(
-    (sharkordStore()?.getState().channels ?? []).filter((channel) => muted.has(channel.id)).map((channel) => channel.name)
-  );
-
-  for (const row of list) row.toggleAttribute(MUTED, names.has(rowName(row)));
 }
 
 /** Presses Escape in the page, which closes Sharkord's topmost menu or dialog. */
