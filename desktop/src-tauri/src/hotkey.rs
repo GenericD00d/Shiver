@@ -84,6 +84,12 @@ pub fn is_rail_shortcut(accelerator: &str) -> bool {
         .is_ok_and(|shortcut| rail_shortcuts().iter().any(|(rail, _)| *rail == shortcut))
 }
 
+/// Whether `shortcut` is one of Shiver's own (the mute shortcut, or one of the rail's), which a
+/// server's page may not bind (`page_hotkeys`).
+pub fn is_shivers(shortcut: &Shortcut) -> bool {
+    *MUTE.locked() == Some(*shortcut) || rail_shortcuts().iter().any(|(rail, _)| rail == shortcut)
+}
+
 /// The rail's shortcuts and what each tells the shell.
 fn rail_shortcuts() -> Vec<(Shortcut, serde_json::Value)> {
     let numbered = (1..=9).map(|n| {
@@ -131,7 +137,8 @@ fn set_rail_shortcuts(app: &AppHandle, on: bool) {
     }
 }
 
-/// Keeps the rail's shortcuts registered exactly while Shiver is in front.
+/// Keeps the rail's shortcuts registered exactly while Shiver is in front, and the page shortcuts
+/// with the server last shown (`page_hotkeys::follow_active`).
 pub fn watch_front(app: &AppHandle) {
     let app = app.clone();
 
@@ -149,6 +156,8 @@ pub fn watch_front(app: &AppHandle) {
                     set_rail_shortcuts(&app, front);
                     registered = front;
                 }
+
+                crate::page_hotkeys::follow_active(&app);
             }
         })
         .map(|_| ())

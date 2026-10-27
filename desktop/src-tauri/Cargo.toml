@@ -19,7 +19,9 @@ tauri-build.workspace = true
 tauri = { workspace = true, features = ["unstable", "tray-icon"] }
 tauri-plugin-updater = "2"
 tauri-plugin-autostart = "~2.5.1"
-tauri-plugin-single-instance = "~2.4.5"
+# `deep-link` hands a `sharkord://` link that started a second instance to the first
+tauri-plugin-single-instance = { version = "~2.4.5", features = ["deep-link"] }
+tauri-plugin-deep-link.workspace = true
 tauri-plugin-opener.workspace = true
 tauri-plugin-dialog.workspace = true
 tauri-plugin-notification.workspace = true

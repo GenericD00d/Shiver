@@ -9,7 +9,9 @@ release can break them without any Shiver test noticing. This checks, against a 
 - every class they match with `[class~="..."]` appears in the client's source (or its UI package),
 - and the other conventions named in `CONTRACTS` (notification titles, DM channel names, the
   plugin store, the image portal, the member-list slot, the DM list's times, the new-message
-  subscription and who it reaches, and the screens that tell a page gave up connecting).
+  subscription and who it reaches, and the screens that tell a page gave up connecting),
+- and, once Sharkord's client has its desktop api, the parts of it the desktop bridge speaks
+  (`DESKTOP_CONTRACTS`), so a change of its version fails here rather than in a user's app.
 
 Usage: check-sharkord.py [SHARKORD_CHECKOUT] [--ref REF | --latest]
 Without a checkout, Sharkord is cloned at `SHARKORD_REF` (or `--ref`, or its default branch with
@@ -17,6 +19,7 @@ Without a checkout, Sharkord is cloned at `SHARKORD_REF` (or `--ref`, or its def
 """
 
 import argparse
+import json
 import pathlib
 import re
 import subprocess
@@ -43,9 +46,9 @@ SHIVER_SOURCES = [
 # (what Shiver relies on, a Sharkord path relative to the checkout, a regex that must match there)
 CONTRACTS = [
     (
-        "notification titles `Author (DM)` / `Author in #channel` (notificationTarget)",
+        "notification titles `Author (DM)` / `Author in #channel`, or their translations (notificationTarget)",
         "apps/client/src/features/server/messages/actions.ts",
-        r"\(DM\)`[\s\S]*in #\$\{",
+        r"\(DM\)`[\s\S]*in #\$\{|'common:notificationTitleDm'[\s\S]*'common:notificationTitleChannel'",
     ),
     (
         "DM channels named `DM - <userA>:<userB>` (dmPartnerId)",
@@ -147,6 +150,52 @@ CONTRACTS = [
         "apps/client/src/components/right-sidebar/index.tsx",
         r"TestId\.MEMBER_ITEM\}[\s\S]*?\{name\}[\s\S]*?slotId=\{PluginSlot\.MEMBER_LIST_ITEM\}",
     ),
+    (
+        "shortcuts recorded as `ctrl+alt+shift+meta` then the key's code (the core's `page_hotkeys::shortcut_for`)",
+        "packages/ui/src/lib/hotkey.ts",
+        r"parts\.push\('ctrl'\);[\s\S]*parts\.push\('alt'\);[\s\S]*parts\.push\('shift'\);[\s\S]*parts\.push\('meta'\);"
+        r"[\s\S]*withModifiers\(event, event\.code\)",
+    ),
+]
+
+# Sharkord's desktop api, which the desktop bridge offers (`desktop/bridge/desktop-api.ts`). Checked
+# only against a client that has it (`DESKTOP_API`); one without it is a web page to the bridge.
+DESKTOP_API = "packages/shared/src/desktop.ts"
+
+DESKTOP_CONTRACTS = [
+    (
+        "desktop api version 1 (`DESKTOP_API_VERSION`)",
+        DESKTOP_API,
+        r"export const DESKTOP_BRIDGE_VERSION = 1;",
+    ),
+    (
+        "the api found on `window.sharkordDesktop` and connected with the client's version",
+        "apps/client/src/helpers/desktop-api.ts",
+        r"window\.sharkordDesktop[\s\S]*\.connect\(DESKTOP_BRIDGE_VERSION\)",
+    ),
+    (
+        "every method the bridge's api offers, and none more the client calls",
+        DESKTOP_API,
+        r"export type TDesktopBridge = \{\s*getServerListVisible:[\s\S]*?onServerListVisibleChange:[\s\S]*?"
+        r"toggleServerList:[\s\S]*?openSettings:[\s\S]*?setUnreadState:[\s\S]*?setConnectionState:[\s\S]*?"
+        r"startSystemAudio:[\s\S]*?stopSystemAudio:[\s\S]*?showNotification:[\s\S]*?setHotkeys:[\s\S]*?"
+        r"onHotkey:[\s\S]*?onNotificationClick:[\s\S]*?setConfirmationHandler:[^;]*;\s*\};",
+    ),
+    (
+        "a message's notification naming the message and the thread it replies in (`readNotification`)",
+        "apps/client/src/features/server/messages/actions.ts",
+        r"type: 'message',\s*channelId,\s*messageId: message\.id,\s*parentMessageId: message\.parentMessageId",
+    ),
+    (
+        "a click passed to the client leading to the message, or to the plugin (`openNotification`)",
+        "apps/client/src/components/notifications-controller/index.tsx",
+        r"dispatchPluginNotificationClick\(target\.pluginId, target\.data\)[\s\S]*jumpToMessage\(target\)",
+    ),
+    (
+        "the server-list button first in the top bar's left cell (hidden: Shiver's rail is always shown)",
+        "apps/client/src/components/top-bar/index.tsx",
+        r"<div className=\"flex min-w-0 items-center gap-2\">\s*\{isDesktop && \(\s*<Button[^>]*onClick=\{toggleServerList\}",
+    ),
 ]
 
 
@@ -224,7 +273,21 @@ def check(sharkord):
         if not re.search(r"(?<![\w:/\[-])" + re.escape(token) + r"(?![\w:/\]-])", theirs):
             problems.append(f"class {token!r} no longer appears in the client")
 
-    for what, path, pattern in CONTRACTS:
+    # translated titles keep their shape: a bracketed marker, or one word before the channel
+    for locale in sorted((sharkord / "apps/client/src/i18n/locales").glob("*/common.json")):
+        titles = json.loads(locale.read_text(encoding="utf8"))
+        shapes = {
+            "notificationTitleDm": r"\{\{author\}\} ?[(（][^()（）\s]{1,8}[)）]",
+            "notificationTitleChannel": r"\{\{author\}\} \S+ #\{\{channel\}\}",
+        }
+
+        for key, shape in shapes.items():
+            if key in titles and not re.fullmatch(shape, str(titles[key])):
+                problems.append(f"{key} in {locale.parent.name} is not the shape notificationTarget reads")
+
+    has_desktop_api = (sharkord / DESKTOP_API).is_file()
+
+    for what, path, pattern in CONTRACTS + (DESKTOP_CONTRACTS if has_desktop_api else []):
         file = sharkord / path
 
         if not file.is_file() or not re.search(pattern, file.read_text(encoding="utf8")):
@@ -238,7 +301,13 @@ def check(sharkord):
 
         return 1
 
-    print(f"Sharkord matches the bridges and the plugin ({len(test_ids)} test ids, {len(CONTRACTS)} conventions checked)")
+    checked = len(CONTRACTS) + (len(DESKTOP_CONTRACTS) if has_desktop_api else 0)
+    desktop = "with" if has_desktop_api else "without"
+
+    print(
+        f"Sharkord matches the bridges and the plugin ({len(test_ids)} test ids, {checked} conventions checked; "
+        f"a client {desktop} the desktop api)"
+    )
 
     return 0
 

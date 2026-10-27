@@ -30,6 +30,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["sharkord"]
+      }
+    },
     "updater": {
       "endpoints": [
         "https://github.com/GenericD00d/Shiver/releases/latest/download/latest.json"

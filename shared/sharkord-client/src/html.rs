@@ -211,6 +211,8 @@ mod tests {
             ..Joined::default()
         };
         let message = NewMessage {
+            id: None,
+            thread_id: None,
             channel_id: 1,
             user_id: Some(9),
             plugin_id: None,
@@ -248,6 +250,8 @@ mod tests {
             ..Joined::default()
         };
         let message = NewMessage {
+            id: None,
+            thread_id: None,
             channel_id: 1,
             user_id: Some(9),
             plugin_id: None,

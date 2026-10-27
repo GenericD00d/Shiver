@@ -83,8 +83,12 @@ pub struct Joined {
 }
 
 /// A message that arrived on a watched server.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NewMessage {
+    /// the message's own id, which a click on its notification leads to
+    pub id: Option<i64>,
+    /// the message it replies to in a thread
+    pub thread_id: Option<i64>,
     pub channel_id: i64,
     /// absent for a message a plugin posted
     pub user_id: Option<i64>,

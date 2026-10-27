@@ -118,5 +118,10 @@ export const api = {
     listen<Record<string, number>>('shiver://inbox', (event) => handler(event.payload)),
   /** a server opens only after a wait, since Sharkord allows only a few joins a minute */
   onJoinWait: (handler: (wait: { entryId: string; seconds: number }) => void) =>
-    listen<{ entryId: string; seconds: number }>('shiver://join-wait', (event) => handler(event.payload))
+    listen<{ entryId: string; seconds: number }>('shiver://join-wait', (event) => handler(event.payload)),
+
+  /** the server the latest `sharkord://` link offered, once */
+  takeServerLink: () => invoke<string | null>('take_server_link'),
+  /** a `sharkord://` link arrived while Shiver's page is up */
+  onServerLink: (handler: () => void) => listen('shiver://server-link', () => handler())
 };

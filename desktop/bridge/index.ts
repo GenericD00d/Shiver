@@ -3,7 +3,9 @@
  * own scripts. It is handed only this entry's config. Pages have no IPC, so it queues what it sees
  * and the core collects it through `__SHIVER_DRAIN__`; the core calls in through the other
  * `__SHIVER_*__` hooks. It reads Sharkord rather than driving it, except for opening a DM, voice
- * controls and the channel menu's items, which all use the page's own controls.
+ * controls and the channel menu's items, which all use the page's own controls. A client that
+ * speaks Sharkord's desktop api (`desktop-api.ts`) hands over its notifications and shortcuts
+ * through that instead.
  */
 
 import { channelPressed, installChannelMenu, requestChannelMenu } from '../../shared/web/bridge/channel-menu';
@@ -24,6 +26,7 @@ import {
   installMuteStyles,
   markAllChannelsRead,
   NARROW,
+  notificationAuthor,
   notificationTarget,
   notifyAllows,
   readDms,
@@ -33,6 +36,15 @@ import {
 } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme } from '../../shared/web/bridge/theme';
 import { onOpenDmFailure, openDmChannelId, selectChannelWhenReady, showConversation } from './conversations';
+import {
+  connectionState,
+  type HotkeyBinding,
+  type HotkeyError,
+  installDesktopApi,
+  openNotification,
+  pressHotkey,
+  readHotkeyErrors
+} from './desktop-api';
 import {
   installNotificationWrapper,
   mentionsAny,
@@ -62,6 +74,12 @@ function install(shiver: ShiverConfig) {
   let syncedMutes: number[] | null = null;
   let openDmFailed = false;
   let markAllRead = false;
+  let openSettings = false;
+  /** the page's shortcuts, while not yet handed to the core: none at first, so a reload clears them */
+  let hotkeys: HotkeyBinding[] | null = [];
+  /** answers the latest set of shortcuts not yet drained, then the one the core is registering */
+  let answerPending: ((errors: HotkeyError[]) => void) | null = null;
+  let answerDrained: ((errors: HotkeyError[]) => void) | null = null;
   let notify = shiver.notify;
   /** set when the level changes on a loaded page, whose Sharkord read its switches at load */
   let notifyChangedLive = false;
@@ -126,6 +144,8 @@ function install(shiver: ShiverConfig) {
   let reported = '';
 
   defineHook('__SHIVER_DRAIN__', (full) => {
+    // the client's own word, when it gives one, over what the page shows
+    const connection = connectionState();
     const drained = {
       notifications: resolveDmChannels(queue, state).splice(0),
       mutes: muteQueue.splice(0),
@@ -135,8 +155,10 @@ function install(shiver: ShiverConfig) {
       open: openQueue.splice(0),
       openDmFailed,
       ready: isClientReady(state),
-      signedOut: isSignedOut(),
-      stalled: isStalled(),
+      signedOut: connection !== 'connected' && isSignedOut(),
+      stalled: connection !== 'connected' && connection !== 'connecting' && isStalled(),
+      hotkeys,
+      openSettings,
       fullscreen: isFullscreen(),
       voice: readVoice(state),
       // an open DM first: `selectedChannelId` keeps naming the last ordinary channel
@@ -147,11 +169,27 @@ function install(shiver: ShiverConfig) {
     syncedMutes = null;
     openDmFailed = false;
     markAllRead = false;
+    openSettings = false;
+
+    if (hotkeys !== null) {
+      hotkeys = null;
+      answerDrained?.([]);
+      answerDrained = answerPending;
+      answerPending = null;
+    }
 
     const { notifications, mutes, open, ready, signedOut, stalled, fullscreen, voice, viewingChannelId } = drained;
     const now = JSON.stringify([ready, signedOut, stalled, fullscreen, voice, viewingChannelId]);
     const queued =
-      notifications.length || mutes.length || open.length || drained.markAllRead || drained.dms || drained.syncedMutes || drained.openDmFailed;
+      notifications.length ||
+      mutes.length ||
+      open.length ||
+      drained.markAllRead ||
+      drained.dms ||
+      drained.syncedMutes ||
+      drained.openDmFailed ||
+      drained.hotkeys ||
+      drained.openSettings;
 
     // a signed-out page keeps saying so: recovery retries on those reports
     if (!full && !queued && !signedOut && now === reported) return null;
@@ -162,20 +200,81 @@ function install(shiver: ShiverConfig) {
   });
 
   defineHook('__SHIVER_CONVERSATION__', showConversation);
-  defineHook('__SHIVER_SELECT_CHANNEL__', selectChannelWhenReady);
+  defineHook('__SHIVER_SELECT_CHANNEL__', (channelId, target) => {
+    const open = () => {
+      if (typeof channelId === 'number') selectChannelWhenReady(channelId);
+    };
+    const isDm = (id: number) => !!(state.channels ?? []).find((channel) => channel.id === id)?.isDm;
+
+    // the message itself, through the client's own handling, when it offers one; else its channel
+    if (!openNotification(typeof channelId === 'number' ? channelId : null, target ?? null, isDm, open)) open();
+  });
   defineHook('__SHIVER_SET_READ_FLOOR__', (floor) => void storeReadFloor(floor));
   defineHook('__SHIVER_SET_THEME__', applyPageTheme);
   defineHook('__SHIVER_SET_HIDDEN__', setWindowHidden);
 
+  /** whether a notification gets past Shiver's mutes and level */
+  const allows = (channelId: number | null, isDm: boolean, body: string) => {
+    if (channelId !== null && muted.has(channelId)) return false;
+
+    // Sharkord applied the level it loaded with exactly; one changed since is guessed from the text
+    const mentionsMe = !notifyChangedLive || mentionsAny(body, ownMentionNames(state));
+
+    return notifyAllows(notify, isDm, mentionsMe);
+  };
+
+  installDesktopApi({
+    notify: ({ title, body, icon, message, pluginRef }) => {
+      if (!message) {
+        // a plugin's own: from no channel, so only the level's floor applies (never in "DMs only")
+        if (pluginRef === null || notify === 'dms') return;
+
+        queue.push({ channelId: null, channelName: null, author: title, body, iconUrl: icon, isDm: false, target: { pluginRef } });
+
+        return;
+      }
+
+      const { channelId, messageId, parentMessageId, isDm } = message;
+
+      if (!allows(channelId, isDm, body)) return;
+
+      const channel = (state.channels ?? []).find((candidate) => candidate.id === channelId);
+
+      queue.push({
+        channelId,
+        channelName: isDm ? null : (channel?.name ?? null),
+        author: notificationAuthor(title, channelId, state),
+        body,
+        iconUrl: icon,
+        isDm,
+        target: { messageId, threadId: parentMessageId ?? null }
+      });
+    },
+    openSettings: () => {
+      openSettings = true;
+    },
+    setHotkeys: (bindings) => {
+      answerPending?.([]);
+      hotkeys = bindings;
+
+      return new Promise((resolve) => {
+        answerPending = resolve;
+      });
+    }
+  });
+
+  defineHook('__SHIVER_HOTKEY__', pressHotkey);
+  defineHook('__SHIVER_HOTKEYS_SET__', (errors) => {
+    const answer = answerDrained;
+
+    answerDrained = null;
+    answer?.(readHotkeyErrors(errors));
+  });
+
   installNotificationWrapper((title, options) => {
     const { channelId, channelName, author, isDm } = notificationTarget(title, state);
 
-    if (channelId !== null && muted.has(channelId)) return;
-
-    // Sharkord applied the level it loaded with exactly; one changed since is guessed from the text
-    const mentionsMe = !notifyChangedLive || mentionsAny(options?.body ?? '', ownMentionNames(state));
-
-    if (!notifyAllows(notify, isDm, mentionsMe)) return;
+    if (!allows(channelId, isDm, options?.body ?? '')) return;
 
     queue.push({ channelId, channelName, author, body: options?.body ?? '', iconUrl: options?.icon ?? null, isDm });
   });

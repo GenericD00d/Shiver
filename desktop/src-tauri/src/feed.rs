@@ -67,6 +67,33 @@ fn safe_icon_url(url: &str, origin: Option<&str>) -> Option<String> {
     crate::model::is_same_origin(origin?, &parsed).then(|| clamp(url.to_string(), MAX_URL))
 }
 
+/// Where a notification leads in its server's page beyond its channel: the message itself (and the
+/// thread it replies in), or a plugin's own notification by the number the page gave it. Only a
+/// server whose client offers Sharkord's desktop api can be taken there; any other just opens the
+/// channel. Ids that are not positive are dropped.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Target {
+    #[serde(default)]
+    pub message_id: Option<i64>,
+    #[serde(default)]
+    pub thread_id: Option<i64>,
+    #[serde(default)]
+    pub plugin_ref: Option<u32>,
+}
+
+impl Target {
+    fn checked(self) -> Self {
+        let positive = |id: Option<i64>| id.filter(|id| *id > 0);
+
+        Self {
+            message_id: positive(self.message_id),
+            thread_id: positive(self.thread_id),
+            plugin_ref: self.plugin_ref,
+        }
+    }
+}
+
 /// One item in the bell feed.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +107,7 @@ pub struct Notification {
     pub body: String,
     pub icon_url: Option<String>,
     pub is_dm: bool,
+    pub target: Target,
     pub at: u64,
     pub read: bool,
     /// set on Shiver's own "new version" entry, which the popup draws with a button
@@ -157,6 +185,12 @@ pub struct DrainResult {
     pub voice: Option<VoiceSnapshot>,
     #[serde(default)]
     pub viewing_channel_id: Option<i64>,
+    /// the page's Sharkord shortcuts, when it handed over new ones (Sharkord's desktop api)
+    #[serde(default)]
+    pub hotkeys: Option<Vec<crate::page_hotkeys::Binding>>,
+    /// Sharkord's "desktop settings" button was pressed
+    #[serde(default)]
+    pub open_settings: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -181,6 +215,8 @@ pub struct RawNotification {
     pub icon_url: Option<String>,
     #[serde(default)]
     pub is_dm: bool,
+    #[serde(default)]
+    pub target: Target,
 }
 
 #[derive(Default)]
@@ -266,6 +302,10 @@ impl Feed {
                 existing.channel_name = channel_name;
             }
 
+            if existing.target == Target::default() {
+                existing.target = raw.target.checked();
+            }
+
             return None;
         }
 
@@ -280,6 +320,7 @@ impl Feed {
             body,
             icon_url: raw.icon_url.and_then(|url| safe_icon_url(&url, origin)),
             is_dm: raw.is_dm,
+            target: raw.target.checked(),
             at: now,
             read: false,
             update: None,
@@ -316,6 +357,7 @@ impl Feed {
             body: "A new version is available.".into(),
             icon_url: None,
             is_dm: false,
+            target: Target::default(),
             at: now_ms(),
             read: false,
             update: Some(clamp(version.to_string(), MAX_AUTHOR)),
@@ -478,6 +520,7 @@ mod tests {
             body: body.into(),
             icon_url: None,
             is_dm: false,
+            target: Target::default(),
         }
     }
 

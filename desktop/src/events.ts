@@ -8,6 +8,10 @@ export const EVENTS = {
   popup: 'shiver://popup',
   menu: 'shiver://server-menu',
   openMessage: 'shiver://open-message',
+  /** a `sharkord://` link arrived: `take_server_link` has what it offers */
+  serverLink: 'shiver://server-link',
+  /** a server's page asked for Shiver's settings (Sharkord's "desktop settings" button) */
+  openSettings: 'shiver://open-settings',
   dmFailed: 'shiver://dm-failed',
   serverReady: 'shiver://server-ready',
   voice: 'shiver://voice',

@@ -20,6 +20,9 @@ export type ServerEntry = {
 /** `FeedSummary` in feed.rs: sent with every feed change. */
 export type FeedSummary = { unread: number; newest: number | null };
 
+/** Where a notification leads in its server's page beyond the channel (`Target` in feed.rs). */
+export type NotificationTarget = { messageId: number | null; threadId: number | null; pluginRef: number | null };
+
 export type Notification = {
   id: number;
   entryId: string;
@@ -30,6 +33,7 @@ export type Notification = {
   body: string;
   iconUrl: string | null;
   isDm: boolean;
+  target: NotificationTarget;
   at: number;
   read: boolean;
   /** the version on offer, when this entry is Shiver rather than a server */

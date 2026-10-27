@@ -334,6 +334,8 @@ pub(crate) fn parse_message(data: &Value) -> Option<Event> {
     let mentions = mentioned(content);
 
     Some(Event::Posted(NewMessage {
+        id: data.get("id").and_then(Value::as_i64),
+        thread_id: data.get("parentMessageId").and_then(Value::as_i64),
         channel_id: data.get("channelId").and_then(Value::as_i64)?,
         user_id: data.get("userId").and_then(Value::as_i64),
         plugin_id: data
@@ -598,6 +600,8 @@ mod tests {
         assert_eq!(
             parse_message(&data),
             Some(Event::Posted(NewMessage {
+                id: Some(13723),
+                thread_id: None,
                 channel_id: 8,
                 user_id: Some(52737),
                 plugin_id: None,
@@ -616,6 +620,14 @@ mod tests {
         };
 
         assert_eq!(message.mentioned_roles, [3]);
+
+        let Some(Event::Posted(reply)) = parse_message(&serde_json::json!({
+            "id": 41, "parentMessageId": 40, "content": "<p>in a thread</p>", "channelId": 8
+        })) else {
+            panic!("a message");
+        };
+
+        assert_eq!((reply.id, reply.thread_id), (Some(41), Some(40)));
     }
 
     #[test]

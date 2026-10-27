@@ -19,6 +19,7 @@ import {
   DEFAULT_PAGES_KEPT,
   DEFAULT_THEME_COLOR,
   type DmEntry,
+  type NotificationTarget,
   type Registry,
   type ServerEntry,
   type ServerStatus,
@@ -30,7 +31,7 @@ import { folderMenu, notifyLevelOf, readMenuId, serverMenu } from '../../shared/
 import { byPosition, type RailRef, type RailStep, railOrder, runRailSteps } from '../../shared/web/rail';
 
 /** A message clicked in the bell's feed. */
-type OpenMessage = { entryId: string; channelId: number | null; isDm: boolean; author: string };
+type OpenMessage = { entryId: string; channelId: number | null; isDm: boolean; author: string; target: NotificationTarget };
 
 /**
  * Which Shiver surface owns the content area. Anything other than `server` means the active server's
@@ -74,6 +75,8 @@ const EMPTY_REGISTRY: Registry = {
 
 export const App = () => {
   const [registry, setRegistry] = useState<Registry>(EMPTY_REGISTRY);
+  /** the address a `sharkord://` link offered, filled into the add screen */
+  const [linkedOrigin, setLinkedOrigin] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>('server');
   const [dms, setDms] = useState<DmEntry[]>([]);
@@ -286,12 +289,46 @@ export const App = () => {
     await openServer(activeId);
   }, [activeId, openServer, panel]);
 
+  /**
+   * A `sharkord://add-server` link (from a server's sign-in page): the server, if it is in the rail
+   * already, else the add screen with its address filled in for the user to check. False when
+   * there was no link.
+   */
+  const followServerLink = useCallback(
+    async (known: Registry) => {
+      const origin = await api.takeServerLink().catch(() => null);
+
+      if (!origin) return false;
+
+      const existing = known.servers.find((server) => server.origin === origin);
+
+      if (existing) {
+        await openServer(existing.id);
+      } else {
+        setLinkedOrigin(origin);
+        await openPanel('add');
+      }
+
+      return true;
+    },
+    [openPanel, openServer]
+  );
+
+  useCoreEvent(EVENTS.serverLink, () => {
+    refresh()
+      .then(followServerLink)
+      .catch((cause) => setError(errorMessage(cause)));
+  });
+
   useEffect(() => {
     const boot = async () => {
       try {
         const next = await refresh();
 
         await refreshFeed();
+
+        // started by a link: where it leads, rather than the last server
+        if (await followServerLink(next)) return;
 
         const last = next.settings.lastServerId;
         const target = next.servers.find((server) => server.id === last) ?? next.servers[0];
@@ -307,7 +344,7 @@ export const App = () => {
     };
 
     boot();
-  }, [openServer, refresh, refreshFeed]);
+  }, [followServerLink, openServer, refresh, refreshFeed]);
 
   useEffect(() => {
     api
@@ -485,7 +522,7 @@ export const App = () => {
   // Clicking a message in the bell's feed. The feed is drawn in the popup's own webview, which
   // cannot switch servers, so it asks and this does it — through the same `openServer` everything
   // else goes through, so a server that is still coming up gets the same cover it always does.
-  useCoreEvent<OpenMessage>(EVENTS.openMessage, async ({ entryId, channelId, isDm, author }) => {
+  useCoreEvent<OpenMessage>(EVENTS.openMessage, async ({ entryId, channelId, isDm, author, target }) => {
     try {
       if (isDm) {
         // a conversation opens in the inbox beside Shiver's list, which is where DMs live
@@ -501,13 +538,16 @@ export const App = () => {
 
       // after the server, not with it: the page has to exist before it can be told where to go,
       // and it retries on its own side for the case where it is still connecting
-      if (channelId !== null) {
-        await api.selectChannel(entryId, channelId);
+      // a plugin's notification has no channel, but its page can still be told of the click
+      if (channelId !== null || target.pluginRef !== null) {
+        await api.selectChannel(entryId, channelId, target);
       }
     } catch (cause) {
       setError(errorMessage(cause));
     }
   });
+
+  useCoreEvent(EVENTS.openSettings, () => void openPanel('settings'));
 
   // the rail's menus are native os menus, so the item chosen comes back as an event
   useCoreEvent<string>(EVENTS.menu, (id) => {
@@ -654,6 +694,8 @@ export const App = () => {
           {panel === 'add' ? (
             <div className="modal-backdrop">
               <AddServerForm
+                key={linkedOrigin ?? ''}
+                initialOrigin={linkedOrigin ?? ''}
                 hint={
                   <>
                     Shiver signs in for you so the server opens straight into the app. Your password goes only to
@@ -672,9 +714,17 @@ export const App = () => {
                     !!password
                   );
 
+                  setLinkedOrigin(null);
                   await handleAdded(entry.id);
                 }}
-                onCancel={servers.length > 0 ? closePanel : null}
+                onCancel={
+                  servers.length > 0
+                    ? () => {
+                        setLinkedOrigin(null);
+                        void closePanel();
+                      }
+                    : null
+                }
               />
             </div>
           ) : null}

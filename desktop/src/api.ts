@@ -6,6 +6,7 @@ import type {
   Folder,
   MenuFacts,
   Notification,
+  NotificationTarget,
   NotifyLevel,
   Registry,
   ServerCheck,
@@ -88,10 +89,18 @@ export const api = {
   dismissPopup: () => invoke<void>('dismiss_popup'),
 
   openDm: (entryId: string, name: string) => invoke<void>('open_dm', { entryId, name }),
-  selectChannel: (entryId: string, channelId: number) =>
-    invoke<void>('select_channel', { entryId, channelId }),
-  openMessage: (entryId: string, channelId: number | null, isDm: boolean, author: string) =>
-    invoke<void>('open_message', { entryId, channelId, isDm, author }),
+  /** the server the latest `sharkord://` link offered, once */
+  takeServerLink: () => invoke<string | null>('take_server_link'),
+  selectChannel: (entryId: string, channelId: number | null, target: NotificationTarget | null = null) =>
+    invoke<void>('select_channel', { entryId, channelId, target }),
+  openMessage: (entry: Pick<Notification, 'entryId' | 'channelId' | 'isDm' | 'author' | 'target'>) =>
+    invoke<void>('open_message', {
+      entryId: entry.entryId,
+      channelId: entry.channelId,
+      isDm: entry.isDm,
+      author: entry.author,
+      target: entry.target
+    }),
 
   exitDmSplit: () => invoke<void>('exit_dm_split'),
 

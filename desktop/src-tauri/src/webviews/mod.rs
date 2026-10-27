@@ -669,7 +669,7 @@ pub fn trim_pages(app: &AppHandle) {
     crate::watch::sync(app);
 }
 
-/// Closes a server's page. The call it may have held ends with it.
+/// Closes a server's page. The call it may have held ends with it, and its shortcuts.
 pub fn close_server(app: &AppHandle, entry_id: &str) -> Result<()> {
     if let Some(webview) = app.get_webview(&webview_label(entry_id)) {
         webview.close()?;
@@ -697,6 +697,8 @@ pub fn close_server(app: &AppHandle, entry_id: &str) -> Result<()> {
     let held_the_call = voice.holder().as_deref() == Some(entry_id);
 
     voice.forget_entry(entry_id);
+    // its shortcuts went with the page; a new one hands them over again
+    crate::page_hotkeys::forget_entry(app, entry_id);
 
     // the rail's call bar would otherwise stay up with buttons that reach nothing
     if held_the_call {

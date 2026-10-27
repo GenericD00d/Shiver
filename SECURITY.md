@@ -91,6 +91,17 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   long as Shiver's window is the one in front, and taken back as soon as it is not, so they never
   take those keys from another application. Whether Shiver is in front is read from the system
   (the foreground window, on Windows), never from a page.
+- **Sharkord's desktop api is offered to every page, and is the page's word like the rest.** A
+  client that speaks it (`desktop/bridge/desktop-api.ts`) hands over its notifications, connection
+  state and keyboard shortcuts; nothing in it reaches the core but through the same drain, checked
+  and bounded, and a notification still passes Shiver's mutes and level. A page's shortcuts are
+  registered system-wide only while its server is the one last shown (as Sharkord's own desktop app
+  does), never one of Shiver's own (the mute and rail shortcuts), and a press is told only to that
+  page. Its "desktop settings" button opens Shiver's settings only from the page on screen.
+- **A `sharkord://` link only fills in the add screen.** Any website can hand Shiver
+  `sharkord://add-server?url=…`; the address must be one Shiver would accept typed (https, no
+  credentials), and the user still checks the server, sees its name and logo, and signs in. A link
+  naming a server already in the rail only opens it.
 - **A hidden page cannot download.** On desktop only the page on screen may start a download
   (through WebView2 itself on Windows, Tauri's download hook elsewhere), so a server in the
   background cannot drop files in your Downloads folder.

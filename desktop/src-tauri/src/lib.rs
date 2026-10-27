@@ -1,12 +1,14 @@
 mod badge;
 mod badges;
 mod commands;
+mod deep_link;
 mod drain;
 mod error;
 mod feed;
 mod hotkey;
 mod model;
 mod notify;
+mod page_hotkeys;
 mod permissions;
 mod secrets;
 mod session;
@@ -110,6 +112,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             tray::show(app)
         }))
+        // after the single instance, which hands it a link that started a second one
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![tray::AT_LOGIN_ARG]),
@@ -169,6 +173,7 @@ pub fn run() {
             commands::reorder_rail,
             commands::create_folder_with,
             commands::show_menu,
+            deep_link::take_server_link,
         ]))
         .setup(|app| {
             let handle = app.handle();
@@ -192,6 +197,8 @@ pub fn run() {
             app.manage(watch::Reported::default());
             app.manage(watch::ReadStates::default());
             app.manage(notify::Posted::default());
+            app.manage(page_hotkeys::PageHotkeys::default());
+            app.manage(deep_link::PendingLink::default());
 
             // folders left thin by an older Shiver, which never dissolved them
             let _ = app
@@ -210,6 +217,7 @@ pub fn run() {
             crate::watch::sync(handle);
 
             update::start(handle);
+            deep_link::start(handle);
 
             Ok(())
         })

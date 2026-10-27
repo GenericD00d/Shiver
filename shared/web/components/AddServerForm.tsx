@@ -21,14 +21,16 @@ type Props = {
   add: (server: NewServer) => Promise<void>;
   /** null when there is nowhere to go back to */
   onCancel: (() => void) | null;
+  /** an address to start from (a `sharkord://` link's), still checked like a typed one */
+  initialOrigin?: string;
 };
 
 /**
  * Adds a server in two steps: the address is checked first and the server's own name and logo
  * shown, so the user sees who they are giving a password to, then it signs in and adds it.
  */
-export const AddServerForm = ({ hint, check, add, onCancel }: Props) => {
-  const [origin, setOrigin] = useState('');
+export const AddServerForm = ({ hint, check, add, onCancel, initialOrigin = '' }: Props) => {
+  const [origin, setOrigin] = useState(initialOrigin);
   const [identity, setIdentity] = useState('');
   const [password, setPassword] = useState('');
   const [accountLabel, setAccountLabel] = useState('');

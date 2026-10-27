@@ -4,6 +4,7 @@ import {
   dmPartnerId,
   fileUrl,
   findDmChannelIdByUserName,
+  notificationAuthor,
   notificationFlags,
   notificationTarget,
   notifyAllows,
@@ -124,4 +125,31 @@ test('a notification level lets through what it names', () => {
   expect(notifyAllows('mentions', false, false)).toBe(false);
   expect(notifyAllows('dms', false, true)).toBe(false);
   expect(notifyAllows('dms', true, false)).toBe(true);
+});
+
+test("a notification's author comes from its channel, or the longest member name its title starts with", () => {
+  // a DM is from its other participant, whatever the title says
+  expect(notificationAuthor('Ana (DM)', 20, state)).toBe('Ana');
+  expect(notificationAuthor('anything', 21, state)).toBe('Ana B');
+  // in another language, by the names the title starts with (the longest of those that fit)
+  expect(notificationAuthor('Ana B en #general', 10, state)).toBe('Ana B');
+  expect(notificationAuthor('Ana dans #general', 10, state)).toBe('Ana');
+  // no member: the English split, then the whole title (a plugin's message)
+  expect(notificationAuthor('Builder in #general', 10, state)).toBe('Builder');
+  expect(notificationAuthor('Builder', 10, state)).toBe('Builder');
+  // a DM whose partner is not in the store reads like a channel
+  expect(notificationAuthor('Zed (DM)', 22, state)).toBe('Zed');
+});
+
+test("titles in the client's own language read the same (Sharkord translates them after 0.0.28)", () => {
+  expect(notificationTarget('Ana dans #general', state)).toEqual({ channelId: 10, channelName: 'general', author: 'Ana', isDm: false });
+  expect(notificationTarget('Ana B 在 #general', state)).toEqual({ channelId: 10, channelName: 'general', author: 'Ana B', isDm: false });
+  expect(notificationTarget('Ana (MP)', state)).toEqual({ channelId: 20, channelName: null, author: 'Ana', isDm: true });
+  expect(notificationTarget('Ana B (SZ)', state)).toEqual({ channelId: 21, channelName: null, author: 'Ana B', isDm: true });
+  // a channel named in the title wins over a bracketed name
+  expect(notificationTarget('Bob (x) в #general', state)).toMatchObject({ channelId: 10, author: 'Bob (x)', isDm: false });
+});
+
+test('a DM title in full-width brackets reads too', () => {
+  expect(notificationTarget('Ana（私信）', state)).toEqual({ channelId: 20, channelName: null, author: 'Ana', isDm: true });
 });

@@ -57,6 +57,9 @@ will serve you perfectly well.
 - **Your colours** applied to Shiver and to each server's client. On the defaults Shiver restyles
   nothing, so servers look exactly as they do in a browser
 - **A sound volume slider that goes to 250%**, for a notification tone that has to carry over a call
+- **Sharkord's "open in the desktop app" links** (`sharkord://`) open Shiver's add screen with the
+  server filled in, or the server itself if it is already in the rail. Shiver takes the scheme over
+  from Sharkord's own desktop app, so install one or the other
 - **Every server connects at launch**, so the inbox is complete the moment Shiver opens — and the
   servers you are not looking at cost a socket rather than a browser, because the core speaks
   Sharkord's protocol itself, read-only, to the ones it is not displaying
@@ -71,6 +74,9 @@ will serve you perfectly well.
 - **A system-wide shortcut** for muting your microphone, and **Ctrl+1 to 9** and
   **Ctrl+Alt+Up/Down** to move between servers while Shiver is in front
 - **Close to the tray** and **start at login**, both off until you turn them on
+- **Ready for Sharkord's desktop api**, which a client newer than 0.0.28 is set to offer a desktop
+  app: its notifications lead to the exact message (or thread reply) they are for, and its own
+  keyboard shortcuts work system-wide for the server on screen
 
 **Android** (8.0 or newer: older versions no longer get WebView security updates)
 
@@ -98,7 +104,8 @@ Everyone on the server gets statuses and colours, browser users included.
 
 ## What it deliberately does not do
 
-Each server's client runs pinned to its own origin with no way to call into Shiver. On desktop the
+Each server's client runs pinned to its own origin with no way to call into Shiver: even Sharkord's
+desktop api, which Shiver offers each page, only queues what the page says for the core to check. On desktop the
 rail is Shiver's own webview; on Android it, and the screens it opens, are drawn over the server's
 page in a WebView of its own, which loads nothing but Shiver's page and which the server's page cannot
 read. Either way a server's page

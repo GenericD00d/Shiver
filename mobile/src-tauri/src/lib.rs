@@ -1,4 +1,5 @@
 mod commands;
+mod deep_link;
 mod error;
 mod icons;
 mod inbox;
@@ -51,6 +52,7 @@ pub fn run() {
         .plugin(tauri_plugin_shiver_secrets::init())
         .plugin(tauri_plugin_shiver_push::init())
         .plugin(tauri_plugin_shiver_rail::init())
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(only_home(tauri::generate_handler![
             update::update_available,
             update::open_releases,
@@ -87,6 +89,7 @@ pub fn run() {
             commands::push_status,
             commands::set_push_server,
             commands::set_push_distributor,
+            deep_link::take_server_link,
         ]))
         .on_window_event(on_window_event)
         .setup(|app| {
@@ -103,6 +106,7 @@ pub fn run() {
             app.manage(rail::QuickRail::default());
             app.manage(push::Push::default());
             app.manage(update::Available::default());
+            app.manage(deep_link::PendingLink::default());
 
             let settings = handle.state::<Store>().registry().settings.clone();
 
@@ -229,6 +233,7 @@ pub fn run() {
             inbox::watch_mutes(&handle);
             update::start(&handle);
             icons::restore(&handle);
+            deep_link::start(&handle);
 
             Ok(())
         })

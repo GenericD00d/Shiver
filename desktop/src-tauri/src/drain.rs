@@ -46,6 +46,8 @@ const SIGNED_OUT_EVENT: &str = "shiver://signed-out";
 const STATUS_EVENT: &str = "shiver://status";
 /// The popup asks the shell to open a message; the shell owns server switching.
 pub const OPEN_MESSAGE_EVENT: &str = "shiver://open-message";
+/// A server's page asked for Shiver's settings (Sharkord's "desktop settings" button).
+const OPEN_SETTINGS_EVENT: &str = "shiver://open-settings";
 
 /// The rail badge for a server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -427,6 +429,21 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
         has_identity,
         &mut result,
     );
+
+    if let Some(bindings) = result.hotkeys.take() {
+        let errors = serde_json::json!(crate::page_hotkeys::set(app, entry_id, bindings));
+
+        if let Some(webview) = app.get_webview(&webviews::webview_label(entry_id)) {
+            let _ = webview.eval(format!(
+                "window.__SHIVER_HOTKEYS_SET__ && window.__SHIVER_HOTKEYS_SET__({errors})"
+            ));
+        }
+    }
+
+    // settings, like links, only for the page on screen
+    if result.open_settings && crate::badges::is_on_screen(app, entry_id) {
+        let _ = app.emit_to(SHELL_WEBVIEW, OPEN_SETTINGS_EVENT, ());
+    }
 
     // links only from the page on screen, and then only if the user agrees
     if crate::badges::is_on_screen(app, entry_id) {

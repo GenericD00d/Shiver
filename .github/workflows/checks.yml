@@ -216,8 +216,8 @@ jobs:
         run: bun install --frozen-lockfile && bunx tsc --noEmit
         working-directory: mobile
 
-      - name: Shared web tests
-        run: bun test shared/web
+      - name: Bridge tests
+        run: bun test shared/web desktop/bridge
 
       # the test ids, storage keys and classes the bridges match, at the Sharkord commit they were
       # last checked against (`sharkord.yml` checks Sharkord's latest weekly)

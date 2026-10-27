@@ -24,7 +24,7 @@ use tauri::{async_runtime::JoinHandle, AppHandle, Manager, Runtime};
 use crate::{
     drain,
     drain::Readiness,
-    feed::{DmChannel, Feed, RawNotification, Route},
+    feed::{DmChannel, Feed, RawNotification, Route, Target},
     model::ServerEntry,
     secrets::{self, Secret},
     session,
@@ -577,6 +577,11 @@ fn announce(
         body: message.body().to_string(),
         icon_url: None,
         is_dm,
+        target: Target {
+            message_id: message.id,
+            thread_id: message.thread_id,
+            plugin_ref: None,
+        },
     };
 
     let muted = muted_set(app, entry_id).contains(&message.channel_id)
@@ -628,6 +633,7 @@ fn report_too_large(app: &AppHandle, entry_id: &str, size: usize) {
             ),
             icon_url: None,
             is_dm: false,
+            target: Target::default(),
         }, Route::Socket),
         false,
     );

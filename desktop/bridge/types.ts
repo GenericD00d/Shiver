@@ -1,6 +1,7 @@
 /** The desktop bridge's config, what it queues for the core, and the hooks it puts on `window`. */
 
 import type { DmChannel } from '../../shared/web/bridge/sharkord';
+import type { HotkeyBinding } from './desktop-api';
 import type { ShiverTheme } from '../../shared/web/bridge/theme';
 import type { NotifyLevel } from '../../shared/web/types';
 
@@ -30,7 +31,11 @@ export type QueuedNotification = {
   body: string;
   iconUrl: string | null;
   isDm: boolean;
+  /** where it leads beyond its channel, when the client said (Sharkord's desktop api; `Target` in feed.rs) */
+  target?: NotificationTarget;
 };
+
+export type NotificationTarget = { messageId?: number | null; threadId?: number | null; pluginRef?: number | null };
 
 export type QueuedMute = { channelId: number; muted: boolean };
 
@@ -73,11 +78,20 @@ declare global {
       open: string[];
       /** something is fullscreen, so Shiver hides its overlay webviews */
       fullscreen: boolean;
+      /** the client's shortcuts, when it set new ones (null when unchanged) */
+      hotkeys: HotkeyBinding[] | null;
+      /** the client's "desktop settings" button was pressed */
+      openSettings: boolean;
     } | null;
     __SHIVER_SET_MUTED__?: (muted: number[]) => void;
     /** shows one conversation beside Shiver's DM list, or (null) goes back to the channels */
     __SHIVER_CONVERSATION__?: (name: string | null) => void;
-    __SHIVER_SELECT_CHANNEL__?: (channelId: number) => void;
+    /** a channel, or (a clicked notification) where in it a desktop-api client should lead */
+    __SHIVER_SELECT_CHANNEL__?: (channelId: number | null, target?: NotificationTarget | null) => void;
+    /** one of the client's shortcuts was pressed */
+    __SHIVER_HOTKEY__?: (actionId: unknown) => void;
+    /** the core's answer to the shortcuts last drained: those it could not register */
+    __SHIVER_HOTKEYS_SET__?: (errors: unknown) => void;
     __SHIVER_SET_READ_FLOOR__?: (floor: Record<string, number>) => void;
     __SHIVER_SET_THEME__?: (theme: ShiverTheme | null) => void;
     /** the window is minimised, which the page cannot otherwise tell */

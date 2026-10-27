@@ -107,6 +107,8 @@ const lastUsed = (registry: Registry) => {
 export const App = () => {
   const [registry, setRegistry] = useState<Registry>(EMPTY);
   const [screen, setScreen] = useState<Screen>('boot');
+  /** the address a `sharkord://` link offered, filled into the add screen */
+  const [linkedOrigin, setLinkedOrigin] = useState<string | null>(null);
   /** the server the sign-in screen is for */
   const [signingIn, setSigningIn] = useState<string | null>(null);
   /** the folder the rename screen is for */
@@ -249,6 +251,31 @@ export const App = () => {
     [boot, resume]
   );
 
+  /**
+   * A `sharkord://add-server` link (from a server's sign-in page): the server, if it is in the rail
+   * already, else the add screen with its address filled in for the user to check. False when
+   * there was no link.
+   */
+  const followServerLink = useCallback(
+    async (known: Registry) => {
+      const origin = await api.takeServerLink().catch(() => null);
+
+      if (!origin) return false;
+
+      const existing = known.servers.find((server) => server.origin === origin);
+
+      if (existing) {
+        await connect(existing);
+      } else {
+        setLinkedOrigin(origin);
+        setScreen('add');
+      }
+
+      return true;
+    },
+    [connect]
+  );
+
   // Runs once. The fragment is cleared as it is read, so a reload does not repeat it.
   const started = useRef(false);
 
@@ -272,6 +299,9 @@ export const App = () => {
 
         return;
       }
+
+      // opened by a link: where it leads, over any other intent
+      if (await followServerLink(next)) return;
 
       if (intent?.kind === 'screen') {
         setScreen(intent.screen);
@@ -303,7 +333,19 @@ export const App = () => {
 
       await resume(next);
     })();
-  }, [connect, refresh, resume]);
+  }, [connect, followServerLink, refresh, resume]);
+
+  useEffect(() => {
+    const stop = api.onServerLink(() => {
+      refresh()
+        .then(followServerLink)
+        .catch((cause) => setError(errorMessage(cause)));
+    });
+
+    return () => {
+      void stop.then((unlisten) => unlisten());
+    };
+  }, [followServerLink, refresh]);
 
   useEffect(() => {
     applyTheme(registry.settings);
@@ -539,6 +581,8 @@ export const App = () => {
               {screen === 'add' ? (
                 <div className="modal-backdrop">
                   <AddServerForm
+                    key={linkedOrigin ?? ''}
+                    initialOrigin={linkedOrigin ?? ''}
                     hint={
                       <>
                         Shiver signs in for you, so the server opens straight into the app. Your password goes only to
@@ -552,9 +596,17 @@ export const App = () => {
                     add={async ({ origin, identity, password, accountLabel }) => {
                       const entry = await api.addServer(origin, identity, password, accountLabel, !!password);
 
+                      setLinkedOrigin(null);
                       await handleAdded(entry.id);
                     }}
-                    onCancel={servers.length > 0 ? () => void resume(registry) : null}
+                    onCancel={
+                      servers.length > 0
+                        ? () => {
+                            setLinkedOrigin(null);
+                            void resume(registry);
+                          }
+                        : null
+                    }
                   />
                 </div>
               ) : null}

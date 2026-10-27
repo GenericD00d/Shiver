@@ -21,5 +21,7 @@
       "react/*": ["./node_modules/@types/react/*"]
     }
   },
-  "include": ["src", "bridge", "vite.config.ts", "vite.bridge.config.ts"]
+  "include": ["src", "bridge", "vite.config.ts", "vite.bridge.config.ts"],
+  // bun runs these (`bun test desktop/bridge`), with its own types
+  "exclude": ["bridge/**/*.test.ts"]
 }

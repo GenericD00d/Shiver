@@ -135,28 +135,30 @@ export function findDmChannelIdByUserName(state: SharkordState, name: string) {
 
 export type NotificationTarget = { channelId: number | null; channelName: string | null; author: string; isDm: boolean };
 
-const DM_TITLE = ' (DM)';
-const IN_CHANNEL = ' in #';
+/** `Author (DM)`: a short marker in brackets, in the client's language (`(MP)`, `（私信）`…) */
+const DM_TITLE = /^(.+?) ?[(（]([^()（）\s]{1,8})[)）]$/;
+/** `Author in #channel`: one word before the channel, in the client's language (`dans`, `в`, `在`…) */
+const CHANNEL_MARK = ' #';
 
 /**
  * Who a notification is from and which channel it is for, from its title alone: Sharkord titles
- * them `Author (DM)` or `Author in #channel`. A name may itself contain ` in #`, so the split taken
- * is the one naming a channel that exists. Matched by name: `selectedChannelId` is exactly the
- * channel a notification is not for.
+ * them `Author (DM)` or `Author in #channel`, in the client's language from after 0.0.28, so the
+ * marker and the word are not read, only where they sit. A name may itself contain ` in #`, so the
+ * split taken is the one naming a channel that exists; failing that, a trailing marker makes a DM.
+ * Matched by name: `selectedChannelId` is exactly the channel a notification is not for.
  */
 export function notificationTarget(title: string, state: SharkordState): NotificationTarget {
-  if (title.endsWith(DM_TITLE)) {
-    const author = title.slice(0, -DM_TITLE.length).trim();
-
-    return { channelId: findDmChannelIdByUserName(state, author), channelName: null, author, isDm: true };
-  }
-
   const channels = (state.channels ?? []).filter((channel) => !channel.isDm);
   let first: NotificationTarget | null = null;
 
-  for (let at = title.indexOf(IN_CHANNEL); at !== -1; at = title.indexOf(IN_CHANNEL, at + 1)) {
-    const author = title.slice(0, at).trim();
-    const channelName = title.slice(at + IN_CHANNEL.length);
+  for (let at = title.indexOf(CHANNEL_MARK); at !== -1; at = title.indexOf(CHANNEL_MARK, at + 1)) {
+    const head = title.slice(0, at);
+    const word = head.lastIndexOf(' ');
+
+    if (word <= 0) continue;
+
+    const author = head.slice(0, word).trim();
+    const channelName = title.slice(at + CHANNEL_MARK.length);
     const channel = channels.find((candidate) => candidate.name === channelName);
 
     if (channel) return { channelId: channel.id, channelName, author, isDm: false };
@@ -164,7 +166,40 @@ export function notificationTarget(title: string, state: SharkordState): Notific
     first ??= { channelId: null, channelName, author, isDm: false };
   }
 
+  const dm = title.match(DM_TITLE);
+
+  if (dm) {
+    const author = (dm[1] ?? '').trim();
+
+    return { channelId: findDmChannelIdByUserName(state, author), channelName: null, author, isDm: true };
+  }
+
   return first ?? { channelId: null, channelName: null, author: title.trim(), isDm: false };
+}
+
+/**
+ * Who a notification that names its channel is from (Sharkord's desktop api hands over the channel,
+ * not the author). For a DM, its other participant; otherwise the longest member name the title
+ * starts with, since the title is in the client's own language (`Author in #channel` in English),
+ * then the title's own split (`notificationTarget`), then the whole title (a plugin's message).
+ */
+export function notificationAuthor(title: string, channelId: number, state: SharkordState) {
+  const channel = (state.channels ?? []).find((candidate) => candidate.id === channelId);
+  const users = state.users ?? [];
+
+  if (channel?.isDm) {
+    const partner = dmPartnerId(channel, state.ownUserId);
+    const name = users.find((user) => user.id === partner)?.name;
+
+    if (name) return name;
+  }
+
+  const named = users
+    .map((user) => user.name)
+    .filter((name) => name !== '' && title.startsWith(name))
+    .sort((a, b) => b.length - a.length)[0];
+
+  return named ?? notificationTarget(title, state).author;
 }
 
 /**

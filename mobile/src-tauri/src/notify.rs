@@ -262,6 +262,8 @@ mod tests {
 
     fn from(user_id: i64, channel_id: i64, text: &str) -> sharkord::NewMessage {
         sharkord::NewMessage {
+            id: None,
+            thread_id: None,
             channel_id,
             user_id: Some(user_id),
             plugin_id: None,

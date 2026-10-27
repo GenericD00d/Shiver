@@ -5,6 +5,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::{
     drain::{self, Readiness},
     error::Result,
+    feed::Target,
     session,
     store::{RegistryStore, Store},
     webviews,
@@ -111,22 +112,36 @@ pub async fn open_message(
     channel_id: Option<i64>,
     is_dm: bool,
     author: String,
+    target: Option<Target>,
 ) -> Result<()> {
     let _ = app.emit_to(
         webviews::SHELL_WEBVIEW,
         drain::OPEN_MESSAGE_EVENT,
-        serde_json::json!({ "entryId": entry_id, "channelId": channel_id, "isDm": is_dm, "author": author }),
+        serde_json::json!({
+            "entryId": entry_id, "channelId": channel_id, "isDm": is_dm, "author": author,
+            "target": target.unwrap_or_default(),
+        }),
     );
 
     webviews::set_popup_open(&app, false)
 }
 
-/// Puts a server's page on one channel (the shell has already opened the server).
+/// Puts a server's page on one channel, or where a notification leads in it: the message, or a
+/// plugin's notification, when its client offers Sharkord's desktop api (the shell has already
+/// opened the server).
 #[tauri::command]
-pub fn select_channel(app: AppHandle, entry_id: String, channel_id: i64) -> Result<()> {
+pub fn select_channel(
+    app: AppHandle,
+    entry_id: String,
+    channel_id: Option<i64>,
+    target: Option<Target>,
+) -> Result<()> {
     if let Some(webview) = app.get_webview(&webviews::webview_label(&entry_id)) {
+        let channel_id = serde_json::json!(channel_id);
+        let target = serde_json::json!(target.unwrap_or_default());
+
         webview.eval(format!(
-            "window.__SHIVER_SELECT_CHANNEL__ && window.__SHIVER_SELECT_CHANNEL__({channel_id})"
+            "window.__SHIVER_SELECT_CHANNEL__ && window.__SHIVER_SELECT_CHANNEL__({channel_id}, {target})"
         ))?;
     }
 
