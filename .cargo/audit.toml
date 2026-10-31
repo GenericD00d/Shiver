@@ -1,0 +1,12 @@
+# Exceptions to `cargo audit` (run in CI). Each says why it does not reach Shiver, and goes once a
+# fixed version can be taken.
+[advisories]
+ignore = [
+    # zip <9 extracting symlinks and Unix permission bits unsafely. zip comes only through
+    # tauri-plugin-updater (^4 up to its latest, 2.14.1), which unpacks an update only after its
+    # minisign signature verifies, and Shiver's updates are an NSIS .exe rather than a zip. Drop
+    # these when the updater takes zip >=9.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+]
