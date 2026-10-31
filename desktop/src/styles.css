@@ -6,6 +6,7 @@
   --shiver-rail: #171717;
   --shiver-accent: #e5e5e5;
   --shiver-on-accent: #171717;
+  --shiver-accent-text: #e5e5e5;
   --shiver-surface: #262626;
   --shiver-surface-hover: #333333;
   --shiver-border: rgb(255 255 255 / 10%);
@@ -70,7 +71,8 @@ body {
   border: none;
   border-radius: 12px;
   background: var(--shiver-surface);
-  color: var(--shiver-text);
+  /* the rail's controls draw their icons in the accent's text colour, and so does the bell */
+  color: var(--shiver-accent-text);
   cursor: pointer;
   font-size: 15px;
   line-height: 1;

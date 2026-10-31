@@ -60,6 +60,8 @@ const EMPTY_REGISTRY: Registry = {
     themeColor: DEFAULT_THEME_COLOR,
     accentColor: DEFAULT_ACCENT_COLOR,
     textColor: null,
+    accentTextColor: null,
+    colorPresets: [],
     notificationSounds: true,
     desktopNotifications: true,
     closeToTray: false,

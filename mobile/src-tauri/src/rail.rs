@@ -229,6 +229,7 @@ fn view(app: &AppHandle) -> RailView {
         theme_color: settings.theme_color,
         accent_color: settings.accent_color,
         text_color: settings.text_color,
+        accent_text_color: settings.accent_text_color,
         current: app.state::<webview::Showing>().server(),
         servers: servers.iter().map(tile).collect(),
         folders: folders

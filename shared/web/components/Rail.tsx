@@ -463,7 +463,7 @@ export const Rail = ({
     <nav ref={rail} className={lifted ? 'rail dragging' : 'rail'} aria-label="Servers">
       <button
         type="button"
-        className={screen === 'dms' ? 'rail-item active' : 'rail-item'}
+        className={screen === 'dms' ? 'rail-item rail-control active' : 'rail-item rail-control'}
         title="Direct messages"
         onClick={onOpenDms}
       >
@@ -478,7 +478,7 @@ export const Rail = ({
 
       <button
         type="button"
-        className={screen === 'add' ? 'rail-item rail-add active' : 'rail-item rail-add'}
+        className={screen === 'add' ? 'rail-item rail-control rail-add active' : 'rail-item rail-control rail-add'}
         title="Add a server"
         onClick={onAdd}
       >
@@ -493,7 +493,7 @@ export const Rail = ({
 
       <button
         type="button"
-        className={screen === 'settings' ? 'rail-item active' : 'rail-item'}
+        className={screen === 'settings' ? 'rail-item rail-control active' : 'rail-item rail-control'}
         title="Shiver settings"
         onClick={onSettings}
       >

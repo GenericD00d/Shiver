@@ -1,8 +1,10 @@
 import type { Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink } from '../../shared/web/types';
 
+import type { ColorPreset } from '../../shared/web/settings';
+
 export { DEFAULT_ACCENT_COLOR, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME } from '../../shared/web/settings';
 
-export type { Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink };
+export type { ColorPreset, Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink };
 
 export type ServerEntry = {
   /** Shiver takes messages of any size from this server, because the user said it may */
@@ -69,6 +71,10 @@ export type Settings = {
   accentColor: string;
   /** the colour text is drawn in, or null to take it from the background */
   textColor: string | null;
+  /** the colour for text in the accent (times, links, mentions), or null for the accent itself */
+  accentTextColor: string | null;
+  /** colour sets the user saved */
+  colorPresets: ColorPreset[];
   /**
    * How loud each server's own sounds are, as a percentage of what they would otherwise be. Goes
    * past 100: see `sound_volume` in model.rs for why that is possible at all.

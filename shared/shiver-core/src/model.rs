@@ -105,11 +105,74 @@ pub fn sanitised_optional_color(value: Option<&str>) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-/// Whether colours are Sharkord's own, in which case Shiver injects no css into pages.
-fn uses_default_colors(theme: &str, accent: &str, text: Option<&str>) -> bool {
-    theme.eq_ignore_ascii_case(DEFAULT_THEME_COLOR)
-        && accent.eq_ignore_ascii_case(DEFAULT_ACCENT_COLOR)
-        && text.is_none()
+/// The colours the user picks, as a set: what Appearance edits and a saved preset holds. No text
+/// colour picks dark or light text from the background; no accent text colour, the accent (made
+/// readable where it is too close to the background).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Colors {
+    pub theme_color: String,
+    pub accent_color: String,
+    #[serde(default)]
+    pub text_color: Option<String>,
+    #[serde(default)]
+    pub accent_text_color: Option<String>,
+}
+
+impl Colors {
+    pub fn sanitised(self) -> Self {
+        Self {
+            theme_color: sanitised_color(&self.theme_color, DEFAULT_THEME_COLOR),
+            accent_color: sanitised_color(&self.accent_color, DEFAULT_ACCENT_COLOR),
+            text_color: sanitised_optional_color(self.text_color.as_deref()),
+            accent_text_color: sanitised_optional_color(self.accent_text_color.as_deref()),
+        }
+    }
+
+    /// Whether these are Sharkord's own, in which case Shiver injects no css into pages.
+    fn are_default(&self) -> bool {
+        self.theme_color.eq_ignore_ascii_case(DEFAULT_THEME_COLOR)
+            && self.accent_color.eq_ignore_ascii_case(DEFAULT_ACCENT_COLOR)
+            && self.text_color.is_none()
+            && self.accent_text_color.is_none()
+    }
+}
+
+/// A set of colours the user saved under a name, to switch back to.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ColorPreset {
+    pub name: String,
+    #[serde(flatten)]
+    pub colors: Colors,
+}
+
+pub const MAX_COLOR_PRESETS: usize = 20;
+const MAX_PRESET_NAME: usize = 32;
+
+/// Presets as stored: named (trimmed, bounded; a blank one is dropped), one per name (the first),
+/// colours sanitised, and no more than `MAX_COLOR_PRESETS`.
+pub fn sanitised_presets(presets: Vec<ColorPreset>) -> Vec<ColorPreset> {
+    let mut kept: Vec<ColorPreset> = Vec::new();
+
+    for preset in presets {
+        let name = crate::text::clamp(preset.name.trim().to_string(), MAX_PRESET_NAME);
+
+        if name.is_empty() || kept.iter().any(|kept| kept.name == name) {
+            continue;
+        }
+
+        kept.push(ColorPreset {
+            name,
+            colors: preset.colors.sanitised(),
+        });
+
+        if kept.len() == MAX_COLOR_PRESETS {
+            break;
+        }
+    }
+
+    kept
 }
 
 /// The red, green and blue of a `#rrggbb` colour.
@@ -125,16 +188,12 @@ pub fn rgb(value: &str) -> Option<[u8; 3]> {
 
 /// The theme handed to server pages: `null` on Sharkord's own colours (pages are left untouched),
 /// otherwise sanitised colours only, since the bridge turns them into CSS.
-pub fn theme_payload(theme: &str, accent: &str, text: Option<&str>) -> serde_json::Value {
-    if uses_default_colors(theme, accent, text) {
+pub fn theme_payload(colors: &Colors) -> serde_json::Value {
+    if colors.are_default() {
         return serde_json::Value::Null;
     }
 
-    serde_json::json!({
-        "themeColor": sanitised_color(theme, DEFAULT_THEME_COLOR),
-        "accentColor": sanitised_color(accent, DEFAULT_ACCENT_COLOR),
-        "textColor": sanitised_optional_color(text),
-    })
+    serde_json::to_value(colors.clone().sanitised()).unwrap_or_default()
 }
 
 /// Channel ids muted on one entry.
@@ -193,10 +252,71 @@ mod tests {
 
     #[test]
     fn default_colours_restyle_nothing() {
-        assert!(theme_payload(DEFAULT_THEME_COLOR, DEFAULT_ACCENT_COLOR, None).is_null());
+        let colors = |theme: &str, accent: &str, accent_text: Option<&str>| Colors {
+            theme_color: theme.into(),
+            accent_color: accent.into(),
+            text_color: None,
+            accent_text_color: accent_text.map(Into::into),
+        };
+
+        assert!(theme_payload(&colors(DEFAULT_THEME_COLOR, DEFAULT_ACCENT_COLOR, None)).is_null());
+
+        let payload = theme_payload(&colors("#FFFFFF", "bad", None));
+
+        assert_eq!(payload["accentColor"], DEFAULT_ACCENT_COLOR);
+        assert_eq!(payload["themeColor"], "#ffffff");
+        assert!(payload["accentTextColor"].is_null());
+
+        let payload = theme_payload(&colors(
+            DEFAULT_THEME_COLOR,
+            DEFAULT_ACCENT_COLOR,
+            Some("#AA0000"),
+        ));
+
         assert_eq!(
-            theme_payload("#FFFFFF", "bad", None)["accentColor"],
-            DEFAULT_ACCENT_COLOR
+            payload["accentTextColor"], "#aa0000",
+            "an accent text colour alone restyles"
+        );
+    }
+
+    #[test]
+    fn presets_are_named_once_sanitised_and_bounded() {
+        let preset = |name: &str, accent: &str| ColorPreset {
+            name: name.into(),
+            colors: Colors {
+                theme_color: "#1F1F25".into(),
+                accent_color: accent.into(),
+                text_color: Some("not a colour".into()),
+                accent_text_color: None,
+            },
+        };
+
+        let kept = sanitised_presets(vec![
+            preset("  Cord  ", "#18181a"),
+            preset("Cord", "#ffffff"),
+            preset("   ", "#ffffff"),
+            preset("Bad", "red; x"),
+        ]);
+
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].name, "Cord");
+        assert_eq!(kept[0].colors.theme_color, "#1f1f25");
+        assert_eq!(kept[0].colors.accent_color, "#18181a");
+        assert_eq!(kept[0].colors.text_color, None);
+        assert_eq!(kept[1].colors.accent_color, DEFAULT_ACCENT_COLOR);
+
+        let many = (0..50).map(|n| preset(&n.to_string(), "#000000")).collect();
+
+        assert_eq!(sanitised_presets(many).len(), MAX_COLOR_PRESETS);
+
+        let read: ColorPreset = serde_json::from_str(
+            r##"{"name":"Old","themeColor":"#000000","accentColor":"#ffffff"}"##,
+        )
+        .unwrap();
+
+        assert_eq!(
+            read.colors.accent_text_color, None,
+            "a preset saved without the newer fields"
         );
     }
 

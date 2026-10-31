@@ -10,6 +10,7 @@ import { defineHook, isTopFrame } from '../../shared/web/bridge/dom';
 import {
   closeSidePanel,
   installAttachmentCards,
+  installComposerWrap,
   installSidePanels,
   installSoundVolume,
   installVoiceColors
@@ -49,6 +50,7 @@ function install(shiver: ShiverConfig) {
   installAttachmentCards(shiver.minimiseAttachments);
   installVoiceColors();
   installSidePanels();
+  installComposerWrap();
   installReactionNames();
   installImageZoom();
   installReturnMakesALine();

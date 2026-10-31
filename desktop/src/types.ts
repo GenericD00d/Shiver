@@ -1,8 +1,10 @@
 import type { Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink } from '../../shared/web/types';
 
+import type { ColorPreset } from '../../shared/web/settings';
+
 export { DEFAULT_ACCENT_COLOR, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME } from '../../shared/web/settings';
 
-export type { Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink };
+export type { ColorPreset, Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink };
 
 export type ServerEntry = {
   id: string;
@@ -85,6 +87,10 @@ export type Settings = {
   accentColor: string;
   /** the colour text is drawn in, or null to take it from the background */
   textColor: string | null;
+  /** the colour for text in the accent (times, links, mentions), or null for the accent itself */
+  accentTextColor: string | null;
+  /** colour sets the user saved */
+  colorPresets: ColorPreset[];
   notificationSounds: boolean;
   /** a system notification for what reaches the feed while the window is not in front */
   desktopNotifications: boolean;

@@ -54,11 +54,7 @@ pub(super) fn startup_color(settings: &Settings) -> tauri::webview::Color {
 }
 
 pub(super) fn theme_payload(settings: &Settings) -> serde_json::Value {
-    shiver_core::model::theme_payload(
-        &settings.theme_color,
-        &settings.accent_color,
-        settings.text_color.as_deref(),
-    )
+    shiver_core::model::theme_payload(&settings.colors())
 }
 
 fn eval_in(app: &AppHandle, label: &str, script: &str) {

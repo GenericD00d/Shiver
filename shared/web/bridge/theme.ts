@@ -1,6 +1,6 @@
 /** Repaints a server's own client in the user's colours (both bridges). */
 
-import { automaticTextColor, lift } from '../colors';
+import { automaticTextColor, lift, readableAccent } from '../colors';
 import { ensureStyle } from './dom';
 
 export type ShiverTheme = {
@@ -8,7 +8,28 @@ export type ShiverTheme = {
   accentColor: string;
   /** the user's text colour, or null to derive it from the background */
   textColor: string | null;
+  /** the user's colour for text in the accent, or null for the accent made readable */
+  accentTextColor: string | null;
 };
+
+/**
+ * Sharkord draws text in its accent (`--primary`) at a few strengths: times beside a message, link
+ * labels, mention and channel chips, "replies" under a thread, plugin authors. Those take the accent
+ * text colour instead, so an accent picked for fills (a dark one on a dark theme) leaves them
+ * readable. `--shiver-accent-text` is set with the theme, through the CSSOM.
+ */
+const ACCENT_TEXT_RULES = [
+  ['[class~="text-primary"]', 100],
+  ['[class~="hover:text-primary"]:hover', 100],
+  ['[class~="text-primary/60"]', 60],
+  ['[class~="text-primary/70"]', 70],
+  ['[class~="text-primary/80"]', 80]
+]
+  .map(
+    ([selector, strength]) =>
+      `${selector} { color: color-mix(in srgb, var(--shiver-accent-text) ${strength}%, transparent) !important; }`
+  )
+  .join(' ');
 
 /**
  * The two rules the theme is written into, `:root` and `.dark` (Sharkord renders under a
@@ -35,13 +56,19 @@ function themeRules(): CSSStyleRule[] {
 export function applyPageTheme(theme: ShiverTheme | null) {
   const rules = themeRules();
 
+  const accentText = ensureStyle('shiver-accent-text');
+
   if (!theme) {
     for (const rule of rules) {
       while (rule.style.length > 0) rule.style.removeProperty(rule.style.item(0));
     }
 
+    accentText.textContent = '';
+
     return;
   }
+
+  accentText.textContent = ACCENT_TEXT_RULES;
 
   const { themeColor, accentColor } = theme;
   const foreground = theme.textColor ?? automaticTextColor(themeColor);
@@ -69,7 +96,8 @@ export function applyPageTheme(theme: ShiverTheme | null) {
     '--primary-foreground': automaticTextColor(accentColor),
     '--sidebar-primary': accentColor,
     '--ring': accentColor,
-    '--sidebar-ring': accentColor
+    '--sidebar-ring': accentColor,
+    '--shiver-accent-text': theme.accentTextColor ?? readableAccent(accentColor, themeColor, foreground)
   };
 
   for (const rule of rules) {

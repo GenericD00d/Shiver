@@ -174,6 +174,17 @@ ${SIDE_PANEL} { display: flex !important; position: fixed !important; inset: 0 !
 }`;
 }
 
+/**
+ * A long unbroken line in the composer (a pasted link) set the editor's narrowest width, and the
+ * column it sits in could not shrink below that, so on a phone it pushed the send button off the
+ * edge, to be scrolled to sideways. The line wraps anywhere instead, and the column may shrink.
+ */
+export function installComposerWrap() {
+  ensureStyle('shiver-composer-wrap').textContent = `
+[class~="compose-scroll-row"] > div:first-child { min-width: 0; }
+[class~="tiptap"] .ProseMirror { overflow-wrap: anywhere; }`;
+}
+
 /** Closes the side panel covering a narrow page, the topmost if two are; true when there was one. */
 export function closeSidePanel() {
   const panel = window.matchMedia(NARROW).matches ? [...document.querySelectorAll(SIDE_PANEL)].pop() : undefined;

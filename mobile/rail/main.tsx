@@ -50,6 +50,7 @@ type View = {
   themeColor: string;
   accentColor: string;
   textColor: string | null;
+  accentTextColor: string | null;
   /** the server whose page is behind the rail */
   current: string | null;
   servers: Tile[];

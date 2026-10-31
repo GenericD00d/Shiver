@@ -44,6 +44,8 @@ const EMPTY: Registry = {
     themeColor: DEFAULT_THEME_COLOR,
     accentColor: DEFAULT_ACCENT_COLOR,
     textColor: null,
+    accentTextColor: null,
+    colorPresets: [],
     soundVolume: 100,
     minimiseAttachments: true,
     lastServerId: null,

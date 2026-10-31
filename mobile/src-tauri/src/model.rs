@@ -7,8 +7,8 @@ use shiver_core::model::{default_sound_volume, default_true};
 pub use shiver_core::{
     is_same_origin,
     model::{
-        sanitised_color, sanitised_optional_color, Folder, MutedChannel, DEFAULT_ACCENT_COLOR,
-        DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME,
+        sanitised_color, sanitised_optional_color, sanitised_presets, ColorPreset, Colors, Folder,
+        MutedChannel, DEFAULT_ACCENT_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME,
     },
     normalize_origin,
     probe::ServerInfo,
@@ -77,6 +77,12 @@ pub struct Settings {
     pub accent_color: String,
     #[serde(default)]
     pub text_color: Option<String>,
+    /// for text in the accent (times, links, mentions); `None` is the accent, kept readable
+    #[serde(default)]
+    pub accent_text_color: Option<String>,
+    /// colour sets the user saved, to switch between
+    #[serde(default)]
+    pub color_presets: Vec<ColorPreset>,
     #[serde(default = "default_sound_volume")]
     pub sound_volume: u16,
     #[serde(default = "default_true")]
@@ -100,6 +106,8 @@ impl Default for Settings {
             theme_color: DEFAULT_THEME_COLOR.into(),
             accent_color: DEFAULT_ACCENT_COLOR.into(),
             text_color: None,
+            accent_text_color: None,
+            color_presets: Vec::new(),
             sound_volume: default_sound_volume(),
             minimise_attachments: true,
             last_server_id: None,
@@ -116,8 +124,20 @@ impl Settings {
         self.theme_color = sanitised_color(&self.theme_color, DEFAULT_THEME_COLOR);
         self.accent_color = sanitised_color(&self.accent_color, DEFAULT_ACCENT_COLOR);
         self.text_color = sanitised_optional_color(self.text_color.as_deref());
+        self.accent_text_color = sanitised_optional_color(self.accent_text_color.as_deref());
+        self.color_presets = sanitised_presets(std::mem::take(&mut self.color_presets));
         self.sound_volume = self.sound_volume.min(MAX_SOUND_VOLUME);
         self
+    }
+
+    /// The colours in use, as one set.
+    pub fn colors(&self) -> Colors {
+        Colors {
+            theme_color: self.theme_color.clone(),
+            accent_color: self.accent_color.clone(),
+            text_color: self.text_color.clone(),
+            accent_text_color: self.accent_text_color.clone(),
+        }
     }
 }
 

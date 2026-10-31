@@ -12,6 +12,7 @@ import { channelPressed, installChannelMenu, requestChannelMenu } from '../../sh
 import { defineHook, ensureStyle, installExternalLinks, whenDocumentReady } from '../../shared/web/bridge/dom';
 import {
   installAttachmentCards,
+  installComposerWrap,
   installSidePanels,
   installSoundVolume,
   installVoiceColors
@@ -288,6 +289,7 @@ function install(shiver: ShiverConfig) {
     installAttachmentFocus();
     installVoiceColors();
     installSidePanels();
+    installComposerWrap();
     installVoiceLock(shiver.voiceLocked, () => state);
 
     if (shiver.conversation) showConversation(shiver.conversation);

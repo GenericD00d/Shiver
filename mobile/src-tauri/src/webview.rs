@@ -540,11 +540,7 @@ pub fn background_color(settings: &Settings) -> Color {
 }
 
 fn theme_payload(settings: &Settings) -> Value {
-    shiver_core::model::theme_payload(
-        &settings.theme_color,
-        &settings.accent_color,
-        settings.text_color.as_deref(),
-    )
+    shiver_core::model::theme_payload(&settings.colors())
 }
 
 #[cfg(test)]

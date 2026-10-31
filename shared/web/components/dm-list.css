@@ -107,8 +107,10 @@
   opacity: 0.7;
 }
 
+/* times are in the accent's text colour, as Sharkord draws them beside a message */
 .dm-item-time {
   flex: 0 0 auto;
+  color: var(--shiver-accent-text);
   font-variant-numeric: tabular-nums;
 }
 

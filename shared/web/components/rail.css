@@ -57,9 +57,22 @@
   background: var(--shiver-surface-hover);
 }
 
+/* every server and folder tile is ringed in the accent, the one in front twice as thick; the ring
+   sits outside the tile so a logo never covers it */
+.rail-item:not(.rail-control),
+.rail-folder-tile {
+  box-shadow: 0 0 0 1px var(--shiver-accent);
+}
+
 .rail-item.active {
   border-radius: 14px;
   box-shadow: 0 0 0 2px var(--shiver-accent);
+}
+
+/* Shiver's own controls draw their icon in the accent's text colour, which stays readable on a dark
+   accent; a tile's initials are the server's name, so they stay in the text colour */
+.rail-control {
+  color: var(--shiver-accent-text);
 }
 
 /* A tile's slot reaches into the gaps either side of it. The negative margin cancels the padding, so
@@ -111,7 +124,6 @@
 
 .rail-add {
   background: var(--shiver-surface);
-  color: var(--shiver-accent);
   font-size: 24px;
   line-height: 1;
 }
