@@ -38,13 +38,14 @@ export const BUILT_IN_PRESETS: readonly ColorPreset[] = [
   },
   // Discord's default dark theme ("Dark", `.theme-darker` in its web client): the chat is
   // --background-base-lower, the server list, channel list and top bar --background-base-lowest,
-  // its text --text-default and the accent its blurple, --brand-500
+  // its text --text-default and the accent its blurple, --brand-500; text in the accent (times,
+  // mentions) is the text's white
   {
     name: 'Cord-like',
     themeColor: '#1a1a1e',
     accentColor: '#5865f2',
     textColor: '#efeff1',
-    accentTextColor: null,
+    accentTextColor: '#efeff1',
     sidebarColor: '#121214'
   }
 ];

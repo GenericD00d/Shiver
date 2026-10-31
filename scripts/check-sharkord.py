@@ -28,7 +28,7 @@ import tempfile
 
 # The Sharkord commit the bridges were last checked against (client 0.0.28). Bump it after checking
 # the bridges against a newer release.
-SHARKORD_REF = "07ab40f7bd8b5102cedb55fa04ed03d22590be6d"
+SHARKORD_REF = "4b9282303b558fe7df53ec0a49fdf2ccc84d11a9"
 SHARKORD_REPO = "https://github.com/sharkord/sharkord"
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -178,8 +178,19 @@ DESKTOP_CONTRACTS = [
         DESKTOP_API,
         r"export type TDesktopBridge = \{\s*getServerListVisible:[\s\S]*?onServerListVisibleChange:[\s\S]*?"
         r"toggleServerList:[\s\S]*?openSettings:[\s\S]*?setUnreadState:[\s\S]*?setConnectionState:[\s\S]*?"
-        r"startSystemAudio:[\s\S]*?stopSystemAudio:[\s\S]*?showNotification:[\s\S]*?setHotkeys:[\s\S]*?"
-        r"onHotkey:[\s\S]*?onNotificationClick:[\s\S]*?setConfirmationHandler:[^;]*;\s*\};",
+        r"setVoiceActive:[\s\S]*?startSystemAudio:[\s\S]*?stopSystemAudio:[\s\S]*?showNotification:[\s\S]*?"
+        r"setHotkeys:[\s\S]*?getHotkeyCapabilities:[\s\S]*?onHotkey:[\s\S]*?onHotkeyErrors:[\s\S]*?"
+        r"onNotificationClick:[^;]*;\s*\};",
+    ),
+    (
+        "hotkey capabilities as `keyUp` and `systemManaged` (`getHotkeyCapabilities`)",
+        DESKTOP_API,
+        r"export type TDesktopHotkeyCapabilities = \{\s*keyUp: boolean;\s*systemManaged: boolean;\s*\};",
+    ),
+    (
+        "a press handed over with its phase, `down` (`pressHotkey`)",
+        DESKTOP_API,
+        r"export type TDesktopHotkeyPhase = 'down' \| 'up';[\s\S]*listener: \(actionId: string, phase: TDesktopHotkeyPhase\) => void",
     ),
     (
         "a message's notification naming the message and the thread it replies in (`readNotification`)",
@@ -194,7 +205,8 @@ DESKTOP_CONTRACTS = [
     (
         "the server-list button first in the top bar's left cell (hidden: Shiver's rail is always shown)",
         "apps/client/src/components/top-bar/index.tsx",
-        r"<div className=\"flex min-w-0 items-center gap-2\">\s*\{isDesktop && \(\s*<Button[^>]*onClick=\{toggleServerList\}",
+        r"grid-cols-\[1fr_minmax\(320px,1\.4fr\)_1fr\][\s\S]*?<div className=\"flex min-w-0 items-center gap-2\">\s*"
+        r"\{isDesktop && \(\s*(?:<>\s*)?<Button[^>]*onClick=\{toggleServerList\}",
     ),
 ]
 

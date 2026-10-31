@@ -16,7 +16,10 @@ import {
 type Api = {
   showNotification: (raw: unknown) => void;
   setHotkeys: (raw: unknown) => Promise<unknown>;
-  onHotkey: (listener: (actionId: string) => void) => () => void;
+  onHotkey: (listener: (actionId: string, phase: string) => void) => () => void;
+  onHotkeyErrors: (listener: (errors: unknown[]) => void) => () => void;
+  getHotkeyCapabilities: () => Promise<{ keyUp: boolean; systemManaged: boolean }>;
+  setVoiceActive: (active: boolean) => void;
   onNotificationClick: (listener: (target: unknown) => void) => () => void;
   openSettings: () => Promise<void>;
   getServerListVisible: () => Promise<boolean>;
@@ -143,14 +146,23 @@ test('a client of the version spoken connects, takes the page\'s notifications a
   expect(await api.setHotkeys([{ actionId: 'mute', combo: 'ctrl+KeyM' }, { bad: 1 }])).toEqual([{ actionId: 'mute', reason: 'taken' }]);
   expect(asked).toEqual([[{ actionId: 'mute', combo: 'ctrl+KeyM' }]]);
 
+  // as Sharkord 0.0.29's client starts: voice, then the shortcuts' capabilities and errors
+  api.setVoiceActive(true);
+  expect(await api.getHotkeyCapabilities()).toEqual({ keyUp: false, systemManaged: false });
+
+  const stopErrors = api.onHotkeyErrors(() => undefined);
+
+  expect(typeof stopErrors).toBe('function');
+  stopErrors();
+
   const pressed: string[] = [];
-  const stop = api.onHotkey((actionId) => pressed.push(actionId));
+  const stop = api.onHotkey((actionId, phase) => pressed.push(`${actionId} ${phase}`));
 
   pressHotkey('mute');
   pressHotkey(5);
   stop();
   pressHotkey('mute');
-  expect(pressed).toEqual(['mute']);
+  expect(pressed).toEqual(['mute down']);
 
   const clicked: unknown[] = [];
 

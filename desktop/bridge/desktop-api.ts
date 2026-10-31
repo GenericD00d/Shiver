@@ -76,7 +76,7 @@ const text = (value: unknown, max: number) => (typeof value === 'string' ? value
 const id = (value: unknown) => (Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : null);
 
 const clickListeners = new Set<Listener<ClickTarget>>();
-const hotkeyListeners = new Set<Listener<string>>();
+const hotkeyListeners = new Set<(actionId: string, phase: 'down') => void>();
 const pluginTargets = new Map<number, PluginTarget>();
 let nextPluginRef = 1;
 let connected = false;
@@ -98,10 +98,10 @@ const call = <T>(listeners: Set<Listener<T>>, value: T) => {
   }
 };
 
-const subscribe = <T>(listeners: Set<Listener<T>>, listener: unknown) => {
+const subscribe = <L>(listeners: Set<L>, listener: unknown) => {
   if (typeof listener !== 'function') return () => undefined;
 
-  const added = listener as Listener<T>;
+  const added = listener as L;
 
   listeners.add(added);
 
@@ -176,9 +176,21 @@ export function readHotkeyErrors(raw: unknown): HotkeyError[] {
   );
 }
 
-/** Tells the client one of its shortcuts was pressed. */
+/**
+ * Tells the client one of its shortcuts was pressed. Only presses: the api offers no key releases
+ * (`keyUp: false`), as Sharkord's own desktop app on Windows, so the client keeps push-to-talk to
+ * the page.
+ */
 export const pressHotkey = (actionId: unknown) => {
-  if (typeof actionId === 'string') call(hotkeyListeners, actionId);
+  if (typeof actionId !== 'string') return;
+
+  for (const listener of hotkeyListeners) {
+    try {
+      listener(actionId, 'down');
+    } catch (error) {
+      console.error('[shiver] a page listener failed', error);
+    }
+  }
 };
 
 /**
@@ -259,6 +271,8 @@ export function installDesktopApi(setup: DesktopSetup) {
     setConnectionState: (state: unknown) => {
       if (typeof state === 'string' && CONNECTION_STATES.includes(state)) connection = state as ConnectionState;
     },
+    // Shiver follows voice itself, from the page (`voice.ts`)
+    setVoiceActive: () => undefined,
     // a virtual microphone for system audio is Linux's (venmic); WebView2 captures it with the screen
     startSystemAudio: () => Promise.resolve(false),
     stopSystemAudio: () => Promise.resolve(),
@@ -268,10 +282,11 @@ export function installDesktopApi(setup: DesktopSetup) {
       if (notification) setup.notify(notification);
     },
     setHotkeys: (raw: unknown) => setup.setHotkeys(readBindings(raw)),
+    getHotkeyCapabilities: () => Promise.resolve({ keyUp: false, systemManaged: false }),
     onHotkey: (listener: unknown) => subscribe(hotkeyListeners, listener),
-    onNotificationClick: (listener: unknown) => subscribe(clickListeners, listener),
-    // Shiver asks its own questions in native dialogs, so it never needs the client's
-    setConfirmationHandler: () => () => undefined
+    // what could not be registered is answered to `setHotkeys`, and nothing is reported later
+    onHotkeyErrors: () => () => undefined,
+    onNotificationClick: (listener: unknown) => subscribe(clickListeners, listener)
   };
 
   const entry = Object.freeze({
@@ -295,8 +310,12 @@ export function installDesktopApi(setup: DesktopSetup) {
   }
 }
 
-/** The client's server-list button, the first in its top bar's left cell (a desktop app's only). */
+/**
+ * The client's server-list button, the first in its top bar's left cell (a desktop app's only). The
+ * top bar is found by its column template, its own in every version (it is `lg:grid` before
+ * Sharkord 0.0.29 and `grid` in a desktop app since).
+ */
 function hideServerListToggle() {
   ensureStyle('shiver-desktop-api').textContent =
-    '.h-12.w-full[class~="lg:grid"] > div:first-child > button:first-child { display: none !important; }';
+    '[class~="grid-cols-[1fr_minmax(320px,1.4fr)_1fr]"] > div:first-child > button:first-child { display: none !important; }';
 }
