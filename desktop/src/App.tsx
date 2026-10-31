@@ -61,6 +61,7 @@ const EMPTY_REGISTRY: Registry = {
     accentColor: DEFAULT_ACCENT_COLOR,
     textColor: null,
     accentTextColor: null,
+    sidebarColor: null,
     colorPresets: [],
     notificationSounds: true,
     desktopNotifications: true,

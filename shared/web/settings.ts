@@ -16,6 +16,8 @@ export type Colors = {
   textColor: string | null;
   /** null is the accent, made readable on the background */
   accentTextColor: string | null;
+  /** the channel list, member list and top bars, and Shiver's rail; null is a shade off the background */
+  sidebarColor: string | null;
 };
 
 export type ColorPreset = Colors & { name: string };
@@ -31,9 +33,20 @@ export const BUILT_IN_PRESETS: readonly ColorPreset[] = [
     themeColor: DEFAULT_THEME_COLOR,
     accentColor: DEFAULT_ACCENT_COLOR,
     textColor: null,
-    accentTextColor: null
+    accentTextColor: null,
+    sidebarColor: null
   },
-  { name: 'Cord-like', themeColor: '#18181a', accentColor: '#1f1f25', textColor: null, accentTextColor: null }
+  // Discord's default dark theme ("Dark", `.theme-darker` in its web client): the chat is
+  // --background-base-lower, the server list, channel list and top bar --background-base-lowest,
+  // its text --text-default and the accent its blurple, --brand-500
+  {
+    name: 'Cord-like',
+    themeColor: '#1a1a1e',
+    accentColor: '#5865f2',
+    textColor: '#efeff1',
+    accentTextColor: null,
+    sidebarColor: '#121214'
+  }
 ];
 
 /** Whether two sets are the same colours (case aside). */
@@ -41,4 +54,5 @@ export const sameColors = (a: Colors, b: Colors) =>
   a.themeColor.toLowerCase() === b.themeColor.toLowerCase() &&
   a.accentColor.toLowerCase() === b.accentColor.toLowerCase() &&
   (a.textColor ?? '').toLowerCase() === (b.textColor ?? '').toLowerCase() &&
-  (a.accentTextColor ?? '').toLowerCase() === (b.accentTextColor ?? '').toLowerCase();
+  (a.accentTextColor ?? '').toLowerCase() === (b.accentTextColor ?? '').toLowerCase() &&
+  (a.sidebarColor ?? '').toLowerCase() === (b.sidebarColor ?? '').toLowerCase();

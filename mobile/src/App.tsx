@@ -45,6 +45,7 @@ const EMPTY: Registry = {
     accentColor: DEFAULT_ACCENT_COLOR,
     textColor: null,
     accentTextColor: null,
+    sidebarColor: null,
     colorPresets: [],
     soundVolume: 100,
     minimiseAttachments: true,

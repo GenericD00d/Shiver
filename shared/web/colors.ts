@@ -56,6 +56,15 @@ const mix = (from: number[], to: number[], percent: number) =>
     .map((channel) => channel.toString(16).padStart(2, '0'))
     .join('')}`;
 
+/** `lift` as a `#rrggbb` (what a colour picker can show): the same mix, worked out here. */
+export const liftHex = (color: string, percent: number) => {
+  const from = channels(color);
+
+  if (!from) return color;
+
+  return mix(from, isLightColor(color) ? [0, 0, 0] : [255, 255, 255], 100 - percent);
+};
+
 /**
  * What accent text needs against its background: WCAG's minimum for body text, since Sharkord draws
  * some of it (times beside a message) at 60% on top.

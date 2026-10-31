@@ -73,6 +73,8 @@ export type Settings = {
   textColor: string | null;
   /** the colour for text in the accent (times, links, mentions), or null for the accent itself */
   accentTextColor: string | null;
+  /** the sidebars' and top bars' colour (and the rail's), or null for a shade off the background */
+  sidebarColor: string | null;
   /** colour sets the user saved */
   colorPresets: ColorPreset[];
   /**

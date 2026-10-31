@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 
-import { automaticTextColor } from '../colors';
+import { automaticTextColor, liftHex } from '../colors';
 import { errorMessage } from '../errors';
 import {
   BUILT_IN_PRESETS,
@@ -26,11 +26,12 @@ export type AppearanceFields = Colors & {
   minimiseAttachments: boolean;
 };
 
-const colorsOf = ({ themeColor, accentColor, textColor, accentTextColor }: Colors): Colors => ({
+const colorsOf = ({ themeColor, accentColor, textColor, accentTextColor, sidebarColor }: Colors): Colors => ({
   themeColor,
   accentColor,
   textColor,
-  accentTextColor
+  accentTextColor,
+  sidebarColor
 });
 
 export const AppearanceSection = ({ draft, onChange }: Edit<AppearanceFields>) => {
@@ -76,6 +77,14 @@ export const AppearanceSection = ({ draft, onChange }: Edit<AppearanceFields>) =
 
       <ColorField label="Background colour" value={draft.themeColor} onChange={(themeColor) => onChange({ themeColor })} />
       <ColorField label="Accent colour" value={draft.accentColor} onChange={(accentColor) => onChange({ accentColor })} />
+
+      <OptionalColorField
+        label="Sidebar colour"
+        value={draft.sidebarColor}
+        automatic={liftHex(draft.themeColor, 90)}
+        onChange={(sidebarColor) => onChange({ sidebarColor })}
+        hint="The channel list, the member list and the bars along the top, and Shiver's server rail. Left automatic, a shade off the background."
+      />
 
       <OptionalColorField
         label="Text colour"

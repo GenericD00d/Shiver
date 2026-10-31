@@ -10,6 +10,8 @@ export type ShiverTheme = {
   textColor: string | null;
   /** the user's colour for text in the accent, or null for the accent made readable */
   accentTextColor: string | null;
+  /** the user's colour for the sidebars and top bars, or null for a shade off the background */
+  sidebarColor: string | null;
 };
 
 /**
@@ -73,13 +75,16 @@ export function applyPageTheme(theme: ShiverTheme | null) {
   const { themeColor, accentColor } = theme;
   const foreground = theme.textColor ?? automaticTextColor(themeColor);
   const border = `color-mix(in srgb, ${foreground} 12%, transparent)`;
+  // Sharkord draws its channel and member lists (both resizable sidebars) and its top bars in
+  // `--card`, and the cards in a channel take it too, as in Sharkord's own theme
+  const sidebar = theme.sidebarColor ?? lift(themeColor, 90);
 
   const variables: Record<string, string> = {
     '--background': themeColor,
     '--foreground': foreground,
-    '--sidebar': lift(themeColor, 90),
+    '--sidebar': sidebar,
     '--sidebar-foreground': foreground,
-    '--card': lift(themeColor, 90),
+    '--card': sidebar,
     '--card-foreground': foreground,
     '--popover': lift(themeColor, 88),
     '--popover-foreground': foreground,

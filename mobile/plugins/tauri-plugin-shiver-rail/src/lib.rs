@@ -61,6 +61,7 @@ pub struct RailView {
     pub accent_color: String,
     pub text_color: Option<String>,
     pub accent_text_color: Option<String>,
+    pub sidebar_color: Option<String>,
     /// the server whose page is behind the rail
     pub current: Option<String>,
     pub servers: Vec<Tile>,
@@ -266,6 +267,7 @@ mod tests {
             accent_color: "#e5e5e5".into(),
             text_color: None,
             accent_text_color: None,
+            sidebar_color: None,
             current: Some("a".into()),
             servers: vec![Tile {
                 id: "a".into(),

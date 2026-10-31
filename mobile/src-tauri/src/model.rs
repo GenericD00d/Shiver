@@ -80,6 +80,10 @@ pub struct Settings {
     /// for text in the accent (times, links, mentions); `None` is the accent, kept readable
     #[serde(default)]
     pub accent_text_color: Option<String>,
+    /// the channel list, member list and top bars, and Shiver's rail; `None` is a shade off the
+    /// background
+    #[serde(default)]
+    pub sidebar_color: Option<String>,
     /// colour sets the user saved, to switch between
     #[serde(default)]
     pub color_presets: Vec<ColorPreset>,
@@ -107,6 +111,7 @@ impl Default for Settings {
             accent_color: DEFAULT_ACCENT_COLOR.into(),
             text_color: None,
             accent_text_color: None,
+            sidebar_color: None,
             color_presets: Vec::new(),
             sound_volume: default_sound_volume(),
             minimise_attachments: true,
@@ -125,6 +130,7 @@ impl Settings {
         self.accent_color = sanitised_color(&self.accent_color, DEFAULT_ACCENT_COLOR);
         self.text_color = sanitised_optional_color(self.text_color.as_deref());
         self.accent_text_color = sanitised_optional_color(self.accent_text_color.as_deref());
+        self.sidebar_color = sanitised_optional_color(self.sidebar_color.as_deref());
         self.color_presets = sanitised_presets(std::mem::take(&mut self.color_presets));
         self.sound_volume = self.sound_volume.min(MAX_SOUND_VOLUME);
         self
@@ -137,6 +143,7 @@ impl Settings {
             accent_color: self.accent_color.clone(),
             text_color: self.text_color.clone(),
             accent_text_color: self.accent_text_color.clone(),
+            sidebar_color: self.sidebar_color.clone(),
         }
     }
 }

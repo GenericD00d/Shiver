@@ -107,7 +107,7 @@ pub fn sanitised_optional_color(value: Option<&str>) -> Option<String> {
 
 /// The colours the user picks, as a set: what Appearance edits and a saved preset holds. No text
 /// colour picks dark or light text from the background; no accent text colour, the accent (made
-/// readable where it is too close to the background).
+/// readable where it is too close to the background); no sidebar colour, a shade off the background.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Colors {
@@ -117,6 +117,9 @@ pub struct Colors {
     pub text_color: Option<String>,
     #[serde(default)]
     pub accent_text_color: Option<String>,
+    /// the channel list, member list and top bars, and Shiver's rail
+    #[serde(default)]
+    pub sidebar_color: Option<String>,
 }
 
 impl Colors {
@@ -126,6 +129,7 @@ impl Colors {
             accent_color: sanitised_color(&self.accent_color, DEFAULT_ACCENT_COLOR),
             text_color: sanitised_optional_color(self.text_color.as_deref()),
             accent_text_color: sanitised_optional_color(self.accent_text_color.as_deref()),
+            sidebar_color: sanitised_optional_color(self.sidebar_color.as_deref()),
         }
     }
 
@@ -135,6 +139,7 @@ impl Colors {
             && self.accent_color.eq_ignore_ascii_case(DEFAULT_ACCENT_COLOR)
             && self.text_color.is_none()
             && self.accent_text_color.is_none()
+            && self.sidebar_color.is_none()
     }
 }
 
@@ -257,6 +262,7 @@ mod tests {
             accent_color: accent.into(),
             text_color: None,
             accent_text_color: accent_text.map(Into::into),
+            sidebar_color: None,
         };
 
         assert!(theme_payload(&colors(DEFAULT_THEME_COLOR, DEFAULT_ACCENT_COLOR, None)).is_null());
@@ -277,6 +283,17 @@ mod tests {
             payload["accentTextColor"], "#aa0000",
             "an accent text colour alone restyles"
         );
+
+        let sidebar = Colors {
+            sidebar_color: Some("#121214".into()),
+            ..colors(DEFAULT_THEME_COLOR, DEFAULT_ACCENT_COLOR, None)
+        };
+
+        assert_eq!(
+            theme_payload(&sidebar)["sidebarColor"],
+            "#121214",
+            "so does a sidebar colour"
+        );
     }
 
     #[test]
@@ -288,6 +305,7 @@ mod tests {
                 accent_color: accent.into(),
                 text_color: Some("not a colour".into()),
                 accent_text_color: None,
+                sidebar_color: Some("#12121".into()),
             },
         };
 
@@ -303,6 +321,7 @@ mod tests {
         assert_eq!(kept[0].colors.theme_color, "#1f1f25");
         assert_eq!(kept[0].colors.accent_color, "#18181a");
         assert_eq!(kept[0].colors.text_color, None);
+        assert_eq!(kept[0].colors.sidebar_color, None);
         assert_eq!(kept[1].colors.accent_color, DEFAULT_ACCENT_COLOR);
 
         let many = (0..50).map(|n| preset(&n.to_string(), "#000000")).collect();
