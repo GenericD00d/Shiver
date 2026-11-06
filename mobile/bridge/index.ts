@@ -24,14 +24,14 @@ import { installSessionShim, takeSeedFromLocation } from '../../shared/web/sessi
 import { installEditInComposer } from './edit';
 import { installRailSwipe, openRail, setHome } from './home';
 import { installAutoReconnect, installQuietReconnect } from './reconnect';
+import { installReactionNames } from './reactions';
 import {
-  installImageZoom,
   installLongPress,
-  installReactionNames,
   installReturnMakesALine,
   installTouchStyles,
   openConversation
 } from './touch';
+import { installImageZoom } from './zoom';
 import type { ShiverConfig } from './types';
 
 function install(shiver: ShiverConfig) {
