@@ -1,7 +1,9 @@
 //! Sharkord's own keyboard shortcuts, for a server whose client offers them to a desktop app
 //! (Sharkord's desktop api, `desktop/bridge/desktop-api.ts`): each page hands over its bindings, and
 //! those of the server last shown are registered system-wide, as Sharkord's desktop app does, so
-//! the others leave their keys free for other applications. A press is told to that page.
+//! the others leave their keys free for other applications. A press is told to that page, and so
+//! is its release (Sharkord's push-to-talk), to the page that had the press even when another
+//! server has been shown since.
 //!
 //! A combination Shiver's own shortcuts use (the mute shortcut, the rail's) is refused as taken,
 //! so the two never take keys from each other.
@@ -42,6 +44,8 @@ struct State {
     /// the server whose bindings are registered
     active: Option<String>,
     registered: Vec<Shortcut>,
+    /// the shortcuts down, with the server and actions each press went to, for its release
+    held: HashMap<Shortcut, (String, Vec<String>)>,
 }
 
 #[derive(Default)]
@@ -184,6 +188,8 @@ fn sync(app: &AppHandle) -> Vec<Shortcut> {
         if wanted.contains(&shortcut) {
             registered.push(shortcut);
         } else {
+            // a release no longer reaches an unregistered shortcut, so it is told now
+            release(app, &shortcut);
             let _ = shortcuts.unregister(shortcut);
         }
     }
@@ -195,8 +201,9 @@ fn sync(app: &AppHandle) -> Vec<Shortcut> {
 
         let handle = app.clone();
         let outcome = shortcuts.on_shortcut(shortcut, move |_app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                press(&handle, &shortcut);
+            match event.state() {
+                ShortcutState::Pressed => press(&handle, &shortcut),
+                ShortcutState::Released => release(&handle, &shortcut),
             }
         });
 
@@ -215,7 +222,7 @@ fn sync(app: &AppHandle) -> Vec<Shortcut> {
 fn press(app: &AppHandle, shortcut: &Shortcut) {
     let hotkeys = app.state::<PageHotkeys>();
     let (entry_id, actions) = {
-        let state = hotkeys.0.locked();
+        let mut state = hotkeys.0.locked();
         let Some(active) = state.active.clone() else {
             return;
         };
@@ -228,17 +235,34 @@ fn press(app: &AppHandle, shortcut: &Shortcut) {
             .map(|(action_id, _)| action_id.clone())
             .collect();
 
+        state
+            .held
+            .insert(*shortcut, (active.clone(), actions.clone()));
+
         (active, actions)
     };
 
-    let Some(webview) = app.get_webview(&webviews::webview_label(&entry_id)) else {
+    tell(app, &entry_id, &actions, "down");
+}
+
+/// Tells the page that had a shortcut's press that it came back up.
+fn release(app: &AppHandle, shortcut: &Shortcut) {
+    let held = app.state::<PageHotkeys>().0.locked().held.remove(shortcut);
+
+    if let Some((entry_id, actions)) = held {
+        tell(app, &entry_id, &actions, "up");
+    }
+}
+
+fn tell(app: &AppHandle, entry_id: &str, actions: &[String], phase: &str) {
+    let Some(webview) = app.get_webview(&webviews::webview_label(entry_id)) else {
         return;
     };
 
     for action_id in actions {
         let action_id = serde_json::json!(action_id);
         let _ = webview.eval(format!(
-            "window.__SHIVER_HOTKEY__ && window.__SHIVER_HOTKEY__({action_id})"
+            "window.__SHIVER_HOTKEY__ && window.__SHIVER_HOTKEY__({action_id}, '{phase}')"
         ));
     }
 }

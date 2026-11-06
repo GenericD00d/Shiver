@@ -28,7 +28,7 @@ import tempfile
 
 # The Sharkord commit the bridges were last checked against (client 0.0.28). Bump it after checking
 # the bridges against a newer release.
-SHARKORD_REF = "4b9282303b558fe7df53ec0a49fdf2ccc84d11a9"
+SHARKORD_REF = "230a74b4034b6d6d35b28ab28c6678cb37a24d01"
 SHARKORD_REPO = "https://github.com/sharkord/sharkord"
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -203,10 +203,12 @@ DESKTOP_CONTRACTS = [
         r"dispatchPluginNotificationClick\(target\.pluginId, target\.data\)[\s\S]*jumpToMessage\(target\)",
     ),
     (
-        "the server-list button first in the top bar's left cell (hidden: Shiver's rail is always shown)",
+        "only the server-list and desktop-settings buttons in the top bar's left cell (both hidden: the rail "
+        "is always shown and has its own settings)",
         "apps/client/src/components/top-bar/index.tsx",
         r"grid-cols-\[1fr_minmax\(320px,1\.4fr\)_1fr\][\s\S]*?<div className=\"flex min-w-0 items-center gap-2\">\s*"
-        r"\{isDesktop && \(\s*(?:<>\s*)?<Button[^>]*onClick=\{toggleServerList\}",
+        r"\{isDesktop && \(\s*<>\s*<Button[^>]*onClick=\{toggleServerList\}[\s\S]*?</Button>\s*"
+        r"<Button[^>]*onClick=\{handleOpenDesktopSettings\}[\s\S]*?</Button>\s*</>\s*\)\}\s*</div>",
     ),
 ]
 
@@ -290,7 +292,7 @@ def check(sharkord):
         titles = json.loads(locale.read_text(encoding="utf8"))
         shapes = {
             "notificationTitleDm": r"\{\{author\}\} ?[(（][^()（）\s]{1,8}[)）]",
-            "notificationTitleChannel": r"\{\{author\}\} \S+ #\{\{channel\}\}",
+            "notificationTitleChannel": r"\{\{author\}\} \S+ #\{\{channel\}\}|#\{\{channel\}\} \S+ \{\{author\}\}",
         }
 
         for key, shape in shapes.items():

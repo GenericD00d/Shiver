@@ -14,7 +14,7 @@ members = [
 [workspace.package]
 version = "0.2.6"
 edition = "2021"
-rust-version = "1.89"
+rust-version = "1.90"
 
 [workspace.dependencies]
 shiver-core = { path = "shared/shiver-core" }
@@ -29,6 +29,8 @@ tauri-plugin-deep-link = "=2.4.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# Shiver's own reports; written to a file on desktop (`tauri-plugin-log`, see logs.rs)
+log = "0.4"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 zeroize = { version = "1", features = ["serde"] }

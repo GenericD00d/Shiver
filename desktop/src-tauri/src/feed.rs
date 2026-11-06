@@ -188,9 +188,13 @@ pub struct DrainResult {
     /// the page's Sharkord shortcuts, when it handed over new ones (Sharkord's desktop api)
     #[serde(default)]
     pub hotkeys: Option<Vec<crate::page_hotkeys::Binding>>,
-    /// Sharkord's "desktop settings" button was pressed
+    /// the page's client speaks another version of Sharkord's desktop api (`server-outdated`,
+    /// `app-outdated`), so it is a web page to Shiver; read with `drain::Mismatch::from_page`
     #[serde(default)]
-    pub open_settings: bool,
+    pub mismatch: Option<String>,
+    /// what the page threw since the last drain, for the log file (`logs::page_errors`)
+    #[serde(default)]
+    pub page_errors: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

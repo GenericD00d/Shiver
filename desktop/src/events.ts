@@ -10,12 +10,12 @@ export const EVENTS = {
   openMessage: 'shiver://open-message',
   /** a `sharkord://` link arrived: `take_server_link` has what it offers */
   serverLink: 'shiver://server-link',
-  /** a server's page asked for Shiver's settings (Sharkord's "desktop settings" button) */
-  openSettings: 'shiver://open-settings',
   dmFailed: 'shiver://dm-failed',
   serverReady: 'shiver://server-ready',
   voice: 'shiver://voice',
   status: 'shiver://status',
+  /** servers whose client speaks another version of Sharkord's desktop api (`Mismatch`) */
+  mismatch: 'shiver://mismatch',
   signedOut: 'shiver://signed-out',
   update: 'shiver://update',
   /** a rail shortcut: `{ server: n }` (1-based) or `{ step: ±1 }` */

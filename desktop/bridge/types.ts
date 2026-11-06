@@ -18,6 +18,8 @@ export type ShiverConfig = {
   /** another server holds the voice session (which one is never said), so joins are refused */
   voiceLocked: boolean;
   minimiseAttachments: boolean;
+  /** underline misspellings in the page's text boxes */
+  spellcheck: boolean;
   /** percentage of Sharkord's own sound level */
   soundVolume: number;
   /** which of this server's messages notify */
@@ -80,8 +82,10 @@ declare global {
       fullscreen: boolean;
       /** the client's shortcuts, when it set new ones (null when unchanged) */
       hotkeys: HotkeyBinding[] | null;
-      /** the client's "desktop settings" button was pressed */
-      openSettings: boolean;
+      /** the client speaks another version of Sharkord's desktop api */
+      mismatch: 'server-outdated' | 'app-outdated' | null;
+      /** what the page threw since the last drain, for Shiver's log (`page-errors.ts`) */
+      pageErrors: string[];
     } | null;
     __SHIVER_SET_MUTED__?: (muted: number[]) => void;
     /** shows one conversation beside Shiver's DM list, or (null) goes back to the channels */
@@ -89,7 +93,8 @@ declare global {
     /** a channel, or (a clicked notification) where in it a desktop-api client should lead */
     __SHIVER_SELECT_CHANNEL__?: (channelId: number | null, target?: NotificationTarget | null) => void;
     /** one of the client's shortcuts was pressed */
-    __SHIVER_HOTKEY__?: (actionId: unknown) => void;
+    __SHIVER_SET_SPELLCHECK__?: (on: boolean) => void;
+    __SHIVER_HOTKEY__?: (actionId: unknown, phase?: unknown) => void;
     /** the core's answer to the shortcuts last drained: those it could not register */
     __SHIVER_HOTKEYS_SET__?: (errors: unknown) => void;
     __SHIVER_SET_READ_FLOOR__?: (floor: Record<string, number>) => void;

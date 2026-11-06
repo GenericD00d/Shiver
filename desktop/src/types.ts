@@ -69,6 +69,9 @@ export type MenuFacts = {
 /** What the badge on a server's icon says. */
 export type ServerStatus = 'online' | 'connecting' | 'offline';
 
+/** A server's client speaks another version of Sharkord's desktop api, so its desktop features are off. */
+export type Mismatch = 'server-outdated' | 'app-outdated';
+
 /** The one call across all servers; controls act on `entryId`, not on the server on screen. */
 export type VoiceStatus = {
   entryId: string;
@@ -107,6 +110,8 @@ export type Settings = {
   soundVolume: number;
   /** shrink the file card under a picture down to its icon; see `minimise_attachments` in model.rs */
   minimiseAttachments: boolean;
+  /** underline misspellings in a server's text boxes; see `spellcheck` in model.rs */
+  spellcheck: boolean;
   lastServerId: string | null;
   /** sites whose links open without asking, each from one server's pages */
   trustedLinks: TrustedLink[];

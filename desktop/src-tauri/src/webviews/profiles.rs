@@ -47,7 +47,7 @@ fn prune_data_stores(app: &AppHandle) {
 
         for store in stores.into_iter().filter(|store| !current.contains(store)) {
             if let Err(error) = app.remove_data_store(store).await {
-                eprintln!("[shiver] could not remove a page's data store: {error}");
+                log::warn!("could not remove a page's data store: {error}");
             }
         }
     });

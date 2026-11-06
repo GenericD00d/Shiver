@@ -220,7 +220,7 @@ pub fn create_main_window(app: &AppHandle) -> Result<Window> {
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. }
         ) {
             if let Err(error) = relayout(&handle) {
-                eprintln!("[shiver] could not relayout after a resize: {error}");
+                log::warn!("could not relayout after a resize: {error}");
             }
 
             // minimising arrives as a resize on Windows; pages cannot see it themselves
@@ -293,7 +293,7 @@ pub fn relayout(app: &AppHandle) -> Result<()> {
         };
 
         if let Err(error) = place(&webview, rect) {
-            eprintln!("[shiver] could not lay out {label}: {error}");
+            log::warn!("could not lay out {label}: {error}");
         }
     }
 
@@ -356,9 +356,19 @@ fn is_shiver_page(url: &Url) -> bool {
         || (cfg!(debug_assertions) && url.scheme() == "http" && url.host_str() == Some("localhost"))
 }
 
+/// WebView2's command line, for every webview: wry's own defaults (no mini menu, no SmartScreen
+/// check of each download), which setting any replaces, and none of Chromium's slowing of a page
+/// whose window is covered or out of focus, which lowers its priority and starves a screen share
+/// (as Sharkord's desktop app does). Webviews sharing a data directory must agree on it.
+const BROWSER_ARGS: &str = concat!(
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion",
+    " --disable-renderer-backgrounding --disable-backgrounding-occluded-windows"
+);
+
 /// One of Shiver's own webviews, which only ever shows Shiver's pages.
 fn chrome_webview(label: &str, path: &str) -> WebviewBuilder<tauri::Wry> {
     WebviewBuilder::new(label, WebviewUrl::App(path.into()))
+        .additional_browser_args(BROWSER_ARGS)
         .on_navigation(is_shiver_page)
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
 }
@@ -426,7 +436,7 @@ fn hide_all_but(window: &Window, keep: impl Fn(&str) -> bool) {
     for webview in window.webviews() {
         if !keep(webview.label()) {
             if let Err(error) = webview.hide() {
-                eprintln!("[shiver] could not hide {}: {error}", webview.label());
+                log::warn!("could not hide {}: {error}", webview.label());
             }
         }
     }
@@ -459,7 +469,7 @@ pub fn show_server(
             (voice_locked, None),
             content_rect(&window)?,
         )
-        .inspect_err(|error| eprintln!("[shiver] could not open {}: {error}", entry.origin))?;
+        .inspect_err(|error| log::warn!("could not open {}: {error}", entry.origin))?;
     }
 
     hide_all_but(&window, |other| is_shiver_chrome(other) || other == label);
@@ -662,7 +672,7 @@ pub fn trim_pages(app: &AppHandle) {
         }
 
         if let Err(error) = close_server(app, &entry_id) {
-            eprintln!("[shiver] could not close the page for {entry_id}: {error}");
+            log::warn!("could not close the page for {entry_id}: {error}");
         }
     }
 
@@ -729,6 +739,7 @@ fn build_page_webview(
     let builder = WebviewBuilder::new(webview_label(&entry.id), WebviewUrl::External(url))
         // Sharkord uploads by listening for dragover/drop, which the native handler would swallow
         .disable_drag_drop_handler()
+        .additional_browser_args(BROWSER_ARGS)
         .initialization_script(bridge_script(entry, settings, token, muted, opening))
         .data_store_identifier(data_store(entry))
         .on_navigation(move |target| {
@@ -737,7 +748,7 @@ fn build_page_webview(
             if !allowed {
                 let away = target.origin().ascii_serialization();
 
-                eprintln!("[shiver] {origin} tried to leave for {away}; refused");
+                log::warn!("{origin} tried to leave for {away}; refused");
             }
 
             allowed
@@ -748,8 +759,8 @@ fn build_page_webview(
     if let Some(root) = profiles_root(window.app_handle()) {
         builder = builder.data_directory(root.join(profile_name(entry)));
     } else {
-        eprintln!(
-            "[shiver] no local data directory; {} shares the default browser profile",
+        log::warn!(
+            "no local data directory; {} shares the default browser profile",
             entry.id
         );
     }
@@ -780,6 +791,7 @@ fn bridge_script(
         "conversation": conversation,
         "soundVolume": settings.sound_volume.min(crate::model::MAX_SOUND_VOLUME),
         "minimiseAttachments": settings.minimise_attachments,
+        "spellcheck": settings.spellcheck,
         "voiceLocked": voice_locked,
         "notify": entry.notify,
     });

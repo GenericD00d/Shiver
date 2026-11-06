@@ -73,9 +73,14 @@ will serve you perfectly well.
   time across all of them
 - **A system-wide shortcut** for muting your microphone, and **Ctrl+1 to 9** and
   **Ctrl+Alt+Up/Down** to move between servers while Shiver is in front
-- **Close to the tray** and **start at login**, both off until you turn them on
-- **Speaks Sharkord's desktop api** (Sharkord 0.0.29 and newer): its notifications lead to the exact message (or thread reply) they are for, and its own
-  keyboard shortcuts work system-wide for the server on screen
+- **Close to the tray** (its icon marked while anything is unread) and **start at login**, both
+  off until you turn them on
+- **A log file** of what Shiver and each server's page ran into, kept on your computer, for
+  attaching to a bug report (Settings → About)
+- **Speaks Sharkord's desktop api** (Sharkord 0.0.29 and newer), push-to-talk system-wide
+  included: its notifications lead to the exact message (or thread reply) they are for, and its own
+  keyboard shortcuts work system-wide for the server on screen. A server on a different version
+  of it is marked in the rail, saying whether the server or Shiver needs updating
 
 **Android** (8.0 or newer: older versions no longer get WebView security updates)
 

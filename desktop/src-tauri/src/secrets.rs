@@ -101,7 +101,7 @@ pub async fn read_off_thread(kind: Secret, entry_id: &str) -> Option<SecretStrin
     off_thread(move || backend::get(kind, &id))
         .await
         .unwrap_or_else(|error| {
-            eprintln!("[shiver] could not read a secret for {entry_id}: {error}");
+            log::warn!("could not read a secret for {entry_id}: {error}");
 
             None
         })

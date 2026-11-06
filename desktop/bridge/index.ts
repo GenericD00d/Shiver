@@ -39,6 +39,7 @@ import { applyPageTheme } from '../../shared/web/bridge/theme';
 import { onOpenDmFailure, openDmChannelId, selectChannelWhenReady, showConversation } from './conversations';
 import {
   connectionState,
+  desktopMismatch,
   type HotkeyBinding,
   type HotkeyError,
   installDesktopApi,
@@ -53,6 +54,7 @@ import {
   resolveDmChannels,
   silenceMessagePing
 } from './notifications';
+import { capturePageErrors, takePageErrors } from './page-errors';
 import { isClientReady, isFullscreen, isSignedOut, isStalled } from './page-state';
 import { applyNotifyLevel, seedDefaults, seedSession } from './storage';
 import type { QueuedMute, QueuedNotification, ShiverConfig } from './types';
@@ -60,6 +62,7 @@ import { setWindowHidden } from './visibility';
 import { installVoiceLock, readVoice, runVoiceAction, setVoiceLocked } from './voice';
 
 function install(shiver: ShiverConfig) {
+  capturePageErrors();
   seedSession(shiver.token);
   seedDefaults(shiver.notify);
 
@@ -75,7 +78,6 @@ function install(shiver: ShiverConfig) {
   let syncedMutes: number[] | null = null;
   let openDmFailed = false;
   let markAllRead = false;
-  let openSettings = false;
   /** the page's shortcuts, while not yet handed to the core: none at first, so a reload clears them */
   let hotkeys: HotkeyBinding[] | null = [];
   /** answers the latest set of shortcuts not yet drained, then the one the core is registering */
@@ -159,7 +161,8 @@ function install(shiver: ShiverConfig) {
       signedOut: connection !== 'connected' && isSignedOut(),
       stalled: connection !== 'connected' && connection !== 'connecting' && isStalled(),
       hotkeys,
-      openSettings,
+      mismatch: desktopMismatch(),
+      pageErrors: takePageErrors(),
       fullscreen: isFullscreen(),
       voice: readVoice(state),
       // an open DM first: `selectedChannelId` keeps naming the last ordinary channel
@@ -170,7 +173,6 @@ function install(shiver: ShiverConfig) {
     syncedMutes = null;
     openDmFailed = false;
     markAllRead = false;
-    openSettings = false;
 
     if (hotkeys !== null) {
       hotkeys = null;
@@ -179,8 +181,8 @@ function install(shiver: ShiverConfig) {
       answerPending = null;
     }
 
-    const { notifications, mutes, open, ready, signedOut, stalled, fullscreen, voice, viewingChannelId } = drained;
-    const now = JSON.stringify([ready, signedOut, stalled, fullscreen, voice, viewingChannelId]);
+    const { notifications, mutes, open, ready, signedOut, stalled, fullscreen, voice, viewingChannelId, mismatch } = drained;
+    const now = JSON.stringify([ready, signedOut, stalled, fullscreen, voice, viewingChannelId, mismatch]);
     const queued =
       notifications.length ||
       mutes.length ||
@@ -190,7 +192,7 @@ function install(shiver: ShiverConfig) {
       drained.syncedMutes ||
       drained.openDmFailed ||
       drained.hotkeys ||
-      drained.openSettings;
+      drained.pageErrors.length;
 
     // a signed-out page keeps saying so: recovery retries on those reports
     if (!full && !queued && !signedOut && now === reported) return null;
@@ -251,9 +253,6 @@ function install(shiver: ShiverConfig) {
         target: { messageId, threadId: parentMessageId ?? null }
       });
     },
-    openSettings: () => {
-      openSettings = true;
-    },
     setHotkeys: (bindings) => {
       answerPending?.([]);
       hotkeys = bindings;
@@ -287,6 +286,7 @@ function install(shiver: ShiverConfig) {
     installMuteStyles();
     installAttachmentCards(shiver.minimiseAttachments);
     installAttachmentFocus();
+    installSpellcheck(shiver.spellcheck);
     installVoiceColors();
     installSidePanels();
     installComposerWrap();
@@ -352,6 +352,23 @@ function reserveTopBarSpace() {
 @media ${NARROW} { ${SIDE_PANEL} .h-12.border-b { padding-right: 48px !important; } }
 [data-slot="sheet-content"][class~="right-0"] > button[class~="top-4"][class~="right-4"] { right: 64px !important; }
 `;
+}
+
+/**
+ * Turns the page's spellchecking off or back on. Sharkord sets no `spellcheck` of its own, and the
+ * attribute is inherited, so one on the root reaches every text box, the message box included.
+ */
+function installSpellcheck(on: boolean) {
+  const apply = (next: unknown) => {
+    if (next === false) {
+      document.documentElement.spellcheck = false;
+    } else {
+      document.documentElement.removeAttribute('spellcheck');
+    }
+  };
+
+  apply(on);
+  defineHook('__SHIVER_SET_SPELLCHECK__', apply);
 }
 
 /** Right-click on a sidebar channel opens the channel menu (`channel-menu.ts`), not the browser's. */

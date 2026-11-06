@@ -103,10 +103,10 @@ pub async fn watch(key: &str, mut watcher: impl Watcher) {
                     failures = 0;
                 }
 
-                eprintln!("[shiver] {origin} closed the connection");
+                log::warn!("{origin} closed the connection");
             }
             Err(Error::Refused(reason)) => {
-                eprintln!("[shiver] {origin} refused Shiver's session ({reason})");
+                log::warn!("{origin} refused Shiver's session ({reason})");
                 refusals += 1;
 
                 if watcher.refused(refusals).await {
@@ -116,14 +116,12 @@ pub async fn watch(key: &str, mut watcher: impl Watcher) {
                 return;
             }
             Err(Error::TooLarge { size, max }) => {
-                eprintln!(
-                    "[shiver] {origin} sent {size} bytes in one message; Shiver accepts {max}"
-                );
+                log::warn!("{origin} sent {size} bytes in one message; Shiver accepts {max}");
                 watcher.too_large(size);
 
                 return;
             }
-            Err(error) => eprintln!("[shiver] could not watch a server: {error}"),
+            Err(error) => log::warn!("could not watch a server: {error}"),
         }
 
         watcher.disconnected();
@@ -225,8 +223,8 @@ pub(crate) async fn join(socket: &mut Socket, origin: &str, token: &str) -> Resu
             Ok(Value::Array(conversations)) => {
                 joined.dms = parse_dms(&conversations, &joined, origin)
             }
-            Ok(_) => eprintln!("[shiver] {origin}: dms.get did not answer with a list"),
-            Err(error) => eprintln!("[shiver] could not read {origin}'s direct messages: {error}"),
+            Ok(_) => log::warn!("{origin}: dms.get did not answer with a list"),
+            Err(error) => log::warn!("could not read {origin}'s direct messages: {error}"),
         }
     }
 
@@ -238,7 +236,7 @@ pub(crate) async fn join(socket: &mut Socket, origin: &str, token: &str) -> Resu
         match call(socket, PLUGIN_DATA_ID, "plugins.getUserData", Some(input)).await {
             Ok(stored) => joined.shared_floor = parse_shared_floor(&stored),
             Err(error) => {
-                eprintln!("[shiver] could not read {origin}'s shared unread floor: {error}")
+                log::warn!("could not read {origin}'s shared unread floor: {error}")
             }
         }
     }
@@ -262,14 +260,14 @@ impl Session {
             let frame = match tokio::time::timeout(IDLE_TIMEOUT, self.socket.next()).await {
                 Ok(Some(Ok(frame))) => frame,
                 Ok(Some(Err(error))) => {
-                    eprintln!("[shiver] a server's socket failed mid-session: {error}");
+                    log::warn!("a server's socket failed mid-session: {error}");
 
                     return None;
                 }
                 Ok(None) => return None,
                 Err(_) => {
-                    eprintln!(
-                        "[shiver] a server said nothing for {}s; dropping the socket",
+                    log::warn!(
+                        "a server said nothing for {}s; dropping the socket",
                         IDLE_TIMEOUT.as_secs()
                     );
 
@@ -306,7 +304,7 @@ impl Session {
                     parse_message(&data)
                 }
                 Reply::Failed { id, message, .. } => {
-                    eprintln!("[shiver] the server refused request {id:?}: {message}");
+                    log::warn!("the server refused request {id:?}: {message}");
 
                     // with every subscription refused the socket answers pings and says nothing:
                     // closed, so the watch reconnects (with backoff) rather than going quiet. One

@@ -44,8 +44,8 @@ impl Openings {
         let granted = self.take(key, wanted.len());
 
         if granted < wanted.len() {
-            eprintln!(
-                "[shiver] {key} asked to open {} links, opening {granted}",
+            log::warn!(
+                "{key} asked to open {} links, opening {granted}",
                 wanted.len()
             );
         }

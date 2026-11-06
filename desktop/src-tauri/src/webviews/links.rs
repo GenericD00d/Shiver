@@ -34,7 +34,7 @@ pub fn ask_to_open(app: &AppHandle, entry_id: &str, server: &str, url: Url) {
     };
 
     if ASKING.swap(true, Ordering::AcqRel) {
-        return eprintln!("[shiver] {server} asked to open a link while another waited; dropped");
+        return log::warn!("{server} asked to open a link while another waited; dropped");
     }
 
     let mut dialog = app.dialog().message(question).title("Open link?").buttons(
@@ -74,6 +74,6 @@ fn open_in_browser(app: &AppHandle, url: &Url) {
     use tauri_plugin_opener::OpenerExt;
 
     if let Err(error) = app.opener().open_url(url.as_str(), None::<&str>) {
-        eprintln!("[shiver] could not open {url} in the browser: {error}");
+        log::warn!("could not open {url} in the browser: {error}");
     }
 }

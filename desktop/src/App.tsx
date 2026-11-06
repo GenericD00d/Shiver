@@ -22,6 +22,7 @@ import {
   type NotificationTarget,
   type Registry,
   type ServerEntry,
+  type Mismatch,
   type ServerStatus,
   type Settings,
   type VoiceStatus
@@ -69,11 +70,18 @@ const EMPTY_REGISTRY: Registry = {
     startAtLogin: false,
     soundVolume: 100,
     minimiseAttachments: true,
+    spellcheck: true,
     lastServerId: null,
     trustedLinks: [],
     muteHotkey: null,
     pagesKept: DEFAULT_PAGES_KEPT
   }
+};
+
+/** What a server's tooltip says when its client speaks another version of Sharkord's desktop api. */
+const MISMATCH_NOTICES: Record<Mismatch, string> = {
+  'server-outdated': 'This server runs an older Sharkord: its desktop features are off until it is updated.',
+  'app-outdated': 'This server needs a newer Shiver: its desktop features are off until you update.'
 };
 
 export const App = () => {
@@ -94,6 +102,7 @@ export const App = () => {
   const [signingIn, setSigningIn] = useState<string | null>(null);
   const [voice, setVoice] = useState<VoiceStatus | null>(null);
   const [statuses, setStatuses] = useState<Record<string, ServerStatus>>({});
+  const [mismatches, setMismatches] = useState<Record<string, Mismatch>>({});
   const [connecting, setConnecting] = useState<Connecting | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -369,6 +378,7 @@ export const App = () => {
   // the core drives this rather than the shell polling: two of the three states are not events, a
   // server goes from connecting to offline by nothing happening for long enough
   useCoreEvent<Record<string, ServerStatus>>(EVENTS.status, setStatuses);
+  useCoreEvent<Record<string, Mismatch>>(EVENTS.mismatch, setMismatches);
 
   // a call can start, move or end on any server, including one nobody is looking at
   useEffect(() => {
@@ -550,8 +560,6 @@ export const App = () => {
     }
   });
 
-  useCoreEvent(EVENTS.openSettings, () => void openPanel('settings'));
-
   // the rail's menus are native os menus, so the item chosen comes back as an event
   useCoreEvent<string>(EVENTS.menu, (id) => {
     const chosen = readMenuId(id);
@@ -643,6 +651,13 @@ export const App = () => {
     () => Object.keys(statuses).filter((id) => statuses[id] === 'offline'),
     [statuses]
   );
+  const notices = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(mismatches).map(([id, mismatch]) => [id, MISMATCH_NOTICES[mismatch]])
+      ),
+    [mismatches]
+  );
 
   const renaming = registry.folders.find((folder) => folder.id === renamingFolder);
   const removingServer = registry.servers.find((server) => server.id === removing);
@@ -659,6 +674,7 @@ export const App = () => {
         screen={panel === 'dms' || panel === 'settings' || panel === 'add' ? panel : null}
         unread={unread}
         offline={offline}
+        notices={notices}
         onOpen={(id) => void openServer(id)}
         onOpenDms={() => void openDmPanel()}
         onAdd={() => void openPanel('add')}

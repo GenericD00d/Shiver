@@ -245,6 +245,20 @@
 
 /* A server that is not answering: a red mark with the exclamation cut out, so the icon shows
    through; `inherit` follows the tile's radius. */
+/* a server whose desktop features are off (`notices`): an amber dot in the lower corner, away
+   from the unread badge */
+.rail-notice {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px var(--shiver-rail);
+  pointer-events: none;
+}
+
 .rail-offline {
   position: absolute;
   inset: 0;

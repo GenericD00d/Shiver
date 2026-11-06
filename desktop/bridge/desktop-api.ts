@@ -59,7 +59,6 @@ export type HotkeyError = { actionId: string; reason: 'unsupported' | 'taken' };
 
 type DesktopSetup = {
   notify: (notification: DesktopNotification) => void;
-  openSettings: () => void;
   /** answered once the core has registered them */
   setHotkeys: (bindings: HotkeyBinding[]) => Promise<HotkeyError[]>;
 };
@@ -76,11 +75,23 @@ const text = (value: unknown, max: number) => (typeof value === 'string' ? value
 const id = (value: unknown) => (Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : null);
 
 const clickListeners = new Set<Listener<ClickTarget>>();
-const hotkeyListeners = new Set<(actionId: string, phase: 'down') => void>();
+export type HotkeyPhase = 'down' | 'up';
+
+const hotkeyListeners = new Set<(actionId: string, phase: HotkeyPhase) => void>();
 const pluginTargets = new Map<number, PluginTarget>();
 let nextPluginRef = 1;
 let connected = false;
 let connection: ConnectionState | null = null;
+let mismatch: Mismatch | null = null;
+
+/**
+ * The client asked for another version of the api: `server-outdated` when it is older than this
+ * bridge, `app-outdated` when newer. It then stays a web page, without the desktop features.
+ */
+export type Mismatch = 'server-outdated' | 'app-outdated';
+
+/** Whether the page's client asked for another version of the api, and which way. */
+export const desktopMismatch = () => mismatch;
 
 /** Whether the page's client took the api, so its notifications and shortcuts come through it. */
 export const isDesktopClient = () => connected;
@@ -177,16 +188,18 @@ export function readHotkeyErrors(raw: unknown): HotkeyError[] {
 }
 
 /**
- * Tells the client one of its shortcuts was pressed. Only presses: the api offers no key releases
- * (`keyUp: false`), as Sharkord's own desktop app on Windows, so the client keeps push-to-talk to
- * the page.
+ * Tells the client one of its shortcuts went down or came back up. The core reports releases too
+ * (`keyUp: true`, which Sharkord's own desktop app offers only on Wayland), so the client's
+ * push-to-talk works system-wide; anything but `up` is a press.
  */
-export const pressHotkey = (actionId: unknown) => {
+export const pressHotkey = (actionId: unknown, phase?: unknown) => {
   if (typeof actionId !== 'string') return;
+
+  const pressed: HotkeyPhase = phase === 'up' ? 'up' : 'down';
 
   for (const listener of hotkeyListeners) {
     try {
-      listener(actionId, 'down');
+      listener(actionId, pressed);
     } catch (error) {
       console.error('[shiver] a page listener failed', error);
     }
@@ -261,11 +274,8 @@ export function installDesktopApi(setup: DesktopSetup) {
     getServerListVisible: () => Promise.resolve(true),
     onServerListVisibleChange: () => () => undefined,
     toggleServerList: () => Promise.resolve(),
-    openSettings: () => {
-      setup.openSettings();
-
-      return Promise.resolve();
-    },
+    // its only caller is the top bar's "desktop settings" button, hidden: the rail has settings
+    openSettings: () => Promise.resolve(),
     // Shiver counts unread itself, without the muted channels Sharkord's count includes
     setUnreadState: () => undefined,
     setConnectionState: (state: unknown) => {
@@ -282,7 +292,7 @@ export function installDesktopApi(setup: DesktopSetup) {
       if (notification) setup.notify(notification);
     },
     setHotkeys: (raw: unknown) => setup.setHotkeys(readBindings(raw)),
-    getHotkeyCapabilities: () => Promise.resolve({ keyUp: false, systemManaged: false }),
+    getHotkeyCapabilities: () => Promise.resolve({ keyUp: true, systemManaged: false }),
     onHotkey: (listener: unknown) => subscribe(hotkeyListeners, listener),
     // what could not be registered is answered to `setHotkeys`, and nothing is reported later
     onHotkeyErrors: () => () => undefined,
@@ -292,11 +302,20 @@ export function installDesktopApi(setup: DesktopSetup) {
   const entry = Object.freeze({
     version: DESKTOP_API_VERSION,
     connect: (clientVersion: unknown) => {
-      if (clientVersion !== DESKTOP_API_VERSION) return undefined;
+      if (clientVersion !== DESKTOP_API_VERSION) {
+        if (typeof clientVersion === 'number' && Number.isFinite(clientVersion)) {
+          mismatch = clientVersion < DESKTOP_API_VERSION ? 'server-outdated' : 'app-outdated';
+        }
+
+        return undefined;
+      }
+
+      mismatch = null;
+
 
       if (!connected) {
         connected = true;
-        hideServerListToggle();
+        hideDesktopButtons();
       }
 
       return api;
@@ -311,11 +330,12 @@ export function installDesktopApi(setup: DesktopSetup) {
 }
 
 /**
- * The client's server-list button, the first in its top bar's left cell (a desktop app's only). The
- * top bar is found by its column template, its own in every version (it is `lg:grid` before
- * Sharkord 0.0.29 and `grid` in a desktop app since).
+ * The buttons in the client's top bar's left cell, a desktop app's only: its server list's toggle
+ * (Shiver's rail is always shown) and, since Sharkord 0.0.29, "desktop settings" (the rail has its
+ * own settings button). The top bar is found by its column template, its own in every version (it
+ * is `lg:grid` before 0.0.29 and `grid` in a desktop app since).
  */
-function hideServerListToggle() {
+function hideDesktopButtons() {
   ensureStyle('shiver-desktop-api').textContent =
-    '[class~="grid-cols-[1fr_minmax(320px,1.4fr)_1fr]"] > div:first-child > button:first-child { display: none !important; }';
+    '[class~="grid-cols-[1fr_minmax(320px,1.4fr)_1fr]"] > div:first-child > button { display: none !important; }';
 }

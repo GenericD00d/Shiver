@@ -6,6 +6,7 @@ mod drain;
 mod error;
 mod feed;
 mod hotkey;
+mod logs;
 mod model;
 mod notify;
 mod page_hotkeys;
@@ -35,7 +36,7 @@ use crate::{
 fn report_failed_start(error: tauri::Error) -> ! {
     let message = format!("Shiver could not start: {error}");
 
-    eprintln!("[shiver] {message}");
+    log::warn!("{message}");
 
     #[cfg(windows)]
     unsafe {
@@ -112,6 +113,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             tray::show(app)
         }))
+        // the log file; Rust alone writes it
+        .plugin(RustOnly(logs::plugin()))
         // after the single instance, which hands it a link that started a second one
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_autostart::init(
@@ -132,6 +135,7 @@ pub fn run() {
             update::skip_update,
             update::open_repository,
             update::check_for_update,
+            logs::open_logs_folder,
             commands::check_server,
             commands::add_server,
             commands::remove_server,
@@ -178,6 +182,8 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle();
 
+            logs::start(handle);
+
             app.manage(store::load(handle)?);
             app.manage(ActiveServer::default());
             app.manage(sharkord_client::CheckedSessions::default());
@@ -188,6 +194,7 @@ pub fn run() {
             app.manage(Recovery::default());
             app.manage(shiver_core::jwt::Renewals::default());
             app.manage(drain::Broadcast::default());
+            app.manage(drain::Mismatches::default());
             app.manage(drain::Stalls::default());
             app.manage(webviews::Openings::default());
             app.manage(update::Available::default());

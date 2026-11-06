@@ -91,7 +91,7 @@ pub fn announce(app: &AppHandle, notification: &Notification) {
         ))
         .show()
     {
-        eprintln!("[shiver] could not show a system notification: {error}");
+        log::warn!("could not show a system notification: {error}");
     }
 }
 

@@ -26,6 +26,8 @@ tauri-plugin-opener.workspace = true
 tauri-plugin-dialog.workspace = true
 tauri-plugin-notification.workspace = true
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-log = "2"
+log.workspace = true
 sharkord-client.workspace = true
 shiver-core.workspace = true
 base64.workspace = true
@@ -47,6 +49,6 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 
 # WebView2 profile access, only for resetting camera/microphone permissions; and which window is in front
 [target.'cfg(windows)'.dependencies]
-webview2-com = "0.38"
-windows-core = "0.61"
-windows = { version = "0.61", features = ["Win32_System_Com", "Win32_UI_WindowsAndMessaging"] }
+webview2-com = "0.39"
+windows-core = "0.62"
+windows = { version = "0.62", features = ["Win32_System_Com", "Win32_UI_WindowsAndMessaging"] }

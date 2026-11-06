@@ -144,6 +144,8 @@ export const api = {
   skipUpdate: (version: string) => invoke<void>('skip_update', { version }),
   /** opens the project's page in the browser */
   openRepository: () => invoke<void>('open_repository'),
+  /** the folder Shiver's log file is in (`logs.rs`) */
+  openLogsFolder: () => invoke<void>('open_logs_folder'),
   /** asks now; null means nothing newer. Ignores a skipped version — see `check_for_update` */
   checkForUpdate: () => invoke<string | null>('check_for_update'),
   /** takes back the stored password for one server; the session is left alone */

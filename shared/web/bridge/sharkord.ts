@@ -139,12 +139,15 @@ export type NotificationTarget = { channelId: number | null; channelName: string
 const DM_TITLE = /^(.+?) ?[(（]([^()（）\s]{1,8})[)）]$/;
 /** `Author in #channel`: one word before the channel, in the client's language (`dans`, `в`, `在`…) */
 const CHANNEL_MARK = ' #';
+/** `#channel kanalında Author`: the channel first and one word after it (Turkish, from 0.0.30) */
+const CHANNEL_FIRST = '#';
 
 /**
  * Who a notification is from and which channel it is for, from its title alone: Sharkord titles
  * them `Author (DM)` or `Author in #channel`, in the client's language from after 0.0.28, so the
- * marker and the word are not read, only where they sit. A name may itself contain ` in #`, so the
- * split taken is the one naming a channel that exists; failing that, a trailing marker makes a DM.
+ * marker and the word are not read, only where they sit (a language may put the channel first,
+ * `#channel kanalında Author`). A name may itself contain ` in #`, so the split taken is the one
+ * naming a channel that exists; failing that, a trailing marker makes a DM.
  * Matched by name: `selectedChannelId` is exactly the channel a notification is not for.
  */
 export function notificationTarget(title: string, state: SharkordState): NotificationTarget {
@@ -164,6 +167,27 @@ export function notificationTarget(title: string, state: SharkordState): Notific
     if (channel) return { channelId: channel.id, channelName, author, isDm: false };
 
     first ??= { channelId: null, channelName, author, isDm: false };
+  }
+
+  if (title.startsWith(CHANNEL_FIRST)) {
+    const rest = title.slice(CHANNEL_FIRST.length);
+
+    for (let at = rest.indexOf(' '); at !== -1; at = rest.indexOf(' ', at + 1)) {
+      const tail = rest.slice(at + 1);
+      const word = tail.indexOf(' ');
+
+      if (word <= 0) continue;
+
+      const channelName = rest.slice(0, at);
+      const author = tail.slice(word + 1).trim();
+      const channel = channels.find((candidate) => candidate.name === channelName);
+
+      if (!author) continue;
+
+      if (channel) return { channelId: channel.id, channelName, author, isDm: false };
+
+      first ??= { channelId: null, channelName, author, isDm: false };
+    }
   }
 
   const dm = title.match(DM_TITLE);

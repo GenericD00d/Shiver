@@ -25,7 +25,7 @@ pub struct PendingLink(Mutex<Option<String>>);
 pub fn start(app: &AppHandle) {
     #[cfg(any(target_os = "linux", all(windows, debug_assertions)))]
     if let Err(error) = app.deep_link().register_all() {
-        eprintln!("[shiver] could not register sharkord:// links: {error}");
+        log::warn!("could not register sharkord:// links: {error}");
     }
 
     if let Ok(Some(urls)) = app.deep_link().get_current() {

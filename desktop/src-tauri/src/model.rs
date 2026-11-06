@@ -95,6 +95,9 @@ pub struct Settings {
     /// shrink the file card Sharkord draws under an image to its icon
     #[serde(default = "default_true")]
     pub minimise_attachments: bool,
+    /// underline misspellings in a server's text boxes (off for a language the dictionary lacks)
+    #[serde(default = "default_true")]
+    pub spellcheck: bool,
     #[serde(default)]
     pub last_server_id: Option<String>,
     /// a global mute shortcut in Tauri accelerator form, e.g. `CommandOrControl+Shift+M`
@@ -135,6 +138,7 @@ impl Default for Settings {
             start_at_login: false,
             sound_volume: default_sound_volume(),
             minimise_attachments: true,
+            spellcheck: true,
             last_server_id: None,
             mute_hotkey: None,
             pages_kept: DEFAULT_PAGES_KEPT,

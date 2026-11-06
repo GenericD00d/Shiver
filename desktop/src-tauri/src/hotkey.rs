@@ -31,7 +31,7 @@ pub fn apply(app: &AppHandle, accelerator: Option<&str>) {
 
     if let Some(previous) = MUTE.locked().take() {
         if let Err(error) = shortcuts.unregister(previous) {
-            eprintln!("[shiver] could not clear the old mute shortcut: {error}");
+            log::warn!("could not clear the old mute shortcut: {error}");
         }
 
         // a rail key the old mute shortcut held (set before rail keys were refused) is the rail's
@@ -48,7 +48,7 @@ pub fn apply(app: &AppHandle, accelerator: Option<&str>) {
     let shortcut: Shortcut = match accelerator.parse() {
         Ok(shortcut) => shortcut,
         Err(error) => {
-            eprintln!("[shiver] '{accelerator}' is not a shortcut Shiver can register: {error}");
+            log::warn!("'{accelerator}' is not a shortcut Shiver can register: {error}");
 
             return;
         }
@@ -70,7 +70,7 @@ pub fn apply(app: &AppHandle, accelerator: Option<&str>) {
         Ok(()) => *MUTE.locked() = Some(shortcut),
         // usually another application holds the combination
         Err(error) => {
-            eprintln!("[shiver] could not register '{accelerator}' as the mute shortcut: {error}")
+            log::warn!("could not register '{accelerator}' as the mute shortcut: {error}")
         }
     }
 }
@@ -161,7 +161,7 @@ pub fn watch_front(app: &AppHandle) {
             }
         })
         .map(|_| ())
-        .unwrap_or_else(|error| eprintln!("[shiver] could not watch for Shiver in front: {error}"));
+        .unwrap_or_else(|error| log::warn!("could not watch for Shiver in front: {error}"));
 }
 
 #[cfg(test)]

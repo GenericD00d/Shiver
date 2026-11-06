@@ -1,13 +1,16 @@
 //! The tray icon, closing to it, and starting with the system.
 //!
 //! The icon is up only while "close to the tray" is on: closing the window then hides it (servers
-//! stay connected, and notifications keep arriving), and the icon brings it back or quits. Started
+//! stay connected, and notifications keep arriving), and the icon brings it back or quits. While
+//! anything is unread it carries a dot, as Sharkord's desktop app's does, so a Shiver closed to
+//! the tray still shows it. Started
 //! at login (the login item passes `AT_LOGIN_ARG`), Shiver opens minimised, or straight to the
 //! tray when it closes there.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tauri::{
+    image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, Runtime,
@@ -31,7 +34,7 @@ pub fn apply(app: &AppHandle, close_to_tray: bool) {
     if close_to_tray && !shown {
         if let Err(error) = build(app) {
             // without an icon a hidden window could not come back, so closing quits as before
-            eprintln!("[shiver] could not put up the tray icon: {error}");
+            log::warn!("could not put up the tray icon: {error}");
         }
     } else if !close_to_tray && shown {
         let _ = app.remove_tray_by_id(TRAY_ID);
@@ -128,11 +131,12 @@ pub fn set_start_at_login(app: &AppHandle, start: bool) {
     };
 
     if let Err(error) = result {
-        eprintln!("[shiver] could not change starting at login: {error}");
+        log::warn!("could not change starting at login: {error}");
     }
 }
 
-/// Keeps the icon's tooltip on the same total the taskbar badge shows (set only when it changes).
+/// Keeps the icon's tooltip on the same total the taskbar badge shows, and its dot on whether there
+/// is any (each set only when it changes).
 pub fn show_unread<R: Runtime>(app: &AppHandle<R>, unread: usize) {
     static SHOWN: AtomicUsize = AtomicUsize::new(usize::MAX);
 
@@ -143,7 +147,9 @@ pub fn show_unread<R: Runtime>(app: &AppHandle<R>, unread: usize) {
         return;
     };
 
-    if SHOWN.swap(unread, Ordering::Relaxed) == unread {
+    let shown = SHOWN.swap(unread, Ordering::Relaxed);
+
+    if shown == unread {
         return;
     }
 
@@ -153,7 +159,64 @@ pub fn show_unread<R: Runtime>(app: &AppHandle<R>, unread: usize) {
     };
 
     let _ = tray.set_tooltip(Some(tooltip));
+
+    // a new icon starts without the dot
+    let had_dot = shown != usize::MAX && shown > 0;
+
+    if had_dot != (unread > 0) {
+        if let Some(icon) = app.default_window_icon() {
+            let icon = if unread > 0 {
+                with_dot(icon)
+            } else {
+                icon.clone()
+            };
+
+            let _ = tray.set_icon(Some(icon));
+        }
+    }
 }
+
+/// The icon with an unread dot in its lower right corner, ringed in near-black so it stands apart
+/// from the icon under it, at any size the icon comes in.
+fn with_dot(icon: &Image<'_>) -> Image<'static> {
+    let (width, height) = (icon.width(), icon.height());
+    let size = width.min(height) as f32;
+    let radius = size * 0.24;
+    let ring = (size * 0.06).max(1.0);
+    let centre = (width as f32 - radius - 0.5, height as f32 - radius - 0.5);
+    let mut rgba = icon.rgba().to_vec();
+
+    for y in 0..height {
+        for x in 0..width {
+            let distance = (x as f32 - centre.0).hypot(y as f32 - centre.1);
+            let coverage = (radius - distance).clamp(0.0, 1.0);
+
+            if coverage == 0.0 {
+                continue;
+            }
+
+            let colour = if distance > radius - ring {
+                OUTLINE
+            } else {
+                crate::badge::DOT
+            };
+            let pixel = &mut rgba[((y * width + x) * 4) as usize..][..4];
+
+            for channel in 0..3 {
+                pixel[channel] = (colour[channel] as f32 * coverage
+                    + pixel[channel] as f32 * (1.0 - coverage))
+                    as u8;
+            }
+
+            pixel[3] = (255.0 * coverage + pixel[3] as f32 * (1.0 - coverage)) as u8;
+        }
+    }
+
+    Image::new_owned(rgba, width, height)
+}
+
+/// The ring around the unread dot.
+const OUTLINE: [u8; 3] = [0x1a, 0x1a, 0x1a];
 
 /// Applies both settings at startup, then gets out of the way if the system started Shiver.
 pub fn start(app: &AppHandle) {
@@ -172,4 +235,28 @@ pub fn start(app: &AppHandle) {
     }
 
     start_out_of_the_way(app);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_dot_sits_in_the_lower_right_and_leaves_the_rest_of_the_icon() {
+        let icon = Image::new_owned(vec![0x40; 32 * 32 * 4], 32, 32);
+        let dotted = with_dot(&icon);
+        let pixel = |x: u32, y: u32| dotted.rgba()[((y * 32 + x) * 4) as usize..][..4].to_vec();
+        let centre = (32.0 - 32.0 * 0.24 - 0.5) as u32;
+
+        assert_eq!(pixel(2, 2), vec![0x40; 4]);
+        assert_eq!(
+            pixel(centre, centre),
+            vec![
+                crate::badge::DOT[0],
+                crate::badge::DOT[1],
+                crate::badge::DOT[2],
+                255
+            ]
+        );
+    }
 }

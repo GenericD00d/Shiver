@@ -59,12 +59,19 @@ pub fn start(app: &AppHandle) {
     });
 }
 
+/// One background check now, besides the timer's (a server needs a newer Shiver).
+pub fn look_now(app: &AppHandle) {
+    let app = app.clone();
+
+    tauri::async_runtime::spawn(async move { look(&app).await });
+}
+
 /// One background check. Quiet about failure: being offline is ordinary.
 async fn look(app: &AppHandle) {
     let version = match check(app).await {
         Ok(Some(update)) => update.version,
         Ok(None) => return,
-        Err(error) => return eprintln!("[shiver] {error}"),
+        Err(error) => return log::warn!("{error}"),
     };
 
     let skipped = app

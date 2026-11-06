@@ -170,19 +170,19 @@ mod webview2 {
                 core.cast::<ICoreWebView2_4>()?
                     .add_DownloadStarting(&downloads, &mut token)
             }) {
-                eprintln!("[shiver] could not gate a page's camera and downloads: {error}");
+                log::warn!("could not gate a page's camera and downloads: {error}");
             }
         });
 
         if let Err(error) = registered {
-            eprintln!("[shiver] could not gate a page's camera and downloads: {error}");
+            log::warn!("could not gate a page's camera and downloads: {error}");
         }
 
         let webview = webview.clone();
 
         std::thread::spawn(move || {
             if let Err(error) = forget_saved_answers(&webview) {
-                eprintln!("[shiver] could not forget saved camera and microphone answers: {error}");
+                log::warn!("could not forget saved camera and microphone answers: {error}");
             }
         });
     }

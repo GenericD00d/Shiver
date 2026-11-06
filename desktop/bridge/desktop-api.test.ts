@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 
 import {
   DESKTOP_API_VERSION,
+  desktopMismatch,
   type DesktopNotification,
   type HotkeyBinding,
   installDesktopApi,
@@ -109,11 +110,9 @@ test('a client of the version spoken connects, takes the page\'s notifications a
 
   const notified: DesktopNotification[] = [];
   const asked: HotkeyBinding[][] = [];
-  let settings = 0;
 
   installDesktopApi({
     notify: (notification) => notified.push(notification),
-    openSettings: () => void (settings += 1),
     setHotkeys: (bindings) => {
       asked.push(bindings);
 
@@ -124,7 +123,13 @@ test('a client of the version spoken connects, takes the page\'s notifications a
   const entry = (globalThis as { sharkordDesktop?: { version: number; connect: (version: unknown) => unknown } }).sharkordDesktop;
 
   expect(entry?.version).toBe(DESKTOP_API_VERSION);
+  expect(desktopMismatch()).toBeNull();
   expect(entry?.connect(DESKTOP_API_VERSION + 1)).toBeUndefined();
+  expect(desktopMismatch()).toBe('app-outdated');
+  expect(entry?.connect(DESKTOP_API_VERSION - 1)).toBeUndefined();
+  expect(desktopMismatch()).toBe('server-outdated');
+  expect(entry?.connect('nonsense')).toBeUndefined();
+  expect(desktopMismatch()).toBe('server-outdated');
   expect(isDesktopClient()).toBe(false);
   // nothing to lead with before a client connects
   expect(openNotification(10, { messageId: 7 }, () => false, () => undefined)).toBe(false);
@@ -132,6 +137,7 @@ test('a client of the version spoken connects, takes the page\'s notifications a
   const api = entry?.connect(DESKTOP_API_VERSION) as Api;
 
   expect(isDesktopClient()).toBe(true);
+  expect(desktopMismatch()).toBeNull();
   expect(styles.get('shiver-desktop-api')?.textContent).toContain('display: none');
   expect(await api.getServerListVisible()).toBe(true);
   expect(await api.startSystemAudio()).toBe(false);
@@ -140,15 +146,15 @@ test('a client of the version spoken connects, takes the page\'s notifications a
   api.showNotification({ nonsense: true });
   expect(notified.map((notification) => notification.message?.messageId)).toEqual([3]);
 
-  await api.openSettings();
-  expect(settings).toBe(1);
+  // nothing to open: the button asking is hidden
+  expect(await api.openSettings()).toBeUndefined();
 
   expect(await api.setHotkeys([{ actionId: 'mute', combo: 'ctrl+KeyM' }, { bad: 1 }])).toEqual([{ actionId: 'mute', reason: 'taken' }]);
   expect(asked).toEqual([[{ actionId: 'mute', combo: 'ctrl+KeyM' }]]);
 
   // as Sharkord 0.0.29's client starts: voice, then the shortcuts' capabilities and errors
   api.setVoiceActive(true);
-  expect(await api.getHotkeyCapabilities()).toEqual({ keyUp: false, systemManaged: false });
+  expect(await api.getHotkeyCapabilities()).toEqual({ keyUp: true, systemManaged: false });
 
   const stopErrors = api.onHotkeyErrors(() => undefined);
 
@@ -159,10 +165,12 @@ test('a client of the version spoken connects, takes the page\'s notifications a
   const stop = api.onHotkey((actionId, phase) => pressed.push(`${actionId} ${phase}`));
 
   pressHotkey('mute');
+  pressHotkey('push-to-talk', 'down');
+  pressHotkey('push-to-talk', 'up');
   pressHotkey(5);
   stop();
   pressHotkey('mute');
-  expect(pressed).toEqual(['mute down']);
+  expect(pressed).toEqual(['mute down', 'push-to-talk down', 'push-to-talk up']);
 
   const clicked: unknown[] = [];
 

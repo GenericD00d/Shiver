@@ -127,8 +127,8 @@ async fn renew(app: &AppHandle, entry: &ServerEntry) -> Result<String, NoSession
 
             if let Err(error) = secrets::store_off_thread(Secret::Session, &entry.id, &token).await
             {
-                eprintln!(
-                    "[shiver] could not keep the new session for {}: {error}",
+                log::warn!(
+                    "could not keep the new session for {}: {error}",
                     entry.origin
                 );
             }
@@ -136,10 +136,7 @@ async fn renew(app: &AppHandle, entry: &ServerEntry) -> Result<String, NoSession
             Ok(token)
         }
         Err(error) => {
-            eprintln!(
-                "[shiver] could not renew the session for {}: {error}",
-                entry.origin
-            );
+            log::warn!("could not renew the session for {}: {error}", entry.origin);
 
             Err(match error {
                 shiver_core::Error::Unreachable(_) | shiver_core::Error::NotSharkord(_) => {
@@ -245,8 +242,8 @@ pub fn recover(app: &AppHandle, entry_id: &str) -> bool {
 
     tauri::async_runtime::spawn(async move {
         if !sign_in_again(&app, &entry).await {
-            eprintln!(
-                "[shiver] could not sign back in to {}; its login page is the user's",
+            log::warn!(
+                "could not sign back in to {}; its login page is the user's",
                 entry.origin
             );
         }
@@ -287,10 +284,7 @@ fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: &str) {
     };
 
     if let Err(error) = webviews::close_server(app, &entry.id) {
-        eprintln!(
-            "[shiver] could not close {} to rebuild it: {error}",
-            entry.origin
-        );
+        log::warn!("could not close {} to rebuild it: {error}", entry.origin);
 
         return;
     }
@@ -311,7 +305,7 @@ fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: &str) {
     };
 
     if let Err(error) = built {
-        eprintln!("[shiver] could not rebuild {}: {error}", entry.origin);
+        log::warn!("could not rebuild {}: {error}", entry.origin);
     }
 }
 

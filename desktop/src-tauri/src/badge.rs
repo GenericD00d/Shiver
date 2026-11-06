@@ -10,7 +10,7 @@ use crate::webviews;
 const SIZE: u32 = 32;
 
 /// `--shiver-danger`, the colour of the rail's unread badge.
-const DOT: [u8; 3] = [0xff, 0x64, 0x67];
+pub const DOT: [u8; 3] = [0xff, 0x64, 0x67];
 
 /// Shows the same total the rail does: feed notifications plus what arrived while Shiver was closed.
 /// Redrawn only when what it shows changes (Windows shows a dot, so only whether there is any).

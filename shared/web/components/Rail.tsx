@@ -29,6 +29,8 @@ type Props = {
   unread: Record<string, number>;
   /** servers not answering, marked red */
   offline?: readonly string[];
+  /** a note per server id, marked on its tile and said in its tooltip (a desktop api mismatch) */
+  notices?: Record<string, string>;
   onOpen: (id: string) => void;
   onOpenDms: () => void;
   onAdd: () => void;
@@ -100,6 +102,7 @@ export const Rail = ({
   screen,
   unread,
   offline = [],
+  notices = {},
   onOpen,
   onOpenDms,
   onAdd,
@@ -382,6 +385,8 @@ export const Rail = ({
     const key = `server:${server.id}`;
     const count = unread[server.id] ?? 0;
     const down = offline.includes(server.id);
+    const notice = notices[server.id];
+    const name = server.accountLabel ? `${server.name} (${server.accountLabel})` : server.name;
     const classes = [
       'rail-item',
       server.id === activeId && !screen ? 'active' : '',
@@ -397,13 +402,8 @@ export const Rail = ({
         <button
           type="button"
           className={classes + zoneClass(key, 'merge-target')}
-          title={
-            down
-              ? `${server.name} — not responding`
-              : server.accountLabel
-                ? `${server.name} (${server.accountLabel})`
-                : server.name
-          }
+          title={down ? `${server.name} — not responding` : notice ? `${name}
+${notice}` : name}
           {...handlers(key, () => onOpen(server.id))}
         >
           {server.icon ? <img src={server.icon} alt="" draggable={false} /> : initials(server.name)}
@@ -411,6 +411,8 @@ export const Rail = ({
           {count > 0 ? <span className="rail-badge">{badgeLabel(count)}</span> : null}
 
           {down ? <OfflineOverlay id={server.id} /> : null}
+
+          {notice && !down ? <span className="rail-notice" aria-hidden="true" /> : null}
         </button>
       </div>
     );

@@ -253,8 +253,8 @@ impl sharkord::Watcher for Watch {
                     attempt = attempt.saturating_add(1);
                 }
                 Err(session::NoSession::Signed) => {
-                    eprintln!(
-                        "[shiver] no session for {}; not watched until signed in",
+                    log::warn!(
+                        "no session for {}; not watched until signed in",
                         self.entry.origin
                     );
                     finished(&self.app, &self.entry.id, self.task_id, true);

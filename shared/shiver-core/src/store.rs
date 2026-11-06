@@ -52,9 +52,9 @@ pub struct Store<R> {
 
 fn remove_legacy_cache(dir: &Path) {
     match fs::remove_file(dir.join(LEGACY_CACHE_FILE)) {
-        Ok(()) => eprintln!("[shiver] removed the message cache left by an earlier version"),
+        Ok(()) => log::warn!("removed the message cache left by an earlier version"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => eprintln!("[shiver] could not remove the old message cache: {error}"),
+        Err(error) => log::warn!("could not remove the old message cache: {error}"),
     }
 }
 
@@ -106,8 +106,8 @@ where
                         )));
                     }
 
-                    eprintln!(
-                        "[shiver] servers.json could not be parsed ({error}), starting empty; the old file is {}",
+                    log::warn!(
+                        "servers.json could not be parsed ({error}), starting empty; the old file is {}",
                         kept.display()
                     );
 

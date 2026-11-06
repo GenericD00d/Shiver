@@ -153,3 +153,8 @@ test("titles in the client's own language read the same (Sharkord translates the
 test('a DM title in full-width brackets reads too', () => {
   expect(notificationTarget('Ana（私信）', state)).toEqual({ channelId: 20, channelName: null, author: 'Ana', isDm: true });
 });
+
+test('a title that puts the channel first (Turkish) reads too', () => {
+  expect(notificationTarget('#general kanalında Ana B', state)).toEqual({ channelId: 10, channelName: 'general', author: 'Ana B', isDm: false });
+  expect(notificationTarget('#gone kanalında Ana', state)).toEqual({ channelId: null, channelName: 'gone', author: 'Ana', isDm: false });
+});

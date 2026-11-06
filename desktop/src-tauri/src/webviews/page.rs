@@ -30,18 +30,20 @@ pub fn push_visibility(app: &AppHandle, hidden: bool) {
     );
 }
 
-/// Repaints every page in the user's colours and applies the sound and attachment settings, in place.
+/// Repaints every page in the user's colours and applies the sound, attachment and spellcheck
+/// settings, in place.
 pub fn push_theme(app: &AppHandle, settings: &Settings) {
     let theme = theme_payload(settings);
     let volume = settings.sound_volume.min(crate::model::MAX_SOUND_VOLUME);
     let minimise = settings.minimise_attachments;
+    let spellcheck = settings.spellcheck;
 
     eval_in_pages(
         app,
         &format!(
             "window.__SHIVER_SET_THEME__ && window.__SHIVER_SET_THEME__({theme});\
              window.__SHIVER_SET_SOUND_VOLUME__ && window.__SHIVER_SET_SOUND_VOLUME__({volume});\
-             window.__SHIVER_SET_ATTACHMENT_CARDS__ && window.__SHIVER_SET_ATTACHMENT_CARDS__({minimise});"
+             window.__SHIVER_SET_ATTACHMENT_CARDS__ && window.__SHIVER_SET_ATTACHMENT_CARDS__({minimise});             window.__SHIVER_SET_SPELLCHECK__ && window.__SHIVER_SET_SPELLCHECK__({spellcheck});"
         ),
     );
 }

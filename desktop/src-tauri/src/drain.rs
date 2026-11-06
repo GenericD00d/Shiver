@@ -44,10 +44,52 @@ const SERVER_READY_EVENT: &str = "shiver://server-ready";
 pub const VOICE_EVENT: &str = "shiver://voice";
 const SIGNED_OUT_EVENT: &str = "shiver://signed-out";
 const STATUS_EVENT: &str = "shiver://status";
+/// Each server whose client speaks another version of Sharkord's desktop api (`Mismatch`).
+const MISMATCH_EVENT: &str = "shiver://mismatch";
 /// The popup asks the shell to open a message; the shell owns server switching.
 pub const OPEN_MESSAGE_EVENT: &str = "shiver://open-message";
-/// A server's page asked for Shiver's settings (Sharkord's "desktop settings" button).
-const OPEN_SETTINGS_EVENT: &str = "shiver://open-settings";
+
+/// A server's client speaks another version of Sharkord's desktop api than Shiver, so its desktop
+/// features are off: the server runs an older Sharkord, or Shiver is the older one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Mismatch {
+    ServerOutdated,
+    AppOutdated,
+}
+
+impl Mismatch {
+    /// The bridge's word for it; anything else is no mismatch.
+    pub fn from_page(value: Option<&str>) -> Option<Self> {
+        match value? {
+            "server-outdated" => Some(Self::ServerOutdated),
+            "app-outdated" => Some(Self::AppOutdated),
+            _ => None,
+        }
+    }
+}
+
+/// Each server's mismatch, as its page last reported it.
+#[derive(Default)]
+pub struct Mismatches(Mutex<HashMap<String, Mismatch>>);
+
+impl Mismatches {
+    /// Records a page's report. Returns true when the server has just been found to need a newer
+    /// Shiver.
+    pub fn set(&self, entry_id: &str, mismatch: Option<Mismatch>) -> bool {
+        let mut state = self.0.locked();
+        let before = match mismatch {
+            Some(mismatch) => state.insert(entry_id.to_string(), mismatch),
+            None => state.remove(entry_id),
+        };
+
+        mismatch == Some(Mismatch::AppOutdated) && before != mismatch
+    }
+
+    fn get(&self, entry_id: &str) -> Option<Mismatch> {
+        self.0.locked().get(entry_id).copied()
+    }
+}
 
 /// The rail badge for a server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -182,9 +224,9 @@ impl Stalls {
     }
 }
 
-/// The statuses last sent to the rail, so an unchanged set is not re-sent every poll.
+/// The statuses and mismatches last sent to the rail, so an unchanged set is not re-sent every poll.
 #[derive(Default)]
-pub struct Broadcast(Mutex<HashMap<String, ServerStatus>>);
+pub struct Broadcast(Mutex<(HashMap<String, ServerStatus>, HashMap<String, Mismatch>)>);
 
 pub fn spawn(app: &AppHandle) {
     let app = app.clone();
@@ -269,11 +311,11 @@ fn reload(app: &AppHandle, entry_id: &str, origin: &str) {
         return;
     };
 
-    eprintln!("[shiver] {origin} answers again; reloading its page");
+    log::warn!("{origin} answers again; reloading its page");
     app.state::<Readiness>().disconnected(entry_id);
 
     if let Err(error) = webview.navigate(url) {
-        eprintln!("[shiver] could not reload {origin}'s page: {error}");
+        log::warn!("could not reload {origin}'s page: {error}");
     }
 }
 
@@ -315,12 +357,26 @@ fn broadcast_statuses(app: &AppHandle, entry_ids: &[String]) {
         })
         .collect();
 
+    let mismatches: HashMap<String, Mismatch> = entry_ids
+        .iter()
+        .filter_map(|entry_id| {
+            let mismatch = app.state::<Mismatches>().get(entry_id)?;
+
+            Some((entry_id.clone(), mismatch))
+        })
+        .collect();
+
     let broadcast = app.state::<Broadcast>();
     let mut last = broadcast.0.locked();
 
-    if *last != statuses {
+    if last.0 != statuses {
         let _ = app.emit_to(SHELL_WEBVIEW, STATUS_EVENT, &statuses);
-        *last = statuses;
+        last.0 = statuses;
+    }
+
+    if last.1 != mismatches {
+        let _ = app.emit_to(SHELL_WEBVIEW, MISMATCH_EVENT, &mismatches);
+        last.1 = mismatches;
     }
 }
 
@@ -333,7 +389,7 @@ fn reconcile_voice(app: &AppHandle, entry_ids: &[String]) {
     }
 
     for entry_id in voice.intruders() {
-        eprintln!("[shiver] a second voice session started on {entry_id}, leaving it");
+        log::warn!("a second voice session started on {entry_id}, leaving it");
         webviews::run_voice_action(app, &entry_id, "leave");
     }
 }
@@ -352,18 +408,13 @@ fn drain_webview(app: &AppHandle, webview: &tauri::Webview, entry_id: String, fu
         }
 
         if raw.len() > MAX_DRAIN_BYTES {
-            return eprintln!(
-                "[shiver] {entry_id} answered a drain with {} bytes",
-                raw.len()
-            );
+            return log::warn!("{entry_id} answered a drain with {} bytes", raw.len());
         }
 
         let result = match serde_json::from_str::<Option<DrainResult>>(&raw) {
             Ok(Some(result)) => result,
             Ok(None) => return,
-            Err(error) => {
-                return eprintln!("[shiver] could not read the drain from {entry_id}: {error}")
-            }
+            Err(error) => return log::warn!("could not read the drain from {entry_id}: {error}"),
         };
 
         apply_in_order(&app, entry_id.clone(), result);
@@ -415,6 +466,15 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
         )
     };
 
+    crate::logs::page_errors(entry_id, &result.page_errors);
+
+    let mismatch = Mismatch::from_page(result.mismatch.as_deref());
+
+    // the server already ships a newer client, so a newer Shiver is likely out
+    if app.state::<Mismatches>().set(entry_id, mismatch) {
+        crate::update::look_now(app);
+    }
+
     if result.stalled {
         app.state::<Stalls>().note(entry_id, Duration::ZERO);
     } else if result.ready {
@@ -438,11 +498,6 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
                 "window.__SHIVER_HOTKEYS_SET__ && window.__SHIVER_HOTKEYS_SET__({errors})"
             ));
         }
-    }
-
-    // settings, like links, only for the page on screen
-    if result.open_settings && crate::badges::is_on_screen(app, entry_id) {
-        let _ = app.emit_to(SHELL_WEBVIEW, OPEN_SETTINGS_EVENT, ());
     }
 
     // links only from the page on screen, and then only if the user agrees
@@ -586,7 +641,7 @@ fn apply_page_state(
     // only the page actually on screen may take the chrome away
     if crate::badges::is_on_screen(app, entry_id) {
         if let Err(error) = webviews::set_page_fullscreen(app, entry_id, result.fullscreen) {
-            eprintln!("[shiver] could not follow {entry_id} into fullscreen: {error}");
+            log::warn!("could not follow {entry_id} into fullscreen: {error}");
         }
     }
 

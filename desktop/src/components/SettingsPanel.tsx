@@ -77,6 +77,17 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
     }
   }, []);
 
+  const [logsError, setLogsError] = useState<string | null>(null);
+
+  const handleOpenLogs = useCallback(async () => {
+    try {
+      await api.openLogsFolder();
+      setLogsError(null);
+    } catch (error) {
+      setLogsError(errorMessage(error));
+    }
+  }, []);
+
   const handleResetPermissions = useCallback(async () => {
     try {
       const forgotten = await api.resetMediaPermissions();
@@ -220,12 +231,42 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
             />
           ) : null}
 
+          {section === 'about' ? (
+            <label className="field">
+              <span>Log file</span>
+              <div className="field-row">
+                <button type="button" className="ghost" onClick={handleOpenLogs}>
+                  {logsError ?? 'Open logs folder'}
+                </button>
+              </div>
+              <small className="hint">
+                What Shiver and each server's page ran into, kept on this computer only. Attach{' '}
+                <code>shiver.log</code> when you report a problem.
+              </small>
+            </label>
+          ) : null}
+
           {section === 'servers' ? (
             <>
               <p className="hint">
                 {SHORTCUT_KEY}+1 to {SHORTCUT_KEY}+9 open the rail's servers in order, and{' '}
                 {SHORTCUT_KEY}+{ALT_KEY}+↑ or ↓ the one above or below, while Shiver is in front.
               </p>
+
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={draft.spellcheck}
+                  onChange={(event) => update('spellcheck', event.target.checked)}
+                />
+                <span>
+                  Check spelling as you type
+                  <small>
+                    Underlines misspelled words in a server's text boxes. Turn it off if you write in a
+                    language Windows has no dictionary for.
+                  </small>
+                </span>
+              </label>
 
               <label className="checkbox">
                 <input
