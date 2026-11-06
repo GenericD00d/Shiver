@@ -12,11 +12,12 @@ import {
   sameColors
 } from '../settings';
 import { accentTextColor } from '../theme';
+import { Setting, SettingsCard, Toggle } from './SettingsLayout';
 import './ui.css';
 
 /**
- * The settings sections both clients have. Each takes the fields it edits from the app's draft and
- * hands changes back; the app keeps its own section navigation and its Save.
+ * The settings sections both clients have, each a card (`SettingsLayout`). Each takes the fields it
+ * edits from the app's draft and hands changes back; the app keeps the draft and its save bar.
  */
 
 type Edit<T> = { draft: T; onChange: (patch: Partial<T>) => void };
@@ -49,14 +50,11 @@ export const AppearanceSection = ({ draft, onChange }: Edit<AppearanceFields>) =
   };
 
   return (
-    <>
-      <p className="hint">
-        Applied to Shiver and to every server you open in it. On Sharkord&apos;s own colours Shiver restyles nothing, so
-        servers look exactly as they do in a browser.
-      </p>
-
-      <div className="field">
-        <span>Presets</span>
+    <SettingsCard
+      title="Appearance"
+      description="Applied to Shiver and to every server you open in it. On Sharkord's own colours Shiver restyles nothing, so servers look exactly as they do in a browser."
+    >
+      <Setting label="Presets" description="Pick one to use its colours.">
         <div className="presets">
           {BUILT_IN_PRESETS.map((preset) => (
             <PresetChip key={`built-in:${preset.name}`} preset={preset} draft={draft} onChange={onChange} />
@@ -73,7 +71,7 @@ export const AppearanceSection = ({ draft, onChange }: Edit<AppearanceFields>) =
             />
           ))}
         </div>
-      </div>
+      </Setting>
 
       <ColorField label="Background colour" value={draft.themeColor} onChange={(themeColor) => onChange({ themeColor })} />
       <ColorField label="Accent colour" value={draft.accentColor} onChange={(accentColor) => onChange({ accentColor })} />
@@ -102,11 +100,20 @@ export const AppearanceSection = ({ draft, onChange }: Edit<AppearanceFields>) =
         hint="Times and dates, links, mentions and Shiver's own icons. Left automatic, it is the accent, lightened or darkened where it would not read on the background."
       />
 
-      <label className="field">
-        <span>Save these colours as a preset</span>
+      <Setting
+        label="Save these colours as a preset"
+        description={
+          isBuiltInName
+            ? 'That name belongs to a preset Shiver comes with.'
+            : isFull
+              ? `Shiver keeps up to ${MAX_COLOR_PRESETS} presets; remove one to save another.`
+              : 'Kept with your settings once you save them.'
+        }
+      >
         <div className="field-row">
           <input
             type="text"
+            aria-label="Preset name"
             value={presetName}
             placeholder="Name"
             maxLength={MAX_PRESET_NAME}
@@ -123,30 +130,15 @@ export const AppearanceSection = ({ draft, onChange }: Edit<AppearanceFields>) =
             {replaces ? 'Replace' : 'Save'}
           </button>
         </div>
-        <small className="hint">
-          {isBuiltInName
-            ? 'That name belongs to a preset Shiver comes with.'
-            : isFull
-              ? `Shiver keeps up to ${MAX_COLOR_PRESETS} presets; remove one to save another.`
-              : 'Kept with your settings once you save them.'}
-        </small>
-      </label>
+      </Setting>
 
-      <label className="checkbox">
-        <input
-          type="checkbox"
-          checked={draft.minimiseAttachments}
-          onChange={(event) => onChange({ minimiseAttachments: event.target.checked })}
-        />
-        <span>
-          Shrink the card under a picture
-          <small>
-            A posted image shows up twice, as the picture and as a card naming the file. Documents and archives keep
-            their card, since there it is all you have to go on.
-          </small>
-        </span>
-      </label>
-    </>
+      <Toggle
+        label="Shrink the card under a picture"
+        description="A posted image shows up twice, as the picture and as a card naming the file. Documents and archives keep their card, since there it is all you have to go on."
+        checked={draft.minimiseAttachments}
+        onChange={(minimiseAttachments) => onChange({ minimiseAttachments })}
+      />
+    </SettingsCard>
   );
 };
 
@@ -179,13 +171,12 @@ const PresetChip = ({
 );
 
 const ColorField = ({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) => (
-  <label className="field">
-    <span>{label}</span>
+  <Setting label={label}>
     <div className="field-row">
-      <input type="color" value={value} onChange={(event) => onChange(event.target.value)} />
-      <input type="text" value={value} onChange={(event) => onChange(event.target.value)} spellCheck={false} />
+      <input type="color" aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} />
+      <input type="text" aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} spellCheck={false} />
     </div>
-  </label>
+  </Setting>
 );
 
 /** A colour the user may leave to Shiver: empty is automatic, which the swatch shows. */
@@ -202,12 +193,12 @@ const OptionalColorField = ({
   onChange: (value: string | null) => void;
   hint: string;
 }) => (
-  <label className="field">
-    <span>{label}</span>
+  <Setting label={label} description={hint}>
     <div className="field-row">
-      <input type="color" value={value ?? automatic} onChange={(event) => onChange(event.target.value)} />
+      <input type="color" aria-label={label} value={value ?? automatic} onChange={(event) => onChange(event.target.value)} />
       <input
         type="text"
+        aria-label={label}
         value={value ?? ''}
         placeholder="automatic"
         onChange={(event) => onChange(event.target.value || null)}
@@ -217,8 +208,7 @@ const OptionalColorField = ({
         Automatic
       </button>
     </div>
-    <small className="hint">{hint}</small>
-  </label>
+  </Setting>
 );
 
 type NotificationsProps = Edit<{ soundVolume: number }> & {
@@ -231,14 +221,14 @@ type NotificationsProps = Edit<{ soundVolume: number }> & {
 };
 
 export const NotificationsSection = ({ draft, onChange, volumeHint, onTest, children }: NotificationsProps) => (
-  <>
+  <SettingsCard title="Notifications" description="How Shiver tells you about what arrives.">
     {children}
 
-    <label className="field">
-      <span>Sound volume</span>
+    <Setting label="Sound volume" description={volumeHint}>
       <div className="field-row">
         <input
           type="range"
+          aria-label="Sound volume"
           min={0}
           max={MAX_SOUND_VOLUME}
           step={5}
@@ -253,9 +243,8 @@ export const NotificationsSection = ({ draft, onChange, volumeHint, onTest, chil
           </button>
         ) : null}
       </div>
-      <small className="hint">{volumeHint}</small>
-    </label>
-  </>
+    </Setting>
+  </SettingsCard>
 );
 
 type AboutProps = {
@@ -327,9 +316,7 @@ export const AboutSection = ({
   }, [onTake, takingNote]);
 
   return (
-    <>
-      <p className="hint">{version ? `Shiver ${version}.` : 'Shiver.'} A multi-server client for Sharkord.</p>
-
+    <SettingsCard title="About Shiver" description={`${version ? `Shiver ${version}.` : 'Shiver.'} A multi-server client for Sharkord.`}>
       {newer && takeHint ? <p className="hint">{takeHint}</p> : null}
 
       <div className="actions">
@@ -351,6 +338,6 @@ export const AboutSection = ({
       {/* "nothing newer" is a real answer and worth saying: a check that only ever speaks up with good
           news leaves you wondering whether it ran at all */}
       {checked ? <p className="hint">{checked}</p> : null}
-    </>
+    </SettingsCard>
   );
 };

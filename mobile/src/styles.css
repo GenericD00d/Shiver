@@ -6,8 +6,6 @@
   --shiver-accent-text: #e5e5e5;
   --shiver-surface: #262626;
   --shiver-surface-hover: #333333;
-  /* what the settings drawer sits on */
-  --shiver-surface-dim: #1f1f1f;
   --shiver-border: rgb(255 255 255 / 10%);
   --shiver-text: #fafafa;
   --shiver-text-dim: #a1a1a1;
@@ -91,6 +89,12 @@ body {
    otherwise break the line rather than shrink a long name. */
 .servers li {
   flex-wrap: wrap;
+}
+
+/* in a settings card a row has a phone's width less the card's padding: the name gets the line,
+   and the row's buttons go under it rather than cutting it to its first letter */
+.settings-card .servers li .server {
+  flex-basis: 100%;
 }
 
 /* the whole row is the tap target: thumbs are not mice */
@@ -184,64 +188,6 @@ button {
   margin-top: 4px;
   color: var(--shiver-text-dim);
   font-size: 12px;
-}
-
-/* The settings sections as a drawer over a scrim, as Sharkord's settings are on a phone. Off screen
-   rather than hidden, so it slides in. */
-.settings-drawer {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: min(260px, 78vw);
-  box-sizing: border-box;
-  padding: calc(14px + env(safe-area-inset-top, 0px)) 12px 14px;
-  background: var(--shiver-surface-dim, #1f1f1f);
-  border-right: 1px solid var(--shiver-border);
-  transform: translateX(-100%);
-  transition: transform 220ms ease;
-}
-
-.settings-drawer.open {
-  transform: translateX(0);
-}
-
-.settings-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-  background: rgb(0 0 0 / 50%);
-}
-
-/* the header's menu button, which is the only way in — so it sits before the title, where a back
-   control would be on a page that had one */
-.settings-menu {
-  margin-right: 4px;
-  padding: 6px 10px;
-  font-size: 18px;
-  line-height: 1;
-}
-
-.settings-section {
-  flex: 0 0 auto;
-  padding: 12px 14px;
-  border: none;
-  border-radius: 10px;
-  background: none;
-  color: var(--shiver-text-dim);
-  font: inherit;
-  font-size: 15px;
-  text-align: left;
-}
-
-.settings-section.active {
-  background: var(--shiver-surface-hover, #333333);
-  color: var(--shiver-text);
-  font-weight: 600;
 }
 
 /* The companion-plugin verdict. Colour is the quick read and the tick or cross is the reliable

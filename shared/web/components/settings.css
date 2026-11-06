@@ -1,0 +1,364 @@
+/* Shiver's settings in Sharkord's settings' shape (`SettingsLayout.tsx`), drawn in Shiver's colours,
+   which on a server's page are the same ones Sharkord draws its own with: cards in the sidebar
+   colour, the chosen section in the surface colour. */
+
+.settings-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--shiver-bg);
+  color: var(--shiver-text);
+  /* the drawer follows the room the settings have, not the window: on desktop the rail takes some */
+  container-type: inline-size;
+}
+
+/* ── the bar: Back, the title, and (narrow) the sections ── */
+
+.settings-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  flex: 0 0 auto;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--shiver-border);
+}
+
+.settings-top h1 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 18px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--shiver-text);
+  cursor: pointer;
+}
+
+.settings-icon-button:hover {
+  background: var(--shiver-surface);
+}
+
+.settings-icon-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ── the sections, and the chosen one beside them ── */
+
+.settings-frame {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  /* the drawer waits off its left edge, which beside a rail is over the rail */
+  overflow: hidden;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 240px;
+  flex: 0 0 auto;
+  padding: 12px;
+  overflow-y: auto;
+  border-right: 1px solid var(--shiver-border);
+  background: var(--shiver-bg);
+}
+
+.settings-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--shiver-text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-entry span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-entry svg {
+  flex: 0 0 auto;
+}
+
+.settings-entry:hover,
+.settings-entry.active {
+  background: var(--shiver-surface);
+}
+
+.settings-entry.active {
+  font-weight: 600;
+}
+
+.settings-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.settings-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 896px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.settings-menu,
+.settings-scrim {
+  display: none;
+}
+
+/* narrow: the sections slide in over the content from the left, behind the bar's menu button */
+@container (max-width: 700px) {
+  .settings-menu {
+    display: inline-flex;
+  }
+
+  .settings-nav {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease-in-out;
+  }
+
+  .settings-nav.open {
+    transform: none;
+  }
+
+  .settings-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    background: rgb(0 0 0 / 50%);
+  }
+
+  .settings-column {
+    padding: 16px;
+  }
+}
+
+/* ── cards and the settings in them ── */
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 24px 0;
+  border: 1px solid var(--shiver-border);
+  border-radius: 12px;
+  background: var(--shiver-rail);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+}
+
+.settings-card > header,
+.settings-card-body {
+  padding: 0 24px;
+}
+
+.settings-card > header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+  /* Shiver's own screens set h2 apart in small capitals; here it is a card's title */
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--shiver-text);
+}
+
+.settings-card > header p {
+  margin: 6px 0 0;
+  color: var(--shiver-text-dim);
+  font-size: 14px;
+}
+
+.settings-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-card-body > p {
+  margin: 0;
+}
+
+/* an explanation inside a card reads as a card's description does */
+.settings-card-body .hint {
+  margin: 0;
+  color: var(--shiver-text-dim);
+  font-size: 14px;
+}
+
+.settings-card-body .actions {
+  margin-top: 0;
+}
+
+.setting {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setting-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.setting-label {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.setting-description {
+  margin-top: 2px;
+  color: var(--shiver-text-dim);
+  font-size: 12px;
+}
+
+.setting-control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setting-control .field-row {
+  flex-wrap: wrap;
+  max-width: 520px;
+}
+
+/* room for a whole colour value before a row's button goes onto the next line, and no more asked
+   for: a text field's own width is the whole row, which would put every swatch on a line alone */
+.setting-control .field-row input[type='text'] {
+  width: auto;
+  flex: 1 1 8em;
+  min-width: 8em;
+}
+
+/* a checkbox as Sharkord's switch: a pill that fills with the accent when on */
+.settings-layout input[type='checkbox'] {
+  appearance: none;
+  position: relative;
+  width: 32px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--shiver-surface-hover);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.settings-layout input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--shiver-text);
+  transition: transform 0.15s;
+}
+
+.settings-layout input[type='checkbox']:checked {
+  background: var(--shiver-accent);
+}
+
+.settings-layout input[type='checkbox']:checked::after {
+  background: var(--shiver-on-accent);
+  transform: translateX(14px);
+}
+
+.settings-layout input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--shiver-accent);
+  outline-offset: 2px;
+}
+
+/* ── the save bar, held at the bottom while there is something to save ── */
+
+.save-bar-dock {
+  position: sticky;
+  bottom: 16px;
+  z-index: 20;
+  padding: 0 24px;
+  pointer-events: none;
+}
+
+.save-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  /* the cards' width: the column's, less its padding */
+  max-width: 848px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  border: 1px solid var(--shiver-border);
+  border-radius: 12px;
+  background: var(--shiver-rail);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  font-size: 14px;
+  font-weight: 500;
+  pointer-events: auto;
+}
+
+.save-bar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.save-bar.nudged {
+  border-color: var(--shiver-danger, #ff6467);
+  animation: save-bar-nudge 0.45s ease-in-out;
+}
+
+@keyframes save-bar-nudge {
+  0%,
+  100% {
+    transform: none;
+  }
+
+  20%,
+  60% {
+    transform: translateX(-6px);
+  }
+
+  40%,
+  80% {
+    transform: translateX(6px);
+  }
+}

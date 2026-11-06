@@ -90,3 +90,48 @@ export const PhoneOffIcon = ({ className }: Props) => (
     <path d="M4.76 13.582A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 .244.473" />
   </svg>
 );
+
+/* The settings set: the back and menu buttons, and one per section, drawn as Sharkord's own settings draw theirs. */
+
+export const ChevronLeftIcon = ({ className }: Props) => (
+  <svg {...base} className={className}>
+    <path d="m15 18-6-6 6-6" />
+  </svg>
+);
+
+export const MenuIcon = ({ className }: Props) => (
+  <svg {...base} className={className}>
+    <path d="M4 12h16M4 6h16M4 18h16" />
+  </svg>
+);
+
+export const PaletteIcon = ({ className }: Props) => (
+  <svg {...base} className={className}>
+    <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+    <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+    <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+    <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+    <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.83-.44-1.12-.29-.29-.44-.65-.44-1.12a1.64 1.64 0 0 1 1.67-1.67h2c3.05 0 5.56-2.5 5.56-5.55C21.97 6.01 17.46 2 12 2z" />
+  </svg>
+);
+
+export const ShieldIcon = ({ className }: Props) => (
+  <svg {...base} className={className}>
+    <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+  </svg>
+);
+
+export const ServerIcon = ({ className }: Props) => (
+  <svg {...base} className={className}>
+    <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+    <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+    <path d="M6 6h.01M6 18h.01" />
+  </svg>
+);
+
+export const InfoIcon = ({ className }: Props) => (
+  <svg {...base} className={className}>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 16v-4M12 8h.01" />
+  </svg>
+);

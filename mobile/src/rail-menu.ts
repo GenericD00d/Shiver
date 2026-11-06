@@ -36,7 +36,7 @@ export const railMenu = (
 export type MenuActions = {
   open: (entryId: string) => void;
   /** runs a change, then reads everything again */
-  change: (run: () => Promise<unknown>) => Promise<void>;
+  change: (run: () => Promise<unknown>) => Promise<unknown>;
   /** asks before an action that cannot be taken back */
   ask: (action: ConfirmAction, entryId: string) => void;
   signIn: (entryId: string) => void;

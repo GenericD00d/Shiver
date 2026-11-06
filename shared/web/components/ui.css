@@ -18,9 +18,11 @@
   letter-spacing: 0.04em;
 }
 
-/* every text-like field, so adding one does not silently arrive unstyled */
+/* every text-like field, so adding one does not silently arrive unstyled (in a settings card too) */
 .field input[type='text'],
-.field input[type='password'] {
+.field input[type='password'],
+.setting input[type='text'],
+.setting input[type='password'] {
   width: 100%;
   padding: 9px 12px;
   border: 1px solid var(--shiver-border);
@@ -31,7 +33,9 @@
 }
 
 .field input[type='text']:focus,
-.field input[type='password']:focus {
+.field input[type='password']:focus,
+.setting input[type='text']:focus,
+.setting input[type='password']:focus {
   outline: 2px solid var(--shiver-accent);
   outline-offset: -1px;
 }
@@ -381,7 +385,9 @@ button:disabled {
 }
 
 .touch .field input[type='text'],
-.touch .field input[type='password'] {
+.touch .field input[type='password'],
+.touch .setting input[type='text'],
+.touch .setting input[type='password'] {
   padding: 11px 12px;
   /* Android zooms into a field whose text is under 16px */
   font-size: 16px;

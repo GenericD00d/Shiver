@@ -5,16 +5,20 @@ import type { ConfirmAction } from './ActionConfirm';
 import { BackgroundNotifications } from './BackgroundNotifications';
 import { ServerList } from './ServerList';
 import { Sessions, TrustedLinks } from './Sessions';
-import { type SettingsSection, SettingsScreen } from './SettingsScreen';
-import type { Registry, ServerEntry, SessionStates, Settings } from '../types';
+import { BellIcon, InfoIcon, PaletteIcon, ServerIcon } from '../../../shared/web/components/icons';
+import { SettingsCard, SettingsLayout, useSettingsDraft } from '../../../shared/web/components/SettingsLayout';
+import { AboutSection, AppearanceSection, NotificationsSection } from '../../../shared/web/components/SettingsSections';
+import { MAX_SOUND_VOLUME, type Registry, type ServerEntry, type SessionStates, type Settings } from '../types';
 
 /** The settings sections, in the order they are listed. */
-const SECTIONS: { id: SettingsSection | 'servers'; label: string }[] = [
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'notifications', label: 'Notifications' },
-  { id: 'servers', label: 'Servers' },
-  { id: 'about', label: 'About' }
-];
+const SECTIONS = [
+  { id: 'appearance', label: 'Appearance', icon: PaletteIcon },
+  { id: 'notifications', label: 'Notifications', icon: BellIcon },
+  { id: 'servers', label: 'Servers', icon: ServerIcon },
+  { id: 'about', label: 'About', icon: InfoIcon }
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]['id'];
 
 type Props = {
   registry: Registry;
@@ -23,21 +27,23 @@ type Props = {
   sessions: SessionStates;
   /** reads the session states again */
   onSessionsChanged: () => void;
-  onSave: (settings: Settings) => void;
+  /** resolves true once saved */
+  onSave: (settings: Settings) => Promise<boolean>;
   /** runs a change, then reads everything again */
-  change: (run: () => Promise<unknown>) => Promise<void>;
+  change: (run: () => Promise<unknown>) => Promise<unknown>;
   onOpen: (entryId: string) => void;
   onAsk: (action: ConfirmAction, entryId: string) => void;
   onAdd: () => void;
   onSignIn: (entryId: string) => void;
   onBack: () => void;
-  /** above the sections: an error, the update notice */
+  /** above the cards: an error, the update notice */
   notices?: ReactNode;
 };
 
 /**
- * Shiver's settings: the bar across the top, the sections in a drawer over a scrim (as Sharkord's
- * own are on a phone), and the one chosen. Drawn in Shiver's page and over a server's page alike.
+ * Shiver's settings, in the layout Sharkord's own settings have (`SettingsLayout`): on a phone the
+ * sections are a drawer behind the bar's menu button. Drawn in Shiver's page and over a server's
+ * page alike; one draft for every section, saved from the bar that appears once it differs.
  */
 export const SettingsView = ({
   registry,
@@ -53,69 +59,43 @@ export const SettingsView = ({
   onBack,
   notices
 }: Props) => {
-  const [section, setSection] = useState<SettingsSection | 'servers'>('appearance');
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [section, setSection] = useState<SectionId>('appearance');
+  const { draft, patch, leave, bar } = useSettingsDraft(registry.settings, onSave);
 
   return (
-    <>
-      <header className="bar">
-        <button
-          type="button"
-          className="ghost settings-menu"
-          aria-label="Settings sections"
-          aria-expanded={drawerOpen}
-          onClick={() => setDrawerOpen((open) => !open)}
-        >
-          ☰
-        </button>
+    <SettingsLayout
+      title="Shiver Settings"
+      entries={SECTIONS}
+      selected={section}
+      onSelect={setSection}
+      onBack={() => leave(onBack)}
+      notices={notices}
+      footer={bar}
+    >
+      {section === 'appearance' ? <AppearanceSection draft={draft} onChange={patch} /> : null}
 
-        <h1>Settings</h1>
+      {section === 'notifications' ? (
+        <>
+          <NotificationsSection
+            draft={draft}
+            onChange={patch}
+            volumeHint={
+              <>
+                Your servers' own sounds, up to {MAX_SOUND_VOLUME}% so a ping carries over a call. Takes effect next time
+                you open a server.
+              </>
+            }
+          />
 
-        <button type="button" className="ghost" onClick={onBack}>
-          Back
-        </button>
-      </header>
-
-      <main className="content">
-        {notices}
-
-        {drawerOpen ? <div className="settings-scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true" /> : null}
-
-        <nav className={drawerOpen ? 'settings-drawer open' : 'settings-drawer'} aria-label="Settings sections">
-          {SECTIONS.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              className={entry.id === section ? 'settings-section active' : 'settings-section'}
-              aria-current={entry.id === section}
-              onClick={() => {
-                setSection(entry.id);
-                setDrawerOpen(false);
-              }}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </nav>
-
-        <h2 className="section">{SECTIONS.find((entry) => entry.id === section)?.label}</h2>
-
-        {section === 'appearance' || section === 'about' ? (
-          <SettingsScreen settings={registry.settings} onSave={onSave} section={section} />
-        ) : null}
-
-        {section === 'notifications' ? (
-          <>
-            <SettingsScreen settings={registry.settings} onSave={onSave} section="notifications" />
-
-            <h2 className="section">While Shiver is closed</h2>
-
+          <SettingsCard title="While Shiver is closed">
             <BackgroundNotifications />
-          </>
-        ) : null}
+          </SettingsCard>
+        </>
+      ) : null}
 
-        {section === 'servers' ? (
-          <>
+      {section === 'servers' ? (
+        <>
+          <SettingsCard title="Servers">
             <ServerList
               servers={servers}
               onOpen={onOpen}
@@ -130,17 +110,29 @@ export const SettingsView = ({
               plugins={sessions.plugins}
               onSignIn={onSignIn}
             />
+          </SettingsCard>
 
-            <h2 className="section">Background sessions</h2>
-
+          <SettingsCard title="Background sessions">
             <Sessions onCleared={onSessionsChanged} />
+          </SettingsCard>
 
-            <h2 className="section">Links</h2>
-
+          <SettingsCard title="Links">
             <TrustedLinks count={registry.settings.trustedLinks.length} />
-          </>
-        ) : null}
-      </main>
-    </>
+          </SettingsCard>
+        </>
+      ) : null}
+
+      {section === 'about' ? (
+        <AboutSection
+          appVersion={api.appVersion}
+          available={api.updateAvailable}
+          checkForUpdate={api.checkForUpdate}
+          openRepository={api.openRepository}
+          takeLabel="Get Shiver"
+          takeHint="Android will not let an app install itself, so this opens the download."
+          onTake={api.openReleases}
+        />
+      ) : null}
+    </SettingsLayout>
   );
 };

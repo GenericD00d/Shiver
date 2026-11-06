@@ -27,7 +27,6 @@ export const applyTheme = (theme: Theme) => {
   root.setProperty('--shiver-accent-text', accentTextColor(theme));
   root.setProperty('--shiver-surface', lift(themeColor, 84));
   root.setProperty('--shiver-surface-hover', lift(themeColor, 72));
-  root.setProperty('--shiver-surface-dim', lift(themeColor, 92));
   root.setProperty('--shiver-border', `color-mix(in srgb, ${text} 10%, transparent)`);
   root.setProperty('--shiver-text', text);
   root.setProperty('--shiver-text-dim', `color-mix(in srgb, ${text} 65%, ${themeColor})`);

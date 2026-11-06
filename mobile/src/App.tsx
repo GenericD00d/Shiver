@@ -150,14 +150,18 @@ export const App = () => {
     return next;
   }, []);
 
-  /** Runs a change, then re-reads the registry (which redraws everything). */
+  /** Runs a change, then re-reads the registry (which redraws everything). True if it went through. */
   const change = useCallback(
     async (run: () => Promise<unknown>) => {
       try {
         await run();
         await refresh();
+
+        return true;
       } catch (cause) {
         setError(errorMessage(cause));
+
+        return false;
       }
     },
     [refresh]
@@ -413,7 +417,7 @@ export const App = () => {
     [servers]
   );
 
-  const handleSettings = useCallback((settings: Settings) => void change(() => api.updateSettings(settings)), [change]);
+  const handleSettings = useCallback((settings: Settings) => change(() => api.updateSettings(settings)), [change]);
 
   /** A server's or folder's menu, from the item model both clients share. */
   const openMenu = useCallback(

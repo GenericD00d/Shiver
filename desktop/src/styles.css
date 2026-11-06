@@ -324,54 +324,6 @@ body {
   color: var(--shiver-bg);
 }
 
-/* Settings, laid out the way Sharkord's own server settings are: the sections down one side and the
-   one you picked beside them. A column of eight unrelated controls meant reading all of it to find
-   anything, and the list only grows. */
-.settings-body {
-  display: flex;
-  gap: 24px;
-  align-items: flex-start;
-  margin-bottom: 20px;
-}
-
-.settings-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 0 0 152px;
-  position: sticky;
-  top: 0;
-}
-
-.settings-section {
-  padding: 8px 12px;
-  border: none;
-  border-radius: 8px;
-  background: none;
-  color: var(--shiver-text-dim);
-  font: inherit;
-  text-align: left;
-}
-
-.settings-section:hover {
-  background: var(--shiver-surface);
-  color: var(--shiver-text);
-}
-
-.settings-section.active {
-  background: var(--shiver-surface);
-  color: var(--shiver-text);
-  font-weight: 600;
-}
-
-/* the content keeps the panel's width steady, so picking a short section does not make the
-   whole dialog jump narrower */
-.settings-content {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 520px;
-}
-
 /* ── Global voice controls: in the rail, the one part of the shell a server never covers ── */
 
 .voice-tile {

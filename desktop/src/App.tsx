@@ -442,8 +442,12 @@ export const App = () => {
       try {
         await api.updateSettings(settings);
         await refresh();
+
+        return true;
       } catch (cause) {
         setError(errorMessage(cause));
+
+        return false;
       }
     },
     [refresh]

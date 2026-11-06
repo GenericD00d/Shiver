@@ -200,14 +200,18 @@ const QuickRail = () => {
     setLayer((current) => ({ kind: 'error', message: errorMessage(cause), from: screenOf(current) }));
   }, []);
 
-  /** Runs a change, then reads everything again; the core redraws the rail. */
+  /** Runs a change, then reads everything again; the core redraws the rail. True if it went through. */
   const change = useCallback(
     async (run: () => Promise<unknown>) => {
       try {
         await run();
         await refresh();
+
+        return true;
       } catch (cause) {
         fail(cause);
+
+        return false;
       }
     },
     [fail, refresh]
@@ -349,7 +353,7 @@ const QuickRail = () => {
             servers={entries}
             sessions={sessions}
             onSessionsChanged={readSessions}
-            onSave={(settings: Settings) => void change(() => api.updateSettings(settings))}
+            onSave={(settings: Settings) => change(() => api.updateSettings(settings))}
             change={change}
             onOpen={(id) => open(id)}
             onAsk={(action, entryId) => setLayer({ kind: 'confirm', action, entryId, from: 'settings' })}
