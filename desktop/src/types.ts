@@ -1,8 +1,8 @@
 import type { Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink } from '../../shared/web/types';
 
-import type { ColorPreset } from '../../shared/web/settings';
+import type { ColorPreset, Colors } from '../../shared/web/settings';
 
-export { DEFAULT_ACCENT_COLOR, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME } from '../../shared/web/settings';
+export { DEFAULT_ACCENT_COLOR, DEFAULT_COLORS, DEFAULT_RAIL_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME } from '../../shared/web/settings';
 
 export type { ColorPreset, Folder, MutedChannel, NotifyLevel, ServerCheck, ServerInfo, TrustedLink };
 
@@ -85,15 +85,8 @@ export type VoiceStatus = {
   micLocked: boolean;
 };
 
-export type Settings = {
-  themeColor: string;
-  accentColor: string;
-  /** the colour text is drawn in, or null to take it from the background */
-  textColor: string | null;
-  /** the colour for text in the accent (times, links, mentions), or null for the accent itself */
-  accentTextColor: string | null;
-  /** the sidebars' and top bars' colour (and the rail's), or null for a shade off the background */
-  sidebarColor: string | null;
+/** The settings: the colours in use (`Colors`, flattened in model.rs too), then the rest. */
+export type Settings = Colors & {
   /** colour sets the user saved */
   colorPresets: ColorPreset[];
   notificationSounds: boolean;

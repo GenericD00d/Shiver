@@ -20,6 +20,15 @@ export type Colors = {
   sidebarColor: string | null;
 };
 
+/** Sharkord's own colours: what a fresh Shiver starts with, and the Sharkord preset. */
+export const DEFAULT_COLORS: Colors = {
+  themeColor: DEFAULT_THEME_COLOR,
+  accentColor: DEFAULT_ACCENT_COLOR,
+  textColor: null,
+  accentTextColor: null,
+  sidebarColor: null
+};
+
 export type ColorPreset = Colors & { name: string };
 
 /** Most presets the user can save, and the longest name (the core keeps to the same). */
@@ -28,14 +37,7 @@ export const MAX_PRESET_NAME = 32;
 
 /** Presets every Shiver has, ahead of the user's own. */
 export const BUILT_IN_PRESETS: readonly ColorPreset[] = [
-  {
-    name: 'Sharkord',
-    themeColor: DEFAULT_THEME_COLOR,
-    accentColor: DEFAULT_ACCENT_COLOR,
-    textColor: null,
-    accentTextColor: null,
-    sidebarColor: null
-  },
+  { name: 'Sharkord', ...DEFAULT_COLORS },
   // Discord's default dark theme ("Dark", `.theme-darker` in its web client): the chat is
   // --background-base-lower, the server list, channel list and top bar --background-base-lowest,
   // its text --text-default; the accent and text in it (times, mentions) are the text's white too,

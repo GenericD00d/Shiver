@@ -25,6 +25,7 @@ import { Menu } from '../../shared/web/components/Menu';
 import { Rail, type RailServer } from '../../shared/web/components/Rail';
 import { RenameFolderForm } from '../../shared/web/components/RenameFolderForm';
 import type { MenuEntry } from '../../shared/web/menus';
+import type { Colors } from '../../shared/web/settings';
 import { byPosition, type RailRef, type RailStep, runRailSteps } from '../../shared/web/rail';
 import { applyTheme } from '../../shared/web/theme';
 import type { Folder } from '../../shared/web/types';
@@ -45,13 +46,8 @@ type Tile = {
   icon: string | null;
 };
 
-/** What to draw (`RailView`). */
-type View = {
-  themeColor: string;
-  accentColor: string;
-  textColor: string | null;
-  accentTextColor: string | null;
-  sidebarColor: string | null;
+/** What to draw (`RailView`): the colours, then the rail. */
+type View = Colors & {
   /** the server whose page is behind the rail */
   current: string | null;
   servers: Tile[];

@@ -17,9 +17,8 @@ import { SignInForm } from '../../shared/web/components/SignInForm';
 import { UpdateNotice } from '../../shared/web/components/UpdateNotice';
 import { applyTheme } from '../../shared/web/theme';
 import {
-  DEFAULT_ACCENT_COLOR,
+  DEFAULT_COLORS,
   DEFAULT_PAGES_KEPT,
-  DEFAULT_THEME_COLOR,
   type NotificationTarget,
   type Registry,
   type ServerEntry,
@@ -55,11 +54,7 @@ const EMPTY_REGISTRY: Registry = {
   folders: [],
   muted: [],
   settings: {
-    themeColor: DEFAULT_THEME_COLOR,
-    accentColor: DEFAULT_ACCENT_COLOR,
-    textColor: null,
-    accentTextColor: null,
-    sidebarColor: null,
+    ...DEFAULT_COLORS,
     colorPresets: [],
     notificationSounds: true,
     desktopNotifications: true,

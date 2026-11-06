@@ -168,7 +168,7 @@ overlay for a menu or screen) and back press (the page's while it fills the over
 | file | exports |
 |---|---|
 | `types.ts` | `Folder`, `MutedChannel`, `ServerInfo`, `ServerCheck`, `TrustedLink`, `NotifyLevel` (re-exported by each app's `types.ts`) |
-| `settings.ts` | `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `DEFAULT_RAIL_COLOR`, `MAX_SOUND_VOLUME`, `Colors`, `ColorPreset`, `MAX_COLOR_PRESETS`, `MAX_PRESET_NAME`, `BUILT_IN_PRESETS` (Sharkord, Cord-like: Discord's default dark theme, its accent the text's white), `sameColors` |
+| `settings.ts` | `DEFAULT_THEME_COLOR`, `DEFAULT_ACCENT_COLOR`, `DEFAULT_RAIL_COLOR`, `MAX_SOUND_VOLUME`, `Colors` (both apps' `Settings` and the quick rail's view are `Colors &` the rest), `DEFAULT_COLORS`, `ColorPreset`, `MAX_COLOR_PRESETS`, `MAX_PRESET_NAME`, `BUILT_IN_PRESETS` (Sharkord, Cord-like: Discord's default dark theme, its accent the text's white), `sameColors` |
 | `rail.ts` | `initials`, `byPosition`, `membersOf`, `railOrder` (every server as the rail shows them), `RailRef`, `DropZone`, `railDrop`→`RailStep`s (what a drag does, as the calls to make; mirrors `shiver_core::rail`, folders dissolving included), `runRailSteps` (each client's `RailCalls`); tested in `rail.test.ts` |
 | `events.ts` | `coreEventHook`: each app's `useCoreEvent` (the latest handler for each payload of a core event while mounted), over the `listen` it passes |
 | `menus.ts` | the rail's menus as one item model: `MenuEntry`, `serverMenu` (`MenuServer`, `ServerMenuFacts`: a platform leaves out what it lacks; moves in a "Move to folder" submenu), `folderMenu`, `MenuAction`, `readMenuId` (item ids are `action:target`), `notifyLevelOf`; tested in `menus.test.ts` |

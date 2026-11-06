@@ -16,8 +16,7 @@ import { RenameFolderForm } from '../../shared/web/components/RenameFolderForm';
 import { UpdateNotice } from '../../shared/web/components/UpdateNotice';
 import { applyTheme } from '../../shared/web/theme';
 import {
-  DEFAULT_ACCENT_COLOR,
-  DEFAULT_THEME_COLOR,
+  DEFAULT_COLORS,
   type Registry,
   type ServerEntry,
   type Settings
@@ -42,11 +41,7 @@ const EMPTY: Registry = {
   folders: [],
   muted: [],
   settings: {
-    themeColor: DEFAULT_THEME_COLOR,
-    accentColor: DEFAULT_ACCENT_COLOR,
-    textColor: null,
-    accentTextColor: null,
-    sidebarColor: null,
+    ...DEFAULT_COLORS,
     colorPresets: [],
     soundVolume: 100,
     minimiseAttachments: true,
