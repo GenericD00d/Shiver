@@ -534,13 +534,13 @@ pub fn is_home(app: &AppHandle, target: &Url) -> bool {
 /// The webview's own background (shown between documents, white by default on Android), taken
 /// from the user's theme colour.
 pub fn background_color(settings: &Settings) -> Color {
-    let [r, g, b] = shiver_core::model::rgb(&settings.theme_color).unwrap_or([0x0a; 3]);
+    let [r, g, b] = shiver_core::model::rgb(&settings.colors.theme_color).unwrap_or([0x0a; 3]);
 
     Color(r, g, b, 0xff)
 }
 
 fn theme_payload(settings: &Settings) -> Value {
-    shiver_core::model::theme_payload(&settings.colors())
+    shiver_core::model::theme_payload(&settings.colors)
 }
 
 #[cfg(test)]
@@ -672,10 +672,9 @@ mod tests {
 
     #[test]
     fn an_unreadable_setting_still_paints_dark() {
-        let settings = Settings {
-            theme_color: "rgb(255, 0, 0)".into(),
-            ..Default::default()
-        };
+        let mut settings = Settings::default();
+
+        settings.colors.theme_color = "rgb(255, 0, 0)".into();
 
         assert_eq!(background_color(&settings), Color(0x0a, 0x0a, 0x0a, 0xff));
     }

@@ -50,13 +50,13 @@ pub fn push_theme(app: &AppHandle, settings: &Settings) {
 
 /// The colour a Shiver webview paints before its stylesheet loads, from the user's background.
 pub(super) fn startup_color(settings: &Settings) -> tauri::webview::Color {
-    let [r, g, b] = shiver_core::model::rgb(&settings.theme_color).unwrap_or([0x17; 3]);
+    let [r, g, b] = shiver_core::model::rgb(&settings.colors.theme_color).unwrap_or([0x17; 3]);
 
     tauri::webview::Color(r, g, b, 255)
 }
 
 pub(super) fn theme_payload(settings: &Settings) -> serde_json::Value {
-    shiver_core::model::theme_payload(&settings.colors())
+    shiver_core::model::theme_payload(&settings.colors)
 }
 
 fn eval_in(app: &AppHandle, label: &str, script: &str) {

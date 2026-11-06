@@ -7,10 +7,7 @@ use serde::{Deserialize, Serialize};
 use shiver_core::model::{default_sound_volume, default_true};
 pub use shiver_core::{
     is_same_origin,
-    model::{
-        sanitised_color, sanitised_optional_color, sanitised_presets, ColorPreset, Colors, Folder,
-        MutedChannel, DEFAULT_ACCENT_COLOR, DEFAULT_THEME_COLOR, MAX_SOUND_VOLUME,
-    },
+    model::{sanitised_presets, ColorPreset, Colors, Folder, MutedChannel, MAX_SOUND_VOLUME},
     normalize_origin,
 };
 
@@ -62,18 +59,9 @@ impl ServerEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    pub theme_color: String,
-    pub accent_color: String,
-    /// `None` picks dark or light text from the background
-    #[serde(default)]
-    pub text_color: Option<String>,
-    /// for text in the accent (times, links, mentions); `None` is the accent, kept readable
-    #[serde(default)]
-    pub accent_text_color: Option<String>,
-    /// the channel list, member list and top bars, and Shiver's rail; `None` is a shade off the
-    /// background
-    #[serde(default)]
-    pub sidebar_color: Option<String>,
+    /// background, accent, text, accent text and sidebar, flattened into the settings' own keys
+    #[serde(flatten)]
+    pub colors: Colors,
     /// colour sets the user saved, to switch between
     #[serde(default)]
     pub color_presets: Vec<ColorPreset>,
@@ -126,11 +114,7 @@ fn default_pages_kept() -> u8 {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            theme_color: DEFAULT_THEME_COLOR.into(),
-            accent_color: DEFAULT_ACCENT_COLOR.into(),
-            text_color: None,
-            accent_text_color: None,
-            sidebar_color: None,
+            colors: Colors::default(),
             color_presets: Vec::new(),
             notification_sounds: true,
             desktop_notifications: true,
@@ -151,26 +135,11 @@ impl Default for Settings {
 impl Settings {
     /// Every field held to a valid, safe value; applied on the way in and out of the file.
     pub fn sanitised(mut self) -> Self {
-        self.theme_color = sanitised_color(&self.theme_color, DEFAULT_THEME_COLOR);
-        self.accent_color = sanitised_color(&self.accent_color, DEFAULT_ACCENT_COLOR);
-        self.text_color = sanitised_optional_color(self.text_color.as_deref());
-        self.accent_text_color = sanitised_optional_color(self.accent_text_color.as_deref());
-        self.sidebar_color = sanitised_optional_color(self.sidebar_color.as_deref());
+        self.colors = self.colors.sanitised();
         self.color_presets = sanitised_presets(std::mem::take(&mut self.color_presets));
         self.sound_volume = self.sound_volume.min(MAX_SOUND_VOLUME);
         self.pages_kept = self.pages_kept.clamp(MIN_PAGES_KEPT, MAX_PAGES_KEPT);
         self
-    }
-
-    /// The colours in use, as one set.
-    pub fn colors(&self) -> Colors {
-        Colors {
-            theme_color: self.theme_color.clone(),
-            accent_color: self.accent_color.clone(),
-            text_color: self.text_color.clone(),
-            accent_text_color: self.accent_text_color.clone(),
-            sidebar_color: self.sidebar_color.clone(),
-        }
     }
 
     pub fn pages_kept(&self) -> usize {
@@ -214,5 +183,30 @@ impl Registry {
             settings: self.settings.clone(),
             muted: self.muted.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colours_stay_top_level_keys_of_the_settings() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "themeColor": "#1a1a1e",
+            "accentColor": "#efeff1",
+            "sidebarColor": "#121214",
+            "closeToTray": true
+        }))
+        .unwrap();
+
+        assert_eq!(settings.colors.sidebar_color.as_deref(), Some("#121214"));
+        assert!(settings.close_to_tray);
+
+        let saved = serde_json::to_value(&settings).unwrap();
+
+        assert_eq!(saved["themeColor"], "#1a1a1e");
+        assert_eq!(saved["accentTextColor"], serde_json::Value::Null);
+        assert!(saved.get("colors").is_none());
     }
 }

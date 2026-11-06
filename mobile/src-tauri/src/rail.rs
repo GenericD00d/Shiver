@@ -226,11 +226,11 @@ fn view(app: &AppHandle) -> RailView {
     };
 
     RailView {
-        theme_color: settings.theme_color,
-        accent_color: settings.accent_color,
-        text_color: settings.text_color,
-        accent_text_color: settings.accent_text_color,
-        sidebar_color: settings.sidebar_color,
+        theme_color: settings.colors.theme_color,
+        accent_color: settings.colors.accent_color,
+        text_color: settings.colors.text_color,
+        accent_text_color: settings.colors.accent_text_color,
+        sidebar_color: settings.colors.sidebar_color,
         current: app.state::<webview::Showing>().server(),
         servers: servers.iter().map(tile).collect(),
         folders: folders

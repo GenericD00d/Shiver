@@ -122,6 +122,18 @@ pub struct Colors {
     pub sidebar_color: Option<String>,
 }
 
+impl Default for Colors {
+    fn default() -> Self {
+        Self {
+            theme_color: DEFAULT_THEME_COLOR.into(),
+            accent_color: DEFAULT_ACCENT_COLOR.into(),
+            text_color: None,
+            accent_text_color: None,
+            sidebar_color: None,
+        }
+    }
+}
+
 impl Colors {
     pub fn sanitised(self) -> Self {
         Self {
