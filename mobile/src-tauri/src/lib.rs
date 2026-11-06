@@ -124,77 +124,13 @@ pub fn run() {
             .on_navigation({
                 let handle = handle.clone();
 
-                // Allowed is not arrived: Android asks here for frames inside a page too, and for
-                // navigations the page then cancels, so arrival is noticed on load (below).
-                move |target| {
-                    // the page asking for the rail: drawn over it instead, so it stays loaded
-                    if rail::wanted(&handle, target) {
-                        rail::open(&handle);
-
-                        return false;
-                    }
-
-                    let server_origin = current_origin(&handle);
-
-                    if webview::is_allowed(&handle, target, server_origin.as_deref()) {
-                        return true;
-                    }
-
-                    let away = target.origin().ascii_serialization();
-
-                    eprintln!("[shiver] the page tried to leave for {away}; refused");
-
-                    // a frame inside the page asks here too, and refusing it costs the page
-                    // nothing: only a server page that then never arrives failed to open
-                    if let Some(ticket) = handle.state::<Showing>().loading_ticket() {
-                        let handle = handle.clone();
-
-                        tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(REFUSAL_GRACE).await;
-
-                            if handle.state::<Showing>().loading_ticket() == Some(ticket) {
-                                webview::show_failed(&handle);
-                            }
-                        });
-                    }
-
-                    false
-                }
+                move |target| guard_navigation(&handle, target)
             })
             .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
             .on_page_load({
                 let handle = handle.clone();
 
-                move |_window, payload| {
-                    let url = payload.url();
-
-                    if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                        return install_bridge_if_server(&handle, url);
-                    }
-
-                    // whatever the rail was drawn over is going
-                    rail::close(&handle);
-
-                    // A load that started in the main frame, however it was asked for (a page, the
-                    // core's `navigate`, a step through history): where home is noticed, and where
-                    // a page that is neither Shiver's nor the server it opened is sent home. The
-                    // very first load is Shiver's own page.
-                    handle.state::<Showing>().set_home_if_unset(url.to_string());
-
-                    if webview::is_home(&handle, url) {
-                        webview::landed_home(&handle);
-                    } else if matches!(url.scheme(), "http" | "https")
-                        && !current_origin(&handle)
-                            .is_some_and(|origin| model::is_same_origin(&origin, url))
-                    {
-                        eprintln!(
-                            "[shiver] {} loaded without Shiver opening it; going home",
-                            url.origin().ascii_serialization()
-                        );
-                        handle.state::<Showing>().set_stray();
-                        webview::go_home(&handle, None);
-                    }
-                }
+                move |_window, payload| page_loading(&handle, payload.url(), payload.event())
             })
             .build()?;
 
@@ -242,6 +178,72 @@ pub fn run() {
             eprintln!("[shiver] Shiver could not start: {error}");
             std::process::exit(1);
         });
+}
+
+/// Whether the main webview may go to `target`. Allowed is not arrived: Android asks here for
+/// frames inside a page too, and for navigations the page then cancels, so arrival is noticed on
+/// load (`page_loading`).
+fn guard_navigation(handle: &AppHandle, target: &Url) -> bool {
+    // the page asking for the rail: drawn over it instead, so it stays loaded
+    if rail::wanted(handle, target) {
+        rail::open(handle);
+
+        return false;
+    }
+
+    let server_origin = current_origin(handle);
+
+    if webview::is_allowed(handle, target, server_origin.as_deref()) {
+        return true;
+    }
+
+    let away = target.origin().ascii_serialization();
+
+    eprintln!("[shiver] the page tried to leave for {away}; refused");
+
+    // a frame inside the page asks here too, and refusing it costs the page nothing: only a server
+    // page that then never arrives failed to open
+    if let Some(ticket) = handle.state::<Showing>().loading_ticket() {
+        let handle = handle.clone();
+
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(REFUSAL_GRACE).await;
+
+            if handle.state::<Showing>().loading_ticket() == Some(ticket) {
+                webview::show_failed(&handle);
+            }
+        });
+    }
+
+    false
+}
+
+/// A main-frame load starting or finishing, however it was asked for (a page, the core's
+/// `navigate`, a step through history): where home is noticed, where a page that is neither
+/// Shiver's nor the server it opened is sent home, and where a server's page gets the bridge. The
+/// very first load is Shiver's own page.
+fn page_loading(handle: &AppHandle, url: &Url, event: tauri::webview::PageLoadEvent) {
+    if matches!(event, tauri::webview::PageLoadEvent::Finished) {
+        return install_bridge_if_server(handle, url);
+    }
+
+    // whatever the rail was drawn over is going
+    rail::close(handle);
+
+    handle.state::<Showing>().set_home_if_unset(url.to_string());
+
+    if webview::is_home(handle, url) {
+        webview::landed_home(handle);
+    } else if matches!(url.scheme(), "http" | "https")
+        && !current_origin(handle).is_some_and(|origin| model::is_same_origin(&origin, url))
+    {
+        eprintln!(
+            "[shiver] {} loaded without Shiver opening it; going home",
+            url.origin().ascii_serialization()
+        );
+        handle.state::<Showing>().set_stray();
+        webview::go_home(handle, None);
+    }
 }
 
 /// Android's `onPause` and `onResume` (mobile builds only; the crate also compiles on desktop for
