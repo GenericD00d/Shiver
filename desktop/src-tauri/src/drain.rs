@@ -447,23 +447,36 @@ fn apply_in_order(app: &AppHandle, entry_id: String, result: DrainResult) {
     let _ = sender.send((entry_id, result));
 }
 
-fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
-    let (server_name, account_label, muted, has_identity, origin, notify) = {
+/// What a drain's answer is applied with: the server's entry as the registry has it now.
+struct Entry {
+    name: String,
+    account_label: String,
+    origin: String,
+    muted: Vec<i64>,
+    has_identity: bool,
+    notify: shiver_core::model::NotifyLevel,
+}
+
+impl Entry {
+    fn read(app: &AppHandle, entry_id: &str) -> Option<Self> {
         let store = app.state::<Store>();
         let registry = store.registry();
+        let entry = registry.server(entry_id)?;
 
-        let Some(entry) = registry.server(entry_id) else {
-            return;
-        };
+        Some(Self {
+            name: entry.name.clone(),
+            account_label: entry.label(),
+            origin: entry.origin.clone(),
+            muted: registry.muted_for(entry_id),
+            has_identity: entry.identity.is_some(),
+            notify: entry.notify,
+        })
+    }
+}
 
-        (
-            entry.name.clone(),
-            entry.label(),
-            registry.muted_for(entry_id),
-            entry.identity.is_some(),
-            entry.origin.clone(),
-            entry.notify,
-        )
+fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
+    let Some(entry) = Entry::read(app, entry_id) else {
+        return;
     };
 
     crate::logs::page_errors(entry_id, &result.page_errors);
@@ -484,9 +497,9 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
     apply_page_state(
         app,
         entry_id,
-        &server_name,
-        &account_label,
-        has_identity,
+        &entry.name,
+        &entry.account_label,
+        entry.has_identity,
         &mut result,
     );
 
@@ -508,39 +521,22 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
             .iter()
             .filter_map(|address| url::Url::parse(address).ok())
         {
-            webviews::ask_to_open(app, entry_id, &server_name, url);
+            webviews::ask_to_open(app, entry_id, &entry.name, url);
         }
     }
 
+    let notifications = std::mem::take(&mut result.notifications);
+    let mut changed = apply_notifications(app, entry_id, &entry, notifications);
     let feed = app.state::<Feed>();
-    let mut changed = false;
 
-    for raw in result
-        .notifications
-        .into_iter()
-        .take(MAX_NOTIFICATIONS_PER_DRAIN)
-    {
-        // the page applies the level itself (Sharkord knows what mentions the user); the core
-        // holds it to "DMs only" at least, which a title is enough to tell
-        let is_muted = raw
-            .channel_id
-            .is_some_and(|channel_id| muted.contains(&channel_id))
-            || !notify.allows(raw.is_dm, true);
-
-        if let Some(notification) = feed.push(
+    if let Some(dms) = result.dms.take() {
+        feed.set_dms(
             entry_id,
-            &server_name,
-            Some(&origin),
-            (raw, Route::Page),
-            is_muted,
-        ) {
-            crate::notify::announce(app, &notification);
-            changed = true;
-        }
-    }
-
-    if let Some(dms) = result.dms {
-        feed.set_dms(entry_id, &server_name, &account_label, Some(&origin), dms);
+            &entry.name,
+            &entry.account_label,
+            Some(&entry.origin),
+            dms,
+        );
         changed = true;
     }
 
@@ -550,59 +546,106 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
         changed |= feed.mark_entry_read(entry_id);
     }
 
-    // Mutes: the plugin's reconciled list replaces ours, then toggles from the channel menu apply on
-    // top. One registry write for the lot.
-    if result.synced_mutes.is_some() || !result.mutes.is_empty() {
-        // from the registry as it is now, inside its update: a toggle made from Shiver's own menu
-        // since `muted` was read is kept
-        let next_from = |current: Vec<i64>| {
-            let mut next: BTreeSet<i64> = result
-                .synced_mutes
-                .clone()
-                .unwrap_or(current)
-                .into_iter()
-                .collect();
+    changed |= apply_mutes(app, entry_id, &result);
 
-            for mute in &result.mutes {
-                let _ = if mute.muted {
-                    next.insert(mute.channel_id)
-                } else {
-                    next.remove(&mute.channel_id)
-                };
-            }
+    if result.open_dm_failed {
+        report_dm_failure(app, entry_id);
+    }
 
-            shiver_core::model::normalized_mutes(next)
-        };
-        let stored = app.state::<Store>().update(|registry| {
-            let current = registry.muted_for(entry_id);
-            let next = next_from(current.clone());
+    if changed {
+        notify_feed_changed(app);
+    }
+}
 
-            if next != current {
-                registry.set_muted_for(entry_id, next.clone());
-            }
+/// The page's notifications into the feed, each announced. Returns whether any arrived.
+fn apply_notifications(
+    app: &AppHandle,
+    entry_id: &str,
+    entry: &Entry,
+    notifications: Vec<crate::feed::RawNotification>,
+) -> bool {
+    let feed = app.state::<Feed>();
+    let mut changed = false;
 
-            Ok((current, next))
-        });
+    for raw in notifications.into_iter().take(MAX_NOTIFICATIONS_PER_DRAIN) {
+        // the page applies the level itself (Sharkord knows what mentions the user); the core
+        // holds it to "DMs only" at least, which a title is enough to tell
+        let is_muted = raw
+            .channel_id
+            .is_some_and(|channel_id| entry.muted.contains(&channel_id))
+            || !entry.notify.allows(raw.is_dm, true);
 
-        if let Ok((before, next)) = stored {
-            if !result.mutes.is_empty() {
-                webviews::push_muted(app, entry_id, &next);
-                crate::watch::mutes_changed(app, entry_id);
-            }
-
-            changed |= next != before;
+        if let Some(notification) = feed.push(
+            entry_id,
+            &entry.name,
+            Some(&entry.origin),
+            (raw, Route::Page),
+            is_muted,
+        ) {
+            crate::notify::announce(app, &notification);
+            changed = true;
         }
     }
 
-    // Only from the page Shiver asked to show a conversation, and named by what Shiver asked for: a
-    // page can call its own hook with any text, and this lands in Shiver's DM panel.
-    let failed_with = result
-        .open_dm_failed
-        .then(|| {
-            app.state::<webviews::ActiveServer>()
-                .conversation_with(entry_id)
-        })
-        .flatten();
+    changed
+}
+
+/// Mutes: the plugin's reconciled list replaces ours, then toggles from the channel menu apply on
+/// top, in one registry write. Returns whether the list changed.
+fn apply_mutes(app: &AppHandle, entry_id: &str, result: &DrainResult) -> bool {
+    if result.synced_mutes.is_none() && result.mutes.is_empty() {
+        return false;
+    }
+
+    // from the registry as it is now, inside its update: a toggle made from Shiver's own menu
+    // since the entry was read is kept
+    let next_from = |current: Vec<i64>| {
+        let mut next: BTreeSet<i64> = result
+            .synced_mutes
+            .clone()
+            .unwrap_or(current)
+            .into_iter()
+            .collect();
+
+        for mute in &result.mutes {
+            let _ = if mute.muted {
+                next.insert(mute.channel_id)
+            } else {
+                next.remove(&mute.channel_id)
+            };
+        }
+
+        shiver_core::model::normalized_mutes(next)
+    };
+    let stored = app.state::<Store>().update(|registry| {
+        let current = registry.muted_for(entry_id);
+        let next = next_from(current.clone());
+
+        if next != current {
+            registry.set_muted_for(entry_id, next.clone());
+        }
+
+        Ok((current, next))
+    });
+
+    let Ok((before, next)) = stored else {
+        return false;
+    };
+
+    if !result.mutes.is_empty() {
+        webviews::push_muted(app, entry_id, &next);
+        crate::watch::mutes_changed(app, entry_id);
+    }
+
+    next != before
+}
+
+/// Tells the DM panel a conversation could not be opened: only for the page Shiver asked to show
+/// one, and named by what Shiver asked for, since a page can call its own hook with any text.
+fn report_dm_failure(app: &AppHandle, entry_id: &str) {
+    let failed_with = app
+        .state::<webviews::ActiveServer>()
+        .conversation_with(entry_id);
 
     if let Some(name) = failed_with {
         let _ = app.emit_to(
@@ -610,10 +653,6 @@ fn apply(app: &AppHandle, entry_id: &str, mut result: DrainResult) {
             DM_FAILED_EVENT,
             serde_json::json!({ "name": name }),
         );
-    }
-
-    if changed {
-        notify_feed_changed(app);
     }
 }
 
