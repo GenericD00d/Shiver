@@ -17,20 +17,18 @@ import {
   installSoundVolume,
   installVoiceColors
 } from '../../shared/web/bridge/features';
-import { closedDms, watchDmActivity } from '../../shared/web/bridge/messages';
+import { watchDmActivity } from '../../shared/web/bridge/messages';
 import { seedSharkordMutes, watchSharkordMutes } from '../../shared/web/bridge/mutes';
 import { pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin } from '../../shared/web/bridge/plugin';
 import {
   CHANNEL_ITEM,
   COMPOSE_EDITOR,
-  type DmChannel,
   installMuteStyles,
   markAllChannelsRead,
   NARROW,
   notificationAuthor,
   notificationTarget,
   notifyAllows,
-  readDms,
   type SharkordState,
   SIDE_PANEL,
   watchStore
@@ -40,8 +38,6 @@ import { onOpenDmFailure, openDmChannelId, selectChannelWhenReady, showConversat
 import {
   connectionState,
   desktopMismatch,
-  type HotkeyBinding,
-  type HotkeyError,
   installDesktopApi,
   openNotification,
   pressHotkey,
@@ -54,6 +50,8 @@ import {
   resolveDmChannels,
   silenceMessagePing
 } from './notifications';
+import { createDmTracker } from './dm-tracker';
+import { createHotkeyHandoff } from './hotkey-handoff';
 import { capturePageErrors, takePageErrors } from './page-errors';
 import { isClientReady, isFullscreen, isSignedOut, isStalled } from './page-state';
 import { applyNotifyLevel, seedDefaults, seedSession } from './storage';
@@ -73,47 +71,24 @@ function install(shiver: ShiverConfig) {
 
   let muted = new Set(shiver.muted);
   let state: SharkordState = {};
-  let dms: DmChannel[] | null = null;
-  let dmsSignature = '';
   let syncedMutes: number[] | null = null;
   let openDmFailed = false;
   let markAllRead = false;
-  /** the page's shortcuts, while not yet handed to the core: none at first, so a reload clears them */
-  let hotkeys: HotkeyBinding[] | null = [];
-  /** answers the latest set of shortcuts not yet drained, then the one the core is registering */
-  let answerPending: ((errors: HotkeyError[]) => void) | null = null;
-  let answerDrained: ((errors: HotkeyError[]) => void) | null = null;
+  const dms = createDmTracker(shiver.origin);
+  const hotkeys = createHotkeyHandoff();
   let notify = shiver.notify;
   /** set when the level changes on a loaded page, whose Sharkord read its switches at load */
   let notifyChangedLive = false;
   const queue: QueuedNotification[] = [];
   const openQueue: string[] = [];
   const muteQueue: QueuedMute[] = [];
-  /** each channel's latest message, sent or received, as the page's connection reports it */
-  const lastSeen = new Map<number, number>();
-  let lastSeenVersion = 0;
-  /** redraws the DM list; set once the page is ready */
-  let refreshDms = () => {};
-  /** a message in `channelId` at `at`, moving that conversation up if it is newer */
-  const noteMessage = (channelId: number, at: number) => {
-    if (at <= (lastSeen.get(channelId) ?? 0)) return false;
-
-    lastSeen.set(channelId, at);
-    lastSeenVersion += 1;
-    refreshDms();
-
-    return true;
-  };
 
   watchDmActivity({
-    onMessage: noteMessage,
+    onMessage: dms.noteMessage,
     onDmTimes: (times) => {
-      for (const [channelId, at] of times) noteMessage(channelId, at);
+      for (const [channelId, at] of times) dms.noteMessage(channelId, at);
     },
-    onClosedChanged: () => {
-      lastSeenVersion += 1;
-      refreshDms();
-    }
+    onClosedChanged: dms.closedChanged
   });
 
   installExternalLinks((href) => openQueue.push(href));
@@ -153,14 +128,14 @@ function install(shiver: ShiverConfig) {
       notifications: resolveDmChannels(queue, state).splice(0),
       mutes: muteQueue.splice(0),
       markAllRead,
-      dms,
+      dms: dms.take(),
       syncedMutes,
       open: openQueue.splice(0),
       openDmFailed,
       ready: isClientReady(state),
       signedOut: connection !== 'connected' && isSignedOut(),
       stalled: connection !== 'connected' && connection !== 'connecting' && isStalled(),
-      hotkeys,
+      hotkeys: hotkeys.take(),
       mismatch: desktopMismatch(),
       pageErrors: takePageErrors(),
       fullscreen: isFullscreen(),
@@ -169,17 +144,9 @@ function install(shiver: ShiverConfig) {
       viewingChannelId: openDmChannelId(state) ?? (typeof state.selectedChannelId === 'number' ? state.selectedChannelId : null)
     };
 
-    dms = null;
     syncedMutes = null;
     openDmFailed = false;
     markAllRead = false;
-
-    if (hotkeys !== null) {
-      hotkeys = null;
-      answerDrained?.([]);
-      answerDrained = answerPending;
-      answerPending = null;
-    }
 
     const { notifications, mutes, open, ready, signedOut, stalled, fullscreen, voice, viewingChannelId, mismatch } = drained;
     const now = JSON.stringify([ready, signedOut, stalled, fullscreen, voice, viewingChannelId, mismatch]);
@@ -253,23 +220,11 @@ function install(shiver: ShiverConfig) {
         target: { messageId, threadId: parentMessageId ?? null }
       });
     },
-    setHotkeys: (bindings) => {
-      answerPending?.([]);
-      hotkeys = bindings;
-
-      return new Promise((resolve) => {
-        answerPending = resolve;
-      });
-    }
+    setHotkeys: hotkeys.set
   });
 
   defineHook('__SHIVER_HOTKEY__', pressHotkey);
-  defineHook('__SHIVER_HOTKEYS_SET__', (errors) => {
-    const answer = answerDrained;
-
-    answerDrained = null;
-    answer?.(readHotkeyErrors(errors));
-  });
+  defineHook('__SHIVER_HOTKEYS_SET__', (errors) => hotkeys.answer(readHotkeyErrors(errors)));
 
   installNotificationWrapper((title, options) => {
     const { channelId, channelName, author, isDm } = notificationTarget(title, state);
@@ -294,31 +249,10 @@ function install(shiver: ShiverConfig) {
 
     if (shiver.conversation) showConversation(shiver.conversation);
 
-    let dmInputs: unknown[] = [];
-
-    // the DM list only changes with channels, users, a newly seen message or a conversation closed
-    refreshDms = () => {
-      const next = state;
-      const inputs = [next.channels, next.users, next.ownUserId, lastSeenVersion];
-
-      if (inputs.every((input, index) => input === dmInputs[index])) return;
-
-      dmInputs = inputs;
-
-      const list = readDms(shiver.origin, next, lastSeen, closedDms());
-
-      // avatar urls carry expiring tokens, so they are left out of the comparison
-      const signature = JSON.stringify(list.map(({ channelId, name, lastMessageAt }) => [channelId, name, lastMessageAt]));
-
-      if (signature !== dmsSignature) {
-        dmsSignature = signature;
-        dms = list;
-      }
-    };
-
+    dms.start();
     watchStore((next) => {
       state = next;
-      refreshDms();
+      dms.update(next);
     });
 
     installChannelMenu({
