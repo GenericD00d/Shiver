@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { api, errorMessage } from '../api';
+import { EVENTS, useCoreEvent } from '../events';
 import type { PushStatus } from '../types';
 
 /** Distributors people actually have, so the list reads as names rather than package ids. */
@@ -42,13 +43,7 @@ export const BackgroundNotifications = () => {
 
   // an endpoint arrives as a broadcast some moments after the distributor is picked, so the screen
   // is told rather than left showing "waiting" until something else redraws it
-  useEffect(() => {
-    const stop = api.onPush(read);
-
-    return () => {
-      void stop.then((unlisten) => unlisten());
-    };
-  }, [read]);
+  useCoreEvent(EVENTS.push, read);
 
   const chooseServer = useCallback(
     async (entryId: string, wanted: boolean) => {

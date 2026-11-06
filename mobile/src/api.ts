@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 
 import type {
   DmEntry,
@@ -106,22 +105,6 @@ export const api = {
   setPushDistributor: (distributor: string) =>
     invoke<void>('set_push_distributor', { distributor }),
 
-  /** fires when the core's own check finds a newer version */
-  onUpdate: (handler: (version: string) => void) =>
-    listen<string>('shiver://update', (event) => handler(event.payload)),
-
-  /** fires when an endpoint arrives or a registration is refused, so the screen can redraw */
-  onPush: (handler: () => void) => listen('shiver://push', () => handler()),
-
-  /** fires whenever one of those counts moves */
-  onUnread: (handler: (unread: Record<string, number>) => void) =>
-    listen<Record<string, number>>('shiver://inbox', (event) => handler(event.payload)),
-  /** a server opens only after a wait, since Sharkord allows only a few joins a minute */
-  onJoinWait: (handler: (wait: { entryId: string; seconds: number }) => void) =>
-    listen<{ entryId: string; seconds: number }>('shiver://join-wait', (event) => handler(event.payload)),
-
   /** the server the latest `sharkord://` link offered, once */
-  takeServerLink: () => invoke<string | null>('take_server_link'),
-  /** a `sharkord://` link arrived while Shiver's page is up */
-  onServerLink: (handler: () => void) => listen('shiver://server-link', () => handler())
+  takeServerLink: () => invoke<string | null>('take_server_link')
 };

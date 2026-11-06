@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { api } from '../api';
+import { EVENTS, useCoreEvent } from '../events';
 import type { DmEntry } from '../types';
 import { DmList } from '../../../shared/web/components/DmList';
 import { dmKey, type DmRow } from '../../../shared/web/dms';
@@ -17,30 +18,11 @@ type Props = {
 export const DirectMessages = ({ onOpen }: Props) => {
   const [dms, setDms] = useState<DmEntry[] | null>(null);
 
-  /** Reloaded whenever the core publishes, since servers connect after this screen mounts. */
-  useEffect(() => {
-    let live = true;
+  const load = useCallback(() => void api.listDms().then(setDms, () => setDms([])), []);
 
-    const load = () => {
-      api
-        .listDms()
-        .then((next) => {
-          if (live) setDms(next);
-        })
-        .catch(() => {
-          if (live) setDms([]);
-        });
-    };
-
-    load();
-
-    const pending = api.onUnread(load);
-
-    return () => {
-      live = false;
-      pending.then((unsubscribe) => unsubscribe()).catch(() => undefined);
-    };
-  }, []);
+  // reloaded whenever the core publishes, since servers connect after this screen mounts
+  useEffect(load, [load]);
+  useCoreEvent(EVENTS.unread, load);
 
   const rows = useMemo(
     () =>

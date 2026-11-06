@@ -1,5 +1,9 @@
 import { listen } from '@tauri-apps/api/event';
-import { useEffect, useRef } from 'react';
+
+import { coreEventHook } from '../../shared/web/events';
+
+/** Calls the latest handler with each payload of an event for as long as the component is mounted. */
+export const useCoreEvent = coreEventHook(listen);
 
 /** What the core tells Shiver's own webviews. */
 export const EVENTS = {
@@ -21,16 +25,3 @@ export const EVENTS = {
   /** a rail shortcut: `{ server: n }` (1-based) or `{ step: ±1 }` */
   shortcut: 'shiver://shortcut'
 } as const;
-
-/** Calls the latest `handler` with each payload of `event` for as long as the component is mounted. */
-export function useCoreEvent<T = unknown>(event: string, handler: (payload: T) => void) {
-  const latest = useRef(handler);
-
-  latest.current = handler;
-
-  useEffect(() => {
-    const pending = listen<T>(event, ({ payload }) => latest.current(payload));
-
-    return () => void pending.then((unlisten) => unlisten()).catch(() => undefined);
-  }, [event]);
-}

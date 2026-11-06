@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, errorMessage } from './api';
+import { EVENTS, useCoreEvent } from './events';
 import type { ConfirmAction } from './components/ActionConfirm';
 import { Boot, type BootState } from './components/Boot';
 import { DirectMessages } from './components/DirectMessages';
@@ -62,11 +63,6 @@ const EMPTY: Registry = {
  */
 const PASSING_THROUGH_MS = 2000;
 
-/** The screens with a bar across the top (settings draws its own); the others are a card with its own title and Cancel. */
-const TITLES: Partial<Record<Screen, string>> = {
-  dms: 'Direct messages'
-};
-
 /**
  * What a fragment on Shiver's own URL may ask for: one of Shiver's screens (chosen on the quick
  * rail), to stay here (the quick rail could not be drawn), a server to open (chosen on the quick
@@ -112,10 +108,8 @@ export const App = () => {
   const [screen, setScreen] = useState<Screen>('boot');
   /** the address a `sharkord://` link offered, filled into the add screen */
   const [linkedOrigin, setLinkedOrigin] = useState<string | null>(null);
-  /** the server the sign-in screen is for */
-  const [signingIn, setSigningIn] = useState<string | null>(null);
-  /** the folder the rename screen is for */
-  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  /** the server or folder a screen is about: one to sign in to, or to rename */
+  const [subject, setSubject] = useState<string | null>(null);
   /** the rail's menu, while it is open */
   const [menu, setMenu] = useState<{ entries: MenuEntry[]; at: { x: number; y: number } } | null>(null);
   const [boot, setBoot] = useState<BootState>({ kind: 'waiting' });
@@ -138,14 +132,10 @@ export const App = () => {
       .updateAvailable()
       .then(setUpdate)
       .catch(() => undefined);
-
-    // found after launch, by the core's own check
-    const stop = api.onUpdate(setUpdate);
-
-    return () => {
-      void stop.then((unlisten) => unlisten());
-    };
   }, []);
+
+  // found after launch, by the core's own check
+  useCoreEvent<string>(EVENTS.update, setUpdate);
 
   const [icons, setIcons] = useState<Record<string, string>>({});
   const loadIcons = useCallback(() => void api.serverIcons().then(setIcons, () => undefined), []);
@@ -338,17 +328,11 @@ export const App = () => {
     })();
   }, [connect, followServerLink, refresh, resume]);
 
-  useEffect(() => {
-    const stop = api.onServerLink(() => {
-      refresh()
-        .then(followServerLink)
-        .catch((cause) => setError(errorMessage(cause)));
-    });
-
-    return () => {
-      void stop.then((unlisten) => unlisten());
-    };
-  }, [followServerLink, refresh]);
+  useCoreEvent(EVENTS.serverLink, () => {
+    refresh()
+      .then(followServerLink)
+      .catch((cause) => setError(errorMessage(cause)));
+  });
 
   useEffect(() => {
     applyTheme(registry.settings);
@@ -372,36 +356,32 @@ export const App = () => {
   }, [screen, resume]);
 
   // a server that must wait for another join counts down on the connecting screen
-  useEffect(() => {
-    const stop = api.onJoinWait(({ entryId, seconds }) =>
-      setBoot((current) =>
-        current.kind === 'connecting' && current.server.id === entryId
-          ? { ...current, until: Date.now() + seconds * 1000 }
-          : current
-      )
-    );
-
-    return () => {
-      void stop.then((unlisten) => unlisten());
-    };
-  }, []);
+  useCoreEvent<{ entryId: string; seconds: number }>(EVENTS.joinWait, ({ entryId, seconds }) =>
+    setBoot((current) =>
+      current.kind === 'connecting' && current.server.id === entryId
+        ? { ...current, until: Date.now() + seconds * 1000 }
+        : current
+    )
+  );
 
   // unread counts from the core's own connections: read once, then pushed
   useEffect(() => {
     api.unreadCounts().then(setUnread).catch(() => undefined);
-
-    const stop = api.onUnread(setUnread);
-
-    return () => {
-      void stop.then((unlisten) => unlisten());
-    };
   }, []);
+
+  useCoreEvent<Record<string, number>>(EVENTS.unread, setUnread);
 
   // session state per server, re-read whenever the counts change (which is when the core publishes)
   // and, while settings is open, every few seconds: problems can appear or clear without any count moving
   const { sessions, read: readSessions } = useSessions(unread, screen === 'settings');
 
-  const signingInServer = servers.find((server) => server.id === signingIn) ?? null;
+  const signingInServer = servers.find((server) => server.id === subject) ?? null;
+
+  /** Shows a screen about one server or folder. */
+  const openAbout = useCallback((about: 'signIn' | 'folder', id: string) => {
+    setSubject(id);
+    setScreen(about);
+  }, []);
 
   const openById = useCallback(
     (id: string, dmUser?: string) => {
@@ -456,17 +436,11 @@ export const App = () => {
         open: openById,
         change,
         ask: handleAsk,
-        signIn: (target) => {
-          setSigningIn(target);
-          setScreen('signIn');
-        },
-        rename: (target) => {
-          setRenamingFolder(target);
-          setScreen('folder');
-        },
+        signIn: (target) => openAbout('signIn', target),
+        rename: (target) => openAbout('folder', target),
         iconsChanged: loadIcons
       }),
-    [change, handleAsk, loadIcons, openById]
+    [change, handleAsk, loadIcons, openAbout, openById]
   );
 
   /** A drag's calls, in order, then the registry read again (which redraws the rail). */
@@ -475,7 +449,7 @@ export const App = () => {
     [change]
   );
 
-  const renaming = registry.folders.find((folder) => folder.id === renamingFolder);
+  const renaming = registry.folders.find((folder) => folder.id === subject);
 
   const notices = (
     <>
@@ -539,18 +513,16 @@ export const App = () => {
             onOpen={openById}
             onAsk={handleAsk}
             onAdd={() => setScreen('add')}
-            onSignIn={(id) => {
-              setSigningIn(id);
-              setScreen('signIn');
-            }}
+            onSignIn={(id) => openAbout('signIn', id)}
             onBack={() => void resume(registry)}
             notices={notices}
           />
         ) : (
           <>
-            {!TITLES[screen] ? null : (
+            {/* settings draws its own bar; the other screens are a card with its own title and Cancel */}
+            {screen !== 'dms' ? null : (
               <header className="bar">
-                <h1>{TITLES[screen]}</h1>
+                <h1>Direct messages</h1>
 
                 <button type="button" className="ghost" onClick={() => void resume(registry)}>
                   Back
