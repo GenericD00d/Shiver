@@ -36,35 +36,22 @@ use crate::{
 fn report_failed_start(error: tauri::Error) -> ! {
     let message = format!("Shiver could not start: {error}");
 
-    log::warn!("{message}");
+    log::error!("{message}");
 
     #[cfg(windows)]
-    unsafe {
-        #[link(name = "user32")]
-        extern "system" {
-            fn MessageBoxW(
-                window: *mut core::ffi::c_void,
-                text: *const u16,
-                caption: *const u16,
-                kind: u32,
-            ) -> i32;
-        }
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR};
+        use windows_core::HSTRING;
 
-        const MB_ICONERROR: u32 = 0x10;
-
-        let wide = |text: &str| {
-            text.encode_utf16()
-                .chain(std::iter::once(0))
-                .collect::<Vec<u16>>()
+        // SAFETY: two valid, NUL-terminated strings and no owner window
+        unsafe {
+            MessageBoxW(
+                None,
+                &HSTRING::from(message.as_str()),
+                &HSTRING::from("Shiver"),
+                MB_ICONERROR,
+            )
         };
-        let (text, caption) = (wide(&message), wide("Shiver"));
-
-        MessageBoxW(
-            std::ptr::null_mut(),
-            text.as_ptr(),
-            caption.as_ptr(),
-            MB_ICONERROR,
-        );
     }
 
     std::process::exit(1);
