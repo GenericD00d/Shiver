@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { api, errorMessage } from '../api';
+import { api } from '../api';
 
+import { LogFolder, PermissionsSection, ServersSection } from './DesktopSections';
 import { HotkeyField } from './HotkeyField';
 import { playNotificationSound } from '../sounds';
 import { AboutSection, AppearanceSection, NotificationsSection } from '../../../shared/web/components/SettingsSections';
-import { MAX_PAGES_KEPT, MAX_SOUND_VOLUME, MIN_PAGES_KEPT, type Settings } from '../types';
+import { MAX_SOUND_VOLUME, type Settings } from '../types';
 
 type Props = {
   settings: Settings;
@@ -24,14 +25,6 @@ const SECTIONS = [
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]['id'];
-
-/** How the rail shortcuts read on this system (`CommandOrControl` in hotkey.rs). */
-const IS_MAC = navigator.userAgent.includes('Mac');
-const SHORTCUT_KEY = IS_MAC ? '⌘' : 'Ctrl';
-const ALT_KEY = IS_MAC ? '⌥' : 'Alt';
-
-/** Only on Windows does Shiver ask before a server uses the camera and microphone. */
-const ASKS_FOR_MEDIA = navigator.userAgent.includes('Windows');
 
 export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
   const [draft, setDraft] = useState<Settings>(settings);
@@ -60,45 +53,9 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
     [draft, onSave]
   );
 
-  // the result is shown inline, since this panel has nowhere to put a toast
-  const [permissionsReset, setPermissionsReset] = useState<string | null>(null);
-  const [linksForgotten, setLinksForgotten] = useState<string | null>(null);
   // `settings` is not read again while the panel is open, so its count would stay as it was
   const [linksCleared, setLinksCleared] = useState(false);
-  const trustedLinks = linksCleared ? 0 : settings.trustedLinks.length;
-
-  const handleForgetLinks = useCallback(async () => {
-    try {
-      await api.forgetTrustedLinks();
-      setLinksCleared(true);
-      setLinksForgotten('Done — every link asks again');
-    } catch (error) {
-      setLinksForgotten(errorMessage(error));
-    }
-  }, []);
-
-  const [logsError, setLogsError] = useState<string | null>(null);
-
-  const handleOpenLogs = useCallback(async () => {
-    try {
-      await api.openLogsFolder();
-      setLogsError(null);
-    } catch (error) {
-      setLogsError(errorMessage(error));
-    }
-  }, []);
-
-  const handleResetPermissions = useCallback(async () => {
-    try {
-      const forgotten = await api.resetMediaPermissions();
-
-      setPermissionsReset(
-        `Done — ${forgotten} ${forgotten === 1 ? 'server asks' : 'servers ask'} again`
-      );
-    } catch (error) {
-      setPermissionsReset(errorMessage(error));
-    }
-  }, []);
+  const clearLinks = useCallback(() => setLinksCleared(true), []);
 
   return (
     <form className="panel settings" onSubmit={handleSubmit}>
@@ -182,140 +139,28 @@ export const SettingsPanel = ({ settings, onSave, onClose }: Props) => {
           ) : null}
 
           {section === 'permissions' ? (
-            <>
-              {ASKS_FOR_MEDIA ? (
-                <label className="field">
-                  <span>Camera and microphone</span>
-                  <div className="field-row">
-                    <button type="button" className="ghost" onClick={handleResetPermissions}>
-                      {permissionsReset ?? 'Ask me again'}
-                    </button>
-                  </div>
-                  <small className="hint">
-                    Shiver asks before a server on screen uses them, and remembers a yes until you
-                    log out of that server. This forgets every yes, so each server asks again.
-                  </small>
-                </label>
-              ) : null}
-
-              <label className="field">
-                <span>Links from servers</span>
-                <div className="field-row">
-                  <button
-                    type="button"
-                    className="ghost"
-                    disabled={trustedLinks === 0}
-                    onClick={handleForgetLinks}
-                  >
-                    {linksForgotten ?? 'Always ask again'}
-                  </button>
-                </div>
-                <small className="hint">
-                  Shiver asks before opening a link a server's page wants opened, since a page can
-                  claim a click that never happened. A site set to open without asking does so only
-                  from the server it was set on. Set so far: {trustedLinks}.
-                </small>
-              </label>
-            </>
-          ) : null}
-
-          {section === 'about' ? (
-            <AboutSection
-              appVersion={api.appVersion}
-              available={api.availableUpdate}
-              checkForUpdate={api.checkForUpdate}
-              openRepository={api.openRepository}
-              takeLabel="Install Shiver"
-              takingNote="Downloading…"
-              onTake={api.installUpdate}
+            <PermissionsSection
+              trustedLinks={linksCleared ? 0 : settings.trustedLinks.length}
+              onLinksForgotten={clearLinks}
             />
           ) : null}
 
           {section === 'about' ? (
-            <label className="field">
-              <span>Log file</span>
-              <div className="field-row">
-                <button type="button" className="ghost" onClick={handleOpenLogs}>
-                  {logsError ?? 'Open logs folder'}
-                </button>
-              </div>
-              <small className="hint">
-                What Shiver and each server's page ran into, kept on this computer only. Attach{' '}
-                <code>shiver.log</code> when you report a problem.
-              </small>
-            </label>
-          ) : null}
-
-          {section === 'servers' ? (
             <>
-              <p className="hint">
-                {SHORTCUT_KEY}+1 to {SHORTCUT_KEY}+9 open the rail's servers in order, and{' '}
-                {SHORTCUT_KEY}+{ALT_KEY}+↑ or ↓ the one above or below, while Shiver is in front.
-              </p>
-
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={draft.spellcheck}
-                  onChange={(event) => update('spellcheck', event.target.checked)}
-                />
-                <span>
-                  Check spelling as you type
-                  <small>
-                    Underlines misspelled words in a server's text boxes. Turn it off if you write in a
-                    language Windows has no dictionary for.
-                  </small>
-                </span>
-              </label>
-
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={draft.closeToTray}
-                  onChange={(event) => update('closeToTray', event.target.checked)}
-                />
-                <span>
-                  Close to the tray
-                  <small>
-                    Closing the window leaves Shiver running behind an icon in the tray, so servers
-                    stay connected and notifications keep coming. Quit from the icon's menu.
-                  </small>
-                </span>
-              </label>
-
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={draft.startAtLogin}
-                  onChange={(event) => update('startAtLogin', event.target.checked)}
-                />
-                <span>
-                  Start Shiver when you sign in
-                  <small>It starts minimised, or in the tray when it closes there.</small>
-                </span>
-              </label>
-
-              <label className="field">
-                <span>Servers kept loaded</span>
-                <div className="field-row">
-                  <input
-                    type="range"
-                    min={MIN_PAGES_KEPT}
-                    max={MAX_PAGES_KEPT}
-                    step={1}
-                    value={draft.pagesKept}
-                    onChange={(event) => update('pagesKept', Number(event.target.value))}
-                  />
-                  <output className="volume-readout">{draft.pagesKept}</output>
-                </div>
-                <small className="hint">
-                  How many servers keep a client running. A loaded one switches to instantly; the rest
-                  start when you open them. This is memory rather than taste — roughly a browser tab
-                  each. <strong>Notifications are unaffected.</strong>
-                </small>
-              </label>
+              <AboutSection
+                appVersion={api.appVersion}
+                available={api.availableUpdate}
+                checkForUpdate={api.checkForUpdate}
+                openRepository={api.openRepository}
+                takeLabel="Install Shiver"
+                takingNote="Downloading…"
+                onTake={api.installUpdate}
+              />
+              <LogFolder />
             </>
           ) : null}
+
+          {section === 'servers' ? <ServersSection draft={draft} update={update} /> : null}
         </div>
       </div>
 
