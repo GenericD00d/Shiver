@@ -885,18 +885,18 @@ const onLoad = async (ctx) => {
 
   await primeFromUserRows(ctx, [push.adopt, statuses.adopt]);
 
-  const mayWrite = createLimiter(WRITE_LIMIT, 60_000);
-  const limited = (run) => (user, payload) => {
-    if (!mayWrite(user)) throw new Error('Too many changes; try again in a minute');
+  /** Wraps an action in a per-user limit, refused with `refusal` once it is spent. */
+  const throttled = (limit, refusal) => {
+    const allow = createLimiter(limit, 60_000);
 
-    return run(user, payload);
-  };
-  const mayRead = createLimiter(READ_LIMIT, 60_000);
-  const rationed = (run) => (user, payload) => {
-    if (!mayRead(user)) throw new Error('Too many requests; try again in a minute');
+    return (run) => (user, payload) => {
+      if (!allow(user)) throw new Error(refusal);
 
-    return run(user, payload);
+      return run(user, payload);
+    };
   };
+  const limited = throttled(WRITE_LIMIT, 'Too many changes; try again in a minute');
+  const rationed = throttled(READ_LIMIT, 'Too many requests; try again in a minute');
 
   const actions = {
     getOptions: ["What this server's admin turned on for everyone's page", rationed(() => options.read())],
