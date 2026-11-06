@@ -201,7 +201,7 @@ overlay for a menu or screen) and back press (the page's while it fills the over
 ## Frontends
 
 - **desktop/src**: `main.tsx` (label → `App` | `Bell` | `NotificationsPopup`; drops refused wherever the rail does not take them, so none navigates a chrome webview), `api.ts` (`api.*` invoke
-  wrappers, `errorMessage`), `events.ts` (`EVENTS`, `useCoreEvent`; `App` answers `shortcut` in rail order, `mismatch` (the rail's `notices`, `MISMATCH_NOTICES`) and `serverLink` with `followServerLink`: the server a link names, else the add screen filled in; also at boot), `types.ts` (`*_PAGES_KEPT`), `sounds.ts` (`playNotificationSound`), `components/`:
+  wrappers, `errorMessage`), `events.ts` (`EVENTS`, `useCoreEvent`; `App` answers `shortcut` in rail order and `serverLink` with `followServerLink`: the server a link names, else the add screen filled in; also at boot), `live.ts` (`useLive`: what the shell mirrors from the core's events, the feed, unread counts, call, statuses, `mismatch` as the rail's `notices` (`MISMATCH_NOTICES`) and the update offer), `rail-menu.ts` (`useRailMenu`: the rail's native menus, and each chosen item carried out; `AskPanel`), `types.ts` (`*_PAGES_KEPT`), `sounds.ts` (`playNotificationSound`), `components/`:
   `SettingsPanel` (sections beside the content; the shared ones plus voice, permissions and servers (spellcheck among them), and the log folder under About), `HotkeyField`, `DirectMessagesPanel` (the shared `DmList` in a sidebar),
   `NotificationList`, `WelcomePanel`, `VoiceTile`. `App` draws the shared `Rail` (with `VoiceTile` in it; its menus native, through `show_menu`),
   `AddServerForm`, `SignInForm`, `Confirm` (removing a server), `RenameFolderForm`, `Connecting` and `UpdateNotice`.

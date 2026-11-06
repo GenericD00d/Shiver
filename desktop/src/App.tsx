@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, errorMessage } from './api';
 import { EVENTS, useCoreEvent } from './events';
+import { useLive } from './live';
+import { type AskPanel, useRailMenu } from './rail-menu';
 import { DirectMessagesPanel } from './components/DirectMessagesPanel';
 import { VoiceTile } from './components/VoiceTile';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -18,18 +20,13 @@ import {
   DEFAULT_ACCENT_COLOR,
   DEFAULT_PAGES_KEPT,
   DEFAULT_THEME_COLOR,
-  type DmEntry,
   type NotificationTarget,
   type Registry,
   type ServerEntry,
-  type Mismatch,
-  type ServerStatus,
-  type Settings,
-  type VoiceStatus
+  type Settings
 } from './types';
 import { dmKey } from '../../shared/web/dms';
-import { folderMenu, notifyLevelOf, readMenuId, serverMenu } from '../../shared/web/menus';
-import { byPosition, type RailRef, type RailStep, railOrder, runRailSteps } from '../../shared/web/rail';
+import { byPosition, type RailStep, railOrder, runRailSteps } from '../../shared/web/rail';
 
 /** A message clicked in the bell's feed. */
 type OpenMessage = { entryId: string; channelId: number | null; isDm: boolean; author: string; target: NotificationTarget };
@@ -78,36 +75,23 @@ const EMPTY_REGISTRY: Registry = {
   }
 };
 
-/** What a server's tooltip says when its client speaks another version of Sharkord's desktop api. */
-const MISMATCH_NOTICES: Record<Mismatch, string> = {
-  'server-outdated': 'This server runs an older Sharkord: its desktop features are off until it is updated.',
-  'app-outdated': 'This server needs a newer Shiver: its desktop features are off until you update.'
-};
-
 export const App = () => {
   const [registry, setRegistry] = useState<Registry>(EMPTY_REGISTRY);
   /** the address a `sharkord://` link offered, filled into the add screen */
   const [linkedOrigin, setLinkedOrigin] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>('server');
-  const [dms, setDms] = useState<DmEntry[]>([]);
-  const [unread, setUnread] = useState<Record<string, number>>({});
+  /** the server or folder a screen is about: one to remove, sign in to, or rename */
+  const [subject, setSubject] = useState<string | null>(null);
   // `<entry id>:<channel id>` of the conversation shown beside the DM list
   const [openedDm, setOpenedDm] = useState<string | null>(null);
   const [dmError, setDmError] = useState<string | null>(null);
   // the conversation to show again when the inbox is reopened, rather than a blank pane
   const [lastDm, setLastDm] = useState<{ entryId: string; name: string } | null>(null);
-  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
-  const [removing, setRemoving] = useState<string | null>(null);
-  const [signingIn, setSigningIn] = useState<string | null>(null);
-  const [voice, setVoice] = useState<VoiceStatus | null>(null);
-  const [statuses, setStatuses] = useState<Record<string, ServerStatus>>({});
-  const [mismatches, setMismatches] = useState<Record<string, Mismatch>>({});
   const [connecting, setConnecting] = useState<Connecting | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  /** a newer release on offer; "Later" holds until a newer one is found (the bell keeps the offer) */
-  const [update, setUpdate] = useState<string | null>(null);
+  const { dms, unread, refreshFeed, voice, offline, notices, update, dismissUpdate } = useLive();
 
   /**
    * The server being waited on, in a ref so the once-registered ready listener sees the current
@@ -137,15 +121,6 @@ export const App = () => {
     setRegistry(next);
 
     return next;
-  }, []);
-
-  // the bell and its popup live in their own overlay webview. the shell tracks what the *rail*
-  // shows: the DM inbox, and the unread badge on each server icon.
-  const refreshFeed = useCallback(async () => {
-    const [nextDms, counts] = await Promise.all([api.listDms(), api.unreadCounts()]);
-
-    setDms(nextDms);
-    setUnread(counts);
   }, []);
 
   useEffect(() => {
@@ -246,8 +221,11 @@ export const App = () => {
     [cancelWaiting, showServerNow]
   );
 
-  const openPanel = useCallback(async (next: Exclude<Panel, 'server'>) => {
+  /** Covers the content area with one of Shiver's screens, about `about` if given. False on failure. */
+  const openPanel = useCallback(async (next: Exclude<Panel, 'server'>, about?: string) => {
     navigationRef.current += 1;
+
+    if (about !== undefined) setSubject(about);
 
     try {
       await api.showShell();
@@ -257,30 +235,21 @@ export const App = () => {
 
       setPanel(next);
       setError(null);
+
+      return true;
     } catch (cause) {
       setError(errorMessage(cause));
+
+      return false;
     }
   }, []);
 
   /// reopens the inbox, restoring the conversation it was last showing
   const openDmPanel = useCallback(async () => {
-    navigationRef.current += 1;
+    if (!(await openPanel('dms')) || !lastDm) return;
 
-    try {
-      await api.showShell();
-
-      pendingRef.current = null;
-
-      setPanel('dms');
-      setError(null);
-
-      if (lastDm) {
-        await api.openDm(lastDm.entryId, lastDm.name);
-      }
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }, [lastDm]);
+    await api.openDm(lastDm.entryId, lastDm.name).catch((cause) => setError(errorMessage(cause)));
+  }, [lastDm, openPanel]);
 
   /// closing the inbox gives the conversation's page its channels back
   const closePanel = useCallback(async () => {
@@ -357,35 +326,6 @@ export const App = () => {
 
     boot();
   }, [followServerLink, openServer, refresh, refreshFeed]);
-
-  useEffect(() => {
-    api
-      .availableUpdate()
-      .then(setUpdate)
-      .catch(() => undefined);
-  }, []);
-
-  // found after launch, by the core's own check
-  useCoreEvent<string>(EVENTS.update, setUpdate);
-
-  const refreshVoice = useCallback(async () => {
-    setVoice(await api.voiceStatus().catch(() => null));
-  }, []);
-
-  // the core drains each live page on a timer and says so here, rather than the shell polling
-  useCoreEvent(EVENTS.feed, () => void refreshFeed());
-
-  // the core drives this rather than the shell polling: two of the three states are not events, a
-  // server goes from connecting to offline by nothing happening for long enough
-  useCoreEvent<Record<string, ServerStatus>>(EVENTS.status, setStatuses);
-  useCoreEvent<Record<string, Mismatch>>(EVENTS.mismatch, setMismatches);
-
-  // a call can start, move or end on any server, including one nobody is looking at
-  useEffect(() => {
-    void refreshVoice();
-  }, [refreshVoice]);
-
-  useCoreEvent(EVENTS.voice, () => void refreshVoice());
 
   // the swap out of Shiver's cached view and into the live client
   useCoreEvent<{ entryId: string }>(EVENTS.serverReady, ({ entryId }) => {
@@ -480,7 +420,7 @@ export const App = () => {
         await api.renameFolder(id, name);
         await refresh();
 
-        setRenamingFolder(null);
+        setSubject(null);
         await closePanel();
       } catch (cause) {
         setError(errorMessage(cause));
@@ -493,7 +433,7 @@ export const App = () => {
     async (id: string, identity: string, password: string, rememberPassword: boolean) => {
       await api.signInServer(id, identity, password, rememberPassword);
 
-      setSigningIn(null);
+      setSubject(null);
       await refresh();
 
       // opened through the usual path, so the rebuilt page comes up behind the connecting screen
@@ -528,8 +468,7 @@ export const App = () => {
     // whatever they are doing because a background server lost its session
     if (activeId !== entryId && pendingRef.current !== entryId) return;
 
-    setSigningIn(entryId);
-    openPanel('signin').catch(() => undefined);
+    void openPanel('signin', entryId);
   });
 
   // Clicking a message in the bell's feed. The feed is drawn in the popup's own webview, which
@@ -560,78 +499,13 @@ export const App = () => {
     }
   });
 
-  // the rail's menus are native os menus, so the item chosen comes back as an event
-  useCoreEvent<string>(EVENTS.menu, (id) => {
-    const chosen = readMenuId(id);
-
-    if (!chosen) return;
-
-    const { action, target } = chosen;
-    const notify = () => api.setNotifyLevel(target, notifyLevelOf(action) ?? 'all').then(refresh);
-    const actions: Record<typeof action, () => Promise<unknown>> = {
-      open: () => openServer(target),
-      remove: async () => {
-        setRemoving(target);
-        await openPanel('remove');
-      },
-      signin: async () => {
-        setSigningIn(target);
-        await openPanel('signin');
-      },
-      'rename-folder': async () => {
-        setRenamingFolder(target);
-        await openPanel('folder');
-      },
-      markread: () => api.markServerRead(target).then(refreshFeed),
-      forgetpw: () => api.forgetPassword(target),
-      // two actions rather than a toggle: the menu knew which way the server is set
-      anysize: () => api.setAcceptAnySize(target, true),
-      normalsize: () => api.setAcceptAnySize(target, false),
-      'notify-all': notify,
-      'notify-mentions': notify,
-      'notify-dms': notify,
-      logout: () => api.logOutServer(target).then(refresh),
-      refresh: () => api.refreshServerInfo(target).then(refresh),
-      move: () => {
-        const [serverId, folderId] = target.split(':');
-
-        return api.setServerFolder(serverId, folderId).then(refresh);
-      },
-      unfolder: () => api.setServerFolder(target, null).then(refresh),
-      'delete-folder': () => api.deleteFolder(target).then(refresh),
-      plugin: async () => undefined
-    };
-
-    void actions[action]().catch(() => undefined);
+  const showMenu = useRailMenu({
+    registry,
+    refresh,
+    refreshFeed,
+    openServer,
+    ask: (about: AskPanel, id: string) => openPanel(about, id)
   });
-
-  /** A server's or folder's menu, from the item model both clients share. */
-  const showMenu = useCallback(
-    async (target: RailRef) => {
-      if (target.kind === 'folder') {
-        await api.showMenu(folderMenu(target.id));
-
-        return;
-      }
-
-      const server = registry.servers.find((candidate) => candidate.id === target.id);
-
-      if (!server) return;
-
-      const facts = await api.serverMenuFacts(server.id);
-
-      await api.showMenu(
-        serverMenu(server, {
-          folders: registry.folders,
-          hasPassword: facts.hasPassword,
-          plugin: facts.pluginChecked ? facts.plugin : undefined,
-          tooLarge: facts.tooLarge,
-          canMarkRead: true
-        })
-      );
-    },
-    [registry.folders, registry.servers]
-  );
 
   /** A drag's calls, in order; the rail is redrawn from the registry either way. */
   const applyDrop = useCallback(
@@ -647,21 +521,9 @@ export const App = () => {
     () => servers.map((server) => ({ ...server, icon: server.iconUrl })),
     [servers]
   );
-  const offline = useMemo(
-    () => Object.keys(statuses).filter((id) => statuses[id] === 'offline'),
-    [statuses]
-  );
-  const notices = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(mismatches).map(([id, mismatch]) => [id, MISMATCH_NOTICES[mismatch]])
-      ),
-    [mismatches]
-  );
 
-  const renaming = registry.folders.find((folder) => folder.id === renamingFolder);
-  const removingServer = registry.servers.find((server) => server.id === removing);
-  const signingInServer = registry.servers.find((server) => server.id === signingIn);
+  const renaming = registry.folders.find((folder) => folder.id === subject);
+  const subjectServer = registry.servers.find((server) => server.id === subject);
 
   const showWelcome = ready && panel === 'server' && !activeId && !error;
 
@@ -700,7 +562,7 @@ export const App = () => {
             busyLabel="Downloading…"
             // on success the installer takes over and this process ends, so only a failure comes back
             onTake={api.installUpdate}
-            onLater={() => setUpdate(null)}
+            onLater={dismissUpdate}
             onSkip={api.skipUpdate}
           />
 
@@ -756,12 +618,12 @@ export const App = () => {
             />
           ) : null}
 
-          {panel === 'signin' && signingInServer ? (
+          {panel === 'signin' && subjectServer ? (
             <div className="modal-backdrop">
               <SignInForm
-                key={signingInServer.id}
-                serverName={signingInServer.name}
-                identity={signingInServer.identity}
+                key={subjectServer.id}
+                serverName={subjectServer.name}
+                identity={subjectServer.identity}
                 hint={
                   <>
                     Shiver keeps the session in your device&apos;s keychain and signs you in, so this server opens
@@ -777,7 +639,7 @@ export const App = () => {
                 }
                 // off unless the user says so (the add form keeps any password it is given)
                 remembered={false}
-                onSubmit={(identity, password, remember) => handleSignIn(signingInServer.id, identity, password, remember)}
+                onSubmit={(identity, password, remember) => handleSignIn(subjectServer.id, identity, password, remember)}
                 onCancel={closePanel}
               />
             </div>
@@ -795,13 +657,13 @@ export const App = () => {
           ) : null}
 
           {/* asked first: the rail's menu removes a server, and everything Shiver keeps for it, in one click */}
-          {panel === 'remove' && removingServer ? (
+          {panel === 'remove' && subjectServer ? (
             <div className="modal-backdrop">
               <Confirm
-                question={`Remove ${removingServer.name}?`}
+                question={`Remove ${subjectServer.name}?`}
                 hint="Shiver forgets its sign-in, saved password, notifications and page storage. Nothing changes on the server."
                 action="Remove"
-                onConfirm={() => void handleRemove(removingServer.id)}
+                onConfirm={() => void handleRemove(subjectServer.id)}
                 onCancel={closePanel}
               />
             </div>
