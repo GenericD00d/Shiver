@@ -702,6 +702,10 @@ fn apply_page_state(
     }
 
     if app.state::<Readiness>().set(entry_id, ready) {
+        if ready {
+            crate::commands::refresh_info_soon(app, entry_id);
+        }
+
         let _ = app.emit_to(
             SHELL_WEBVIEW,
             SERVER_READY_EVENT,

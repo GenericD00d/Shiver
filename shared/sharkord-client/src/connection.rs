@@ -12,8 +12,8 @@ use crate::{
     wire::{
         join_dms, params_frame, parse_delta, parse_dms, parse_join, parse_message, parse_reply,
         parse_shared_floor, request_frame, ws_url, Reply, DMS_ID, HANDSHAKE_ID, JOIN_ID,
-        MESSAGE_ID, PLUGIN_DATA_ID, READ_STATE_ID, READ_STATE_UPDATE_ID, SHIVER_PLUGIN_ID,
-        SUBSCRIPTIONS,
+        MESSAGE_ID, PLUGIN_DATA_ID, READ_STATE_ID, READ_STATE_UPDATE_ID, SERVER_SETTINGS_ID,
+        SHIVER_PLUGIN_ID, SUBSCRIPTIONS,
     },
     Error, Event, Joined, Result,
 };
@@ -302,6 +302,9 @@ impl Session {
                 }
                 Reply::Data { id: Some(id), data } if id == u64::from(MESSAGE_ID) => {
                     parse_message(&data)
+                }
+                Reply::Data { id: Some(id), .. } if id == u64::from(SERVER_SETTINGS_ID) => {
+                    Some(Event::ServerChanged)
                 }
                 Reply::Failed { id, message, .. } => {
                     log::warn!("the server refused request {id:?}: {message}");

@@ -159,6 +159,8 @@ pub enum Event {
         count: u32,
     },
     Posted(NewMessage),
+    /// the server's settings changed: its name or logo may have
+    ServerChanged,
 }
 
 #[cfg(test)]

@@ -28,6 +28,7 @@ declare global {
   interface Window {
     __SHIVER__?: ShiverConfig;
     __SHIVER_MOBILE_INSTALLED__?: boolean;
+    __SHIVER_SET_THEME__?: (theme: ShiverTheme | null) => void;
     /** polled by the core: this server's muted channels */
     __SHIVER_MUTED__?: () => number[];
     /** polled by the core: links to open in the browser (handed over once) */

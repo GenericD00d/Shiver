@@ -179,14 +179,32 @@ pub async fn refresh_server_info(
     store: State<'_, Store>,
     id: String,
 ) -> Result<ServerEntry> {
-    let info = probe::fetch_info(&entry_of(&store, &id)?.origin).await?;
+    Ok(reread_info(&app, &store, &id, true).await?.0)
+}
+
+/// Re-reads a server's name and logo; true when either changed. The logo is fetched again only when
+/// `always`, or its address changed.
+async fn reread_info(
+    app: &AppHandle,
+    store: &Store,
+    id: &str,
+    always: bool,
+) -> Result<(ServerEntry, bool)> {
+    let before = entry_of(store, id)?;
+    let info = probe::fetch_info(&before.origin).await?;
+    let changed = before.name != info.name || before.icon_url != info.icon_url;
+
+    if !changed && !always {
+        return Ok((before, false));
+    }
+
     let icon = match info.icon_url.as_deref() {
         Some(url) => probe::fetch_icon(url).await,
         None => None,
     };
 
     let entry = store.update(|registry| {
-        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
+        let server = registry.server_mut(id).ok_or(Core::UnknownServer)?;
 
         server.name = info.name.clone();
         server.icon_url = info.icon_url.clone();
@@ -194,10 +212,26 @@ pub async fn refresh_server_info(
         Ok(server.clone())
     })?;
 
-    icons::save(&app, &id, icon.as_deref());
+    icons::save(app, id, icon.as_deref());
 
-    Ok(entry)
+    Ok((entry, changed))
 }
+
+/// Re-reads a server's name and logo in the background (it joined, or said its settings changed);
+/// if either changed, Shiver's page and the quick rail redraw.
+pub fn refresh_info_soon(app: &AppHandle, id: &str) {
+    let (app, id) = (app.clone(), id.to_string());
+
+    tauri::async_runtime::spawn(async move {
+        if let Ok((_, true)) = reread_info(&app, &app.state::<Store>(), &id, false).await {
+            crate::webview::emit_home(&app, SERVERS_EVENT, ());
+            crate::rail::refresh(&app);
+        }
+    });
+}
+
+/// The registry's servers changed without the page asking (a name or logo re-read).
+const SERVERS_EVENT: &str = "shiver://servers";
 
 /// Every server's logo as a `data:` uri, by entry id.
 #[tauri::command]

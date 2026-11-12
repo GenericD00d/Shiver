@@ -24,6 +24,8 @@ pub(crate) const MESSAGE_ID: u32 = 11;
 
 pub(crate) const READ_STATE_UPDATE_ID: u32 = 12;
 
+pub(crate) const SERVER_SETTINGS_ID: u32 = 13;
+
 /// "One more unread here", published per arriving message.
 const READ_STATE_PATH: &str = "channels.onReadStateDelta";
 
@@ -32,11 +34,15 @@ const READ_STATE_UPDATE_PATH: &str = "channels.onReadStateUpdate";
 
 const MESSAGE_PATH: &str = "messages.onNew";
 
+/// The server's settings changed (its name or logo among them), published to every user.
+const SERVER_SETTINGS_PATH: &str = "others.onServerSettingsUpdate";
+
 /// What a joined socket subscribes to; every event arrives on one of them.
-pub(crate) const SUBSCRIPTIONS: [(u32, &str); 3] = [
+pub(crate) const SUBSCRIPTIONS: [(u32, &str); 4] = [
     (READ_STATE_ID, READ_STATE_PATH),
     (READ_STATE_UPDATE_ID, READ_STATE_UPDATE_PATH),
     (MESSAGE_ID, MESSAGE_PATH),
+    (SERVER_SETTINGS_ID, SERVER_SETTINGS_PATH),
 ];
 
 /// The id Shiver's companion plugin installs under.

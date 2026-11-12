@@ -346,6 +346,7 @@ impl sharkord::Watcher for Watch {
 
     fn joined(&mut self, joined: &sharkord::Joined) {
         on_joined(&self.app, &self.entry_id, joined);
+        crate::commands::refresh_info_soon(&self.app, &self.entry_id);
     }
 
     fn event(&mut self, joined: &sharkord::Joined, event: sharkord::Event) {
@@ -374,6 +375,7 @@ impl sharkord::Watcher for Watch {
 
                 crate::notify::announce(app, entry_id, joined, &message)
             }
+            sharkord::Event::ServerChanged => crate::commands::refresh_info_soon(app, entry_id),
         }
     }
 

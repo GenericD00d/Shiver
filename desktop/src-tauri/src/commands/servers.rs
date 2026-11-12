@@ -2,7 +2,7 @@
 
 use sharkord_client::{CheckedSessions, ServerCheck};
 use shiver_core::{limit::Joins, login, model::NotifyLevel, probe};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -295,17 +295,38 @@ pub async fn reset_media_permissions(app: AppHandle) -> Result<usize> {
 
 #[tauri::command]
 pub async fn refresh_server_info(store: State<'_, Store>, id: String) -> Result<ServerEntry> {
-    let info = probe::fetch_info(&entry_of(&store, &id)?.origin).await?;
+    Ok(reread_info(&store, &id).await?.0)
+}
+
+/// Re-reads a server's name and logo; true when either changed.
+async fn reread_info(store: &Store, id: &str) -> Result<(ServerEntry, bool)> {
+    let info = probe::fetch_info(&entry_of(store, id)?.origin).await?;
 
     store.update(|registry| {
-        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
+        let server = registry.server_mut(id).ok_or(Core::UnknownServer)?;
+        let changed = server.name != info.name || server.icon_url != info.icon_url;
 
         server.name = info.name.clone();
         server.icon_url = info.icon_url.clone();
 
-        Ok(server.clone())
+        Ok((server.clone(), changed))
     })
 }
+
+/// Re-reads a server's name and logo in the background (it joined, or said its settings changed),
+/// and has the shell redraw the rail if either changed.
+pub fn refresh_info_soon(app: &AppHandle, id: &str) {
+    let (app, id) = (app.clone(), id.to_string());
+
+    tauri::async_runtime::spawn(async move {
+        if let Ok((_, true)) = reread_info(&app.state::<Store>(), &id).await {
+            let _ = app.emit_to(webviews::SHELL_WEBVIEW, SERVERS_EVENT, ());
+        }
+    });
+}
+
+/// The registry's servers changed without the shell asking (a name or logo re-read).
+const SERVERS_EVENT: &str = "shiver://servers";
 
 #[tauri::command]
 pub async fn set_accept_any_size(

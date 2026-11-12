@@ -319,6 +319,7 @@ impl sharkord::Watcher for Watch {
 
 fn on_joined(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
     app.state::<Readiness>().set(entry_id, true);
+    crate::commands::refresh_info_soon(app, entry_id);
     publish_dms(app, entry_id, joined);
 
     // counted only on the first join of the run; a reconnect re-reads messages already in the feed
@@ -341,6 +342,7 @@ fn on_joined(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined) {
 fn on_event(app: &AppHandle, entry_id: &str, joined: &sharkord::Joined, event: sharkord::Event) {
     match event {
         sharkord::Event::Posted(message) => announce(app, entry_id, joined, &message),
+        sharkord::Event::ServerChanged => crate::commands::refresh_info_soon(app, entry_id),
         // a new message: already in the feed, so only tracked for later reads
         sharkord::Event::Unread { channel_id, delta } => {
             app.state::<ReadStates>().apply(entry_id, |states| {

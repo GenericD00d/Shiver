@@ -24,7 +24,8 @@ pub fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// Saves settings (sanitised; bookkeeping fields kept) and repaints the gap between pages.
+/// Saves settings (sanitised; bookkeeping fields kept) and repaints the gap between pages and the
+/// server page on screen.
 #[tauri::command]
 pub async fn update_settings(
     app: AppHandle,
@@ -45,6 +46,8 @@ pub async fn update_settings(
 
     if let Ok(window) = webview::main_window(&app) {
         let _ = window.set_background_color(Some(webview::background_color(&saved)));
+        // the server page under the settings repaints at once; Shiver's own page has no such hooks
+        let _ = window.eval(webview::settings_script(&saved));
     }
 
     Ok(())

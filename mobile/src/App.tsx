@@ -150,6 +150,11 @@ export const App = () => {
     return next;
   }, []);
 
+  useCoreEvent(EVENTS.servers, () => {
+    void refresh();
+    loadIcons();
+  });
+
   /** Runs a change, then re-reads the registry (which redraws everything). True if it went through. */
   const change = useCallback(
     async (run: () => Promise<unknown>) => {

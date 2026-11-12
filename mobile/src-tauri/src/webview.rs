@@ -543,6 +543,20 @@ fn theme_payload(settings: &Settings) -> Value {
     shiver_core::model::theme_payload(&settings.colors)
 }
 
+/// Applies the colours, sound volume and attachment cards to a loaded server page, in place.
+pub fn settings_script(settings: &Settings) -> String {
+    format!(
+        concat!(
+            "window.__SHIVER_SET_THEME__ && window.__SHIVER_SET_THEME__({});",
+            "window.__SHIVER_SET_SOUND_VOLUME__ && window.__SHIVER_SET_SOUND_VOLUME__({});",
+            "window.__SHIVER_SET_ATTACHMENT_CARDS__ && window.__SHIVER_SET_ATTACHMENT_CARDS__({});"
+        ),
+        theme_payload(settings),
+        settings.sound_volume.min(MAX_SOUND_VOLUME),
+        settings.minimise_attachments
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

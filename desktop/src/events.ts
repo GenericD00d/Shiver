@@ -9,6 +9,8 @@ export const useCoreEvent = coreEventHook(listen);
 export const EVENTS = {
   feed: 'shiver://feed',
   settings: 'shiver://settings',
+  /** a server's name or logo changed: the registry is worth reading again */
+  servers: 'shiver://servers',
   popup: 'shiver://popup',
   menu: 'shiver://server-menu',
   openMessage: 'shiver://open-message',

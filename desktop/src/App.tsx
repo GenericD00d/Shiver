@@ -118,6 +118,8 @@ export const App = () => {
     return next;
   }, []);
 
+  useCoreEvent(EVENTS.servers, () => void refresh());
+
   useEffect(() => {
     serversRef.current = registry.servers;
   }, [registry.servers]);

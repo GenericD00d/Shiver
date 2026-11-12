@@ -13,6 +13,8 @@ export const EVENTS = {
   push: 'shiver://push',
   /** the unread counts moved: every server's count */
   unread: 'shiver://inbox',
+  /** a server's name or logo changed: the registry and logos are worth reading again */
+  servers: 'shiver://servers',
   /** a server opens only after a wait, since Sharkord allows only a few joins a minute */
   joinWait: 'shiver://join-wait',
   /** a `sharkord://` link arrived while Shiver's page is up: `take_server_link` has it */

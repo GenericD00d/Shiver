@@ -44,6 +44,7 @@ function install(shiver: ShiverConfig) {
   setHome(shiver.home);
 
   applyPageTheme(shiver.theme);
+  defineHook('__SHIVER_SET_THEME__', applyPageTheme);
   installMuteStyles();
   installTouchStyles();
   installSoundVolume(shiver.soundVolume);
