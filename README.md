@@ -1,3 +1,5 @@
+<p align="center"><img src="icon.png" alt="Shiver logo" width="160"></p>
+
 # Shiver
 
 A multi-server desktop and Android client for [Sharkord](https://github.com/sharkord/sharkord).
