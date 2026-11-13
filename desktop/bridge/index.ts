@@ -50,7 +50,7 @@ import {
   resolveDmChannels,
   silenceMessagePing
 } from './notifications';
-import { createDisconnectWatch, watchDisconnectChoice } from './disconnect';
+import { createDisconnectWatch, watchDisconnectChoice } from '../../shared/web/bridge/disconnect';
 import { createDmTracker } from './dm-tracker';
 import { createHotkeyHandoff } from './hotkey-handoff';
 import { capturePageErrors, takePageErrors } from './page-errors';

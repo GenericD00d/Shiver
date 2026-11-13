@@ -10,7 +10,10 @@ use tauri_plugin_shiver_secrets::SecretsExt;
 use zeroize::Zeroizing;
 
 use super::{publish, sync, Inbox};
-use crate::{store::Store, webview};
+use crate::{
+    store::{RegistryStore, Store},
+    webview,
+};
 
 const BASELINE_PREFIX: &str = "baseline:";
 
@@ -153,6 +156,69 @@ pub fn restore(app: &AppHandle) {
     });
 }
 
+/// Whether the user chose Disconnect on this entry's page and has not signed in again since.
+pub fn is_disconnected(app: &AppHandle, entry_id: &str) -> bool {
+    app.state::<Store>()
+        .registry()
+        .server(entry_id)
+        .is_some_and(|server| server.disconnected)
+}
+
+/// The user chose Disconnect on the server's own page. As in a browser, the session ends and the
+/// page waits at its sign-in. Unlike a refused session, Shiver does not sign back in: not now, not
+/// after a restart, and not for the page or a connection, until the user signs in again. The
+/// password stays, so that takes one tap in Shiver's form.
+pub fn disconnected_by_user(app: &AppHandle, entry_id: &str) {
+    let signed_in = app
+        .state::<Store>()
+        .registry()
+        .server(entry_id)
+        .is_some_and(|server| server.identity.is_some() && !server.disconnected);
+
+    // only an entry Shiver signs in has anything to stop
+    if !signed_in {
+        return;
+    }
+
+    let marked = app.state::<Store>().update(|registry| {
+        if let Some(server) = registry.server_mut(entry_id) {
+            server.disconnected = true;
+        }
+
+        Ok(())
+    });
+
+    if let Err(error) = marked {
+        return eprintln!("[shiver] could not keep {entry_id} disconnected: {error}");
+    }
+
+    forget_session(app, entry_id);
+    sync(app);
+}
+
+/// The page reports it is signed in. After a Disconnect that is the user signing in again on the
+/// page, so Shiver goes back to signing this entry in, starting from the page's session.
+pub fn signed_in_on_page(app: &AppHandle, entry_id: &str) {
+    if !is_disconnected(app, entry_id) {
+        return;
+    }
+
+    let cleared = app.state::<Store>().update(|registry| {
+        if let Some(server) = registry.server_mut(entry_id) {
+            server.disconnected = false;
+        }
+
+        Ok(())
+    });
+
+    match cleared {
+        Ok(()) => harvest_token(app, entry_id.to_string()),
+        Err(error) => {
+            eprintln!("[shiver] could not record signing in to {entry_id} again: {error}")
+        }
+    }
+}
+
 /// Signs in the servers that have a stored password but no session.
 fn sign_in_missing(app: &AppHandle) {
     let handle = app.clone();
@@ -166,7 +232,7 @@ fn sign_in_missing(app: &AppHandle) {
             registry
                 .servers
                 .iter()
-                .filter(|server| server.identity.is_some())
+                .filter(|server| server.identity.is_some() && !server.disconnected)
                 .filter(|server| {
                     inbox.token(&server.id).is_none() && inbox.has_password(&server.id)
                 })
@@ -248,8 +314,12 @@ fn keep_renewed(app: &AppHandle, entry_id: &str, token: &str) -> bool {
     kept
 }
 
-/// Keeps a session and connects with it.
+/// Keeps a session and connects with it (not while the user stays disconnected from the entry).
 fn record_session(app: &AppHandle, entry_id: &str, token: &str, persist: bool) {
+    if is_disconnected(app, entry_id) {
+        return;
+    }
+
     if keep_session(app, entry_id, token, persist) {
         sync(app);
     }
@@ -321,6 +391,11 @@ fn forget(app: &AppHandle, entry_id: &str, keep_floor: bool) {
 /// background; a missing or expired one is renewed first, and an expired one is still used when
 /// that fails (the server's refusal then takes its usual course).
 pub async fn session_for(app: &AppHandle, entry_id: &str) -> Option<String> {
+    // the user's Disconnect: no seed for the page, no connection, until they sign in again
+    if is_disconnected(app, entry_id) {
+        return None;
+    }
+
     let token = app.state::<Inbox>().token(entry_id);
 
     match token.as_deref().map(jwt::freshness) {
@@ -351,6 +426,11 @@ fn renew_in_background(app: &AppHandle, entry_id: &str) {
 /// Signs a server in again from its stored password and keeps the session, without connecting
 /// with it (the caller does). A refused password is forgotten.
 pub(super) async fn renew(app: &AppHandle, entry_id: &str) -> Option<String> {
+    // the password is not even sent while the user stays disconnected
+    if is_disconnected(app, entry_id) {
+        return None;
+    }
+
     let (identity, origin) = app
         .state::<Store>()
         .registry()

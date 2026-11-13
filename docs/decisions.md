@@ -73,6 +73,16 @@ the menu item being chosen shortly before, so a refusal within two minutes of ch
 cancelling is taken as a Disconnect too: the user then signs in by hand. A page can claim a
 Disconnect at any time, which only stops Shiver signing that one entry in.
 
+## 2026-11-13: Disconnect on a server's page keeps Android signed out of it too
+
+As on the desktop: `ServerEntry.disconnected` is saved with the registry, the bridge reports the
+user's own Disconnect (`shared/web/bridge/disconnect.ts`, now shared) as `userDisconnected` and
+signing in as `signedIn`, read with the mutes. `inbox::disconnected_by_user` sets the flag and drops
+the stored session, keeping the password. While it is set, `session_for` and `renew` give no
+session, so the page gets no seed and `sync` no connection, and the page's own reconnect
+(`reconnect.ts`) leaves the connect form alone. Signing in with Shiver's form, or on the page,
+clears it. Not yet tried on a device.
+
 ## Open items
 
 - **macOS builds.** wry grants every page the camera and microphone there, so a macOS build must not
@@ -80,9 +90,6 @@ Disconnect at any time, which only stops Shiver signing that one entry in.
 - **The Android seed key** is SHA-256 of the per-launch secret followed by the origin. HMAC-SHA256
   is the textbook construction. The current one isn't exploitable, because an origin cannot contain
   the padding a length-extension attack would need. Changing it needs a test on a device.
-- **Disconnect on Android.** The desktop app keeps a server signed out after Disconnect on its page
-  (decision of 2026-11-13). The Android app still signs back in. The same flag and bridge report
-  are needed in `mobile/`, tested on a device.
 
 ## Bug log
 
@@ -111,7 +118,7 @@ With no `version` in `mobile/src-tauri/tauri.conf.json`, Gradle falls back to 1.
 Sharkord's Disconnect removes the session from the page, which looks just like a refused session,
 so recovery signed straight back in with the stored password. The desktop bridge now reports the
 user's own Disconnect, and the core keeps that entry signed out until the user signs in again
-(`session::disconnected_by_user`). That fixes the desktop app; Android is an open item.
+(`session::disconnected_by_user`). Android does the same since (`inbox::disconnected_by_user`).
 
 ### The Android build failed after the Tauri CLI moved to AGP 9 (fixed)
 

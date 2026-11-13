@@ -177,4 +177,4 @@ independent audit. Each row's commit is where its findings were fixed.
 | 2026-10-06 | Audit | `b44f00c` | Fixed once each finding was verified |
 | 2026-10-10 | Review of the 6 October fixes | `23e6a0a` | Four fixes that went too far or not far enough |
 | 2026-10-10 | Audit | `cbc672b` | Unread floors that only rose; a background renewal that could sign a logged-out server back in; smaller fixes |
-| 2026-11-13 | Review of the four Shiver repos | This branch (desktop; Android open) | Sharkord's own in-page Disconnect was undone by Shiver signing straight back in |
+| 2026-11-13 | Review of the four Shiver repos | `46f7bc8` (desktop), the Android Disconnect change (Android) | Sharkord's own in-page Disconnect was undone by Shiver signing straight back in |

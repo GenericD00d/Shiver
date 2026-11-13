@@ -385,7 +385,7 @@ pub fn install_bridge(app: &AppHandle, page: PageContext<'_>) {
 
 /// Polled by `inbox::watch_mutes`: reads the page's mutes and queued outside links (a read on
 /// departure would be torn down by the navigation before it answered).
-const READ_SCRIPT: &str = "JSON.stringify({     muted: window.__SHIVER_MUTED__ ? window.__SHIVER_MUTED__() : null,     open: window.__SHIVER_OPEN__ ? window.__SHIVER_OPEN__() : null,     seen: window.__SHIVER_SEEN__ ? window.__SHIVER_SEEN__() : null,     dms: window.__SHIVER_DMS__ ? window.__SHIVER_DMS__() : null,     cleared: window.__SHIVER_CLEARED__ ? window.__SHIVER_CLEARED__() : null })";
+const READ_SCRIPT: &str = "JSON.stringify({     muted: window.__SHIVER_MUTED__ ? window.__SHIVER_MUTED__() : null,     open: window.__SHIVER_OPEN__ ? window.__SHIVER_OPEN__() : null,     seen: window.__SHIVER_SEEN__ ? window.__SHIVER_SEEN__() : null,     dms: window.__SHIVER_DMS__ ? window.__SHIVER_DMS__() : null,     cleared: window.__SHIVER_CLEARED__ ? window.__SHIVER_CLEARED__() : null,     userDisconnected: window.__SHIVER_DISCONNECTED__ ? window.__SHIVER_DISCONNECTED__() : false,     signedIn: window.__SHIVER_SIGNED_IN__ ? window.__SHIVER_SIGNED_IN__() : false })";
 
 #[derive(Default, Deserialize)]
 struct PageState {
@@ -401,6 +401,17 @@ struct PageState {
     /// retired push endpoints the plugin has confirmed clearing
     #[serde(default, deserialize_with = "null_as_default")]
     cleared: Vec<String>,
+    /// the user chose Disconnect in the page's server menu, so this connect form is theirs, not a
+    /// refused session (`inbox::disconnected_by_user`)
+    #[serde(
+        default,
+        rename = "userDisconnected",
+        deserialize_with = "null_as_default"
+    )]
+    user_disconnected: bool,
+    /// signed in: past the connect form, with its own user known
+    #[serde(default, rename = "signedIn", deserialize_with = "null_as_default")]
+    signed_in: bool,
 }
 
 fn null_as_default<'de, D: serde::Deserializer<'de>, T: Default + Deserialize<'de>>(
@@ -439,6 +450,14 @@ pub fn read_mutes(app: &AppHandle, entry_id: &str) {
 }
 
 fn apply_page_state(app: &AppHandle, entry_id: &str, state: PageState) {
+    // the user's own Disconnect keeps Shiver out until they sign in again, which signing in on the
+    // page counts as; staying out wins if a page claims both
+    if state.user_disconnected {
+        inbox::disconnected_by_user(app, entry_id);
+    } else if state.signed_in {
+        inbox::signed_in_on_page(app, entry_id);
+    }
+
     // what the page says the user opened away from it; opened only if the user agrees
     let server = app
         .state::<Store>()
@@ -754,6 +773,34 @@ mod tests {
         showing.set_home_if_unset("http://localhost:1421/".into());
         showing.set_home_if_unset("http://tauri.localhost/".into());
         assert_eq!(showing.home().as_deref(), Some("http://localhost:1421/"));
+    }
+
+    #[test]
+    fn the_pages_word_on_its_session_arrives_under_the_bridges_names() {
+        let state: PageState = serde_json::from_str(r#"{"muted":null}"#).unwrap();
+
+        assert!(!state.user_disconnected && !state.signed_in);
+
+        let state: PageState =
+            serde_json::from_str(r#"{"userDisconnected":true,"signedIn":null}"#).unwrap();
+
+        assert!(state.user_disconnected && !state.signed_in);
+
+        let state: PageState = serde_json::from_str(r#"{"signedIn":true}"#).unwrap();
+
+        assert!(state.signed_in);
+        // and the names the read script asks the bridge for
+        for hook in [
+            "__SHIVER_DISCONNECTED__",
+            "__SHIVER_SIGNED_IN__",
+            "userDisconnected",
+            "signedIn",
+        ] {
+            assert!(
+                READ_SCRIPT.contains(hook),
+                "the read script should ask for {hook}"
+            );
+        }
     }
 
     #[test]

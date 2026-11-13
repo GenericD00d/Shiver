@@ -507,9 +507,10 @@ Kotlin in each plugin's `android/src/main/java`.
     `openDirectMessage`, `selectChannelWhenReady`; an open dialog such as Sharkord's settings is
     closed first), `onOpenDmFailure`.
   - `page-state.ts`: signed out, signed in, stalled, ready, fullscreen; `atConnectForm`.
-  - `disconnect.ts`: `watchDisconnectChoice` notes Sharkord's Disconnect item being chosen, and
-    `createDisconnectWatch` reports the connect form that follows as the user's own
-    (`userDisconnected`, once); tested in `disconnect.test.ts`.
+  - `shared/web/bridge/disconnect.ts` (both apps): `watchDisconnectChoice` notes Sharkord's
+    Disconnect item being chosen, and `createDisconnectWatch` reports the connect form that follows
+    as the user's own (`userDisconnected`, once), and `pending` while its answer is on its way;
+    tested in `disconnect.test.ts`.
   - `dm-tracker.ts` (`createDmTracker`: the DM list for the core, each conversation's latest message,
     redrawn only when it changed) and `hotkey-handoff.ts` (`createHotkeyHandoff`: the page's
     shortcuts held for the drain and the core's answer passed back); both tested in
@@ -647,7 +648,10 @@ Kotlin in each plugin's `android/src/main/java`.
   stored session (keeping the password) and rebuilds the page without one, so a reload can't sign
   it back in. Nothing signs that entry in, after a restart either, until the user does: with
   Shiver's form (`sign_in_server`), or on the page, which then reports `signedIn`
-  (`session::signed_in_on_page`). Android doesn't do this yet ([docs/decisions.md](docs/decisions.md#open-items)).
+  (`session::signed_in_on_page`). Android does the same: its bridge answers `__SHIVER_DISCONNECTED__`
+  and `__SHIVER_SIGNED_IN__`, read with the mutes, `inbox::disconnected_by_user` drops the session,
+  `session_for` and `renew` give a disconnected entry none, `sync` gives it no connection, and the
+  page's own reconnect (`reconnect.ts`) leaves its connect form alone.
 - A log-out or removal holds `CREDENTIALS`, so a renewal finishing meanwhile can't store a session
   again.
 
