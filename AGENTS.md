@@ -39,7 +39,7 @@ The pieces, for running one at a time:
 ```bash
 python3 scripts/check-docs.py                # the docs follow docs/standards.md
 python3 scripts/check-version.py             # versions agree, and the changelog has the version
-bun test shared/web desktop/bridge           # TypeScript unit tests
+bun test shared/web desktop/bridge mobile/bridge           # TypeScript unit tests
 (cd plugin && node --test test/*.test.js)    # companion plugin tests
 (cd desktop && bun install --frozen-lockfile && bun run build:bridge)   # before any cargo command
 (cd mobile && bun install --frozen-lockfile && bun run build:bridge && bun run build:rail)

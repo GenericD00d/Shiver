@@ -73,13 +73,19 @@ the menu item being chosen shortly before, so a refusal within two minutes of ch
 cancelling is taken as a Disconnect too: the user then signs in by hand. A page can claim a
 Disconnect at any time, which only stops Shiver signing that one entry in.
 
+## 2026-11-13: The Android seed key is an HMAC
+
+The key a `#shiver-seed` fragment must carry was SHA-256 of the per-launch secret followed by the
+origin. That wasn't exploitable, since an origin can't carry the padding a length extension needs,
+but HMAC-SHA256 is the textbook construction. `seed_key_for` and `seedKeyFor`
+(`mobile/bridge/seed-key.ts`) now compute HMAC-SHA256 of the origin keyed with the secret, with
+one shared test vector, and `document_start` serialises the key with `serde_json`, as every value
+evaluated into a page is.
+
 ## Open items
 
 - **macOS builds.** wry grants every page the camera and microphone there, so a macOS build must not
   ship until Shiver answers those requests itself. See SECURITY.md.
-- **The Android seed key** is SHA-256 of the per-launch secret followed by the origin. HMAC-SHA256
-  is the textbook construction. The current one isn't exploitable, because an origin cannot contain
-  the padding a length-extension attack would need. Changing it needs a test on a device.
 - **Disconnect on Android.** The desktop app keeps a server signed out after Disconnect on its page
   (decision of 2026-11-13). The Android app still signs back in. The same flag and bridge report
   are needed in `mobile/`, tested on a device.

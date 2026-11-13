@@ -20,7 +20,7 @@ step "Versions agree"
 python3 scripts/check-version.py
 
 step "Web and bridge unit tests"
-bun test shared/web desktop/bridge
+bun test shared/web desktop/bridge mobile/bridge
 
 step "Companion plugin"
 (cd plugin && for file in server/*.js client/*.js; do node --check "$file"; done && node --test test/*.test.js)

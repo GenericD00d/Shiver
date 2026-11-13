@@ -217,7 +217,7 @@ jobs:
         working-directory: mobile
 
       - name: Bridge tests
-        run: bun test shared/web desktop/bridge
+        run: bun test shared/web desktop/bridge mobile/bridge
 
       # the test ids, storage keys and classes the bridges match, at the Sharkord commit they were
       # last checked against (`sharkord.yml` checks Sharkord's latest weekly)

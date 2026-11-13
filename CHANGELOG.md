@@ -7,6 +7,8 @@ Entries up to 0.2.8 were reconstructed from the commit history on 2026-11-13.
 
 ### Changed
 
+- Android checks the key on a session seed with HMAC-SHA256 instead of a plain SHA-256 of the
+  secret and the origin.
 - The docs follow the Shiver standard ([docs/standards.md](docs/standards.md)): `AGENTS.md` is the
   entry point for agents, and SECURITY.md has a trust-boundaries table and a review history.
   `scripts/check-docs.py` checks the structure in CI, and `scripts/check.sh` runs every local check.
