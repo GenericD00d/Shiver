@@ -101,6 +101,11 @@ evaluated into a page is.
 - **Disconnect on Android.** The desktop app keeps a server signed out after Disconnect on its page
   (decision of 2026-11-13). The Android app still signs back in. The same flag and bridge report
   are needed in `mobile/`, tested on a device.
+- **Android SDK 37 and Tauri v3.** The Tauri CLI's new template sets `compileSdk` and `targetSdk`
+  to 37 and turns off AGP 9's built-in Kotlin and new DSL in `gradle.properties` "until Tauri v3".
+  Move to SDK 37 when Google Play requires it, testing on a device, since a new target SDK changes
+  runtime behaviour; drop those flags when Tauri v3 does. The plugins' build files already use
+  `kotlin { compilerOptions }`.
 
 ## Bug log
 
