@@ -1,6 +1,6 @@
 # The Shiver standard
 
-Standard version **1** (2026-11-13).
+Standard version **2** (2026-11-13).
 
 This file is identical in all four Shiver repos, and `scripts/check-docs.py` fails if it is changed
 in one of them only. The copy in
@@ -104,8 +104,8 @@ doesn't apply stays, with one line saying so.
 2. Toolchains are pinned to exact versions, and container images by digest.
 3. Installs come from lockfiles only: `bun install --frozen-lockfile`, `npm ci`, `go mod verify`.
    Anything cloned at build time is pinned to a tag or a commit.
-4. CI runs a dependency audit: `cargo audit`, `bun audit` or `govulncheck`. Exceptions are listed
-   with a reason.
+4. CI runs a dependency audit on every push and weekly: `cargo audit`, `bun audit` or
+   `govulncheck`. Exceptions are listed with a reason.
 5. `.github/dependabot.yml` updates the pinned actions monthly.
 6. On GitHub, which only the owner can change: private vulnerability reporting, secret scanning
    with push protection, and Dependabot alerts are on.
