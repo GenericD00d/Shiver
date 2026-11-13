@@ -667,6 +667,13 @@ pub fn notify_feed_changed<R: tauri::Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// Whether a drain shows a recovery worked, so its attempts can be forgotten: only a page past the
+/// connect form. `ready` alone isn't enough, since the connect form is ready too, and `signed_out`
+/// is false there whenever the page's own storage has `sharkord-auto-login` set.
+fn recovery_confirmed(result: &DrainResult) -> bool {
+    result.signed_in && !result.signed_out
+}
+
 /// The page's own state in a drain: fullscreen, sign-in state, readiness, voice and the channel on
 /// screen.
 fn apply_page_state(
@@ -697,7 +704,7 @@ fn apply_page_state(
     let recovering = result.signed_out && !disconnected && session::recover(app, entry_id);
     let ready = result.ready && !recovering;
 
-    if result.ready && !result.signed_out {
+    if recovery_confirmed(result) {
         recovery.confirmed(entry_id);
     }
 
@@ -749,6 +756,23 @@ fn apply_page_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_signed_in_page_confirms_a_recovery() {
+        let page = |ready, signed_in, signed_out| DrainResult {
+            ready,
+            signed_in,
+            signed_out,
+            ..Default::default()
+        };
+
+        // the connect form, with auto-login left on in the page's storage
+        assert!(!recovery_confirmed(&page(true, false, false)));
+        assert!(!recovery_confirmed(&page(true, false, true)));
+        assert!(recovery_confirmed(&page(true, true, false)));
+        // a page claiming both stays unconfirmed
+        assert!(!recovery_confirmed(&page(true, true, true)));
+    }
 
     #[test]
     fn a_stalled_page_is_probed_after_its_grace_once_at_a_time_then_backs_off() {

@@ -119,3 +119,11 @@ From 0.2.7 the CLI's template generates the Android Gradle plugin 9.3.1, which c
 unless told otherwise, while `app/build.gradle.kts`, kept from the 0.1.0 template, set only
 Kotlin's target, 1.8. Kotlin's plugin refuses the mismatch, so CI's Android build, which generates
 the project afresh, failed from 7 November. The app now sets both to 1.8, as the new template does.
+
+### The cap on sign-in attempts could reset at the connect form (fixed)
+
+`apply_page_state` forgot a server's recovery attempts whenever a page was ready and not signed
+out. Sharkord's connect form is ready too, and isn't reported signed out when the page's own
+storage has `sharkord-auto-login` set, so the cap in `session.rs` could reset without anyone
+signing in. Only a page reporting `signedIn` confirms a recovery now (`recovery_confirmed`,
+tested in `drain.rs`).
