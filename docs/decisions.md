@@ -60,6 +60,10 @@ checks and security baseline everywhere.
 `scripts/check-docs.py` checks the structure in CI. This file replaces decisions that were only in
 commit messages.
 
+## 2026-11-13: Standard version 2: dependency audits run weekly too
+
+Security baseline rule 4 now reads "on every push and weekly". GO-2026-6859 and RUSTSEC-2026-0538 both surfaced only because something happened to be pushed, and the manager's v0.3.1 shipped with the Go one. Each repo runs its audit in `.github/workflows/audit.yml`, on pushes, pull requests, a Monday schedule and by hand; a failed scheduled run emails the owner. Copied to all four repos the same day, with the new `STANDARDS_SHA256`.
+
 ## 2026-11-13: Disconnect on a server's page keeps Shiver signed out of it
 
 **Why:** choosing Disconnect in Sharkord's server menu is the user asking to leave, so Shiver must
@@ -127,3 +131,11 @@ From 0.2.7 the CLI's template generates the Android Gradle plugin 9.3.1, which c
 unless told otherwise, while `app/build.gradle.kts`, kept from the 0.1.0 template, set only
 Kotlin's target, 1.8. Kotlin's plugin refuses the mismatch, so CI's Android build, which generates
 the project afresh, failed from 7 November. The app now sets both to 1.8, as the new template does.
+
+### The cap on sign-in attempts could reset at the connect form (fixed)
+
+`apply_page_state` forgot a server's recovery attempts whenever a page was ready and not signed
+out. Sharkord's connect form is ready too, and isn't reported signed out when the page's own
+storage has `sharkord-auto-login` set, so the cap in `session.rs` could reset without anyone
+signing in. Only a page reporting `signedIn` confirms a recovery now (`recovery_confirmed`,
+tested in `drain.rs`).
