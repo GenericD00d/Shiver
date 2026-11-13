@@ -126,6 +126,20 @@ The APK is Gradle's output rather than cargo's, so it did not move with the work
 mobile/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
 ```
 
+### When the Tauri CLI moves
+
+A new `@tauri-apps/cli` in `mobile/bun.lock` can generate a different Android Gradle plugin, Kotlin
+Gradle plugin or Gradle. CI's step "The generated project's Gradle versions are the expected ones"
+fails and names what moved. Then:
+
+1. Regenerate the project: `cd mobile && ./node_modules/.bin/tauri android init`.
+2. Merge `mobile/src-tauri/gen/android/app/build.gradle.kts` by hand against the new template, never
+   accepting it whole, and keep the other hand-written files (AGENTS.md lists them).
+3. Build and install a debug APK on a device.
+4. Update `EXPECT_AGP`, `EXPECT_KOTLIN` and `EXPECT_GRADLE` in `.github/workflows/checks.yml`.
+
+The NDK is pinned there too (`NDK_VERSION`); move it in the same way, with a device test.
+
 ## Signing and publishing
 
 **Desktop.** The build above signs as it goes. Both installers go in the GitHub release, along with

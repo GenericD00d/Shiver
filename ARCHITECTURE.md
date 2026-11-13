@@ -72,7 +72,8 @@ scripts/check-version.py   checks the workspace and tauri.conf.json versions agr
 scripts/check-sharkord.py  checks Sharkord still has the test ids, storage keys, classes and conventions the bridges
                            and the plugin's client half match (`SHARKORD_REF`, the commit last checked against;
                            `--latest` for its default branch)
-.github/workflows/checks.yml  CI; sharkord.yml: the Sharkord check against its latest, weekly
+.github/workflows/checks.yml  CI; audit.yml: the dependency audit, on every push and weekly;
+                              sharkord.yml: the Sharkord check against its latest, weekly
 ```
 
 ## Modules

@@ -1,0 +1,42 @@
+# The dependency audit: on every push and pull request, and weekly, so an advisory published while
+# nothing is pushed still shows up (docs/standards.md, Security baseline rule 4). A failed scheduled
+# run emails the owner. Nothing here needs a secret.
+name: Dependency audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.0
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+        with:
+          key: cargo-audit
+      # a fixed release, so a new publish cannot run here unreviewed
+      - run: cargo install cargo-audit --locked --version 0.22.2
+      # one workspace, one lockfile
+      - run: cargo audit
+      # and each app's JavaScript (the bridge ships inside every server page); only the lockfile is read
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+        with:
+          bun-version: 1.4.0
+      - run: bun audit
+        working-directory: desktop
+      - run: bun audit
+        working-directory: mobile
