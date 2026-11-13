@@ -1,11 +1,42 @@
-# Releasing Shiver
+# Releasing
 
 Releases are built locally and deliberately, on one machine, because they need the Android SDK, JDK
 17 and two signing keys that are not in this repository and are not in CI. That is a defensible
 choice and it has one consequence worth being honest about: **those keys are a single point of
 failure, and losing either is not recoverable.** Most of this file is about that.
 
-## The two keys, and what each one protects
+## Versions
+
+Bump the version in **two** places:
+
+- `version` under `[workspace.package]` in the root `Cargo.toml`. Every crate inherits it, and
+  `desktop/src-tauri/tauri.conf.json` omits `version`, so the desktop build takes it from there.
+- `version` in `mobile/src-tauri/tauri.conf.json`, which Android needs and cannot get from the
+  crate.
+
+Then turn `## Unreleased` in `CHANGELOG.md` into `## <version> (<YYYY-MM-DD>)`.
+`python3 scripts/check-version.py` (run in CI) fails when the versions disagree, or when the
+changelog has no entry for the version.
+
+**Android is the exception and it fails quietly.** Gradle reads the version from
+`gen/android/app/tauri.properties`, which the CLI writes from `tauri.conf.json` — not from the
+crate, and not from the workspace. With no `version` there, nothing writes that file, and
+`build.gradle.kts` falls back to its own defaults:
+
+```kotlin
+versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
+versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+```
+
+So the build succeeds and produces a signed APK claiming to be **version 1.0, versionCode 1** —
+which no existing install will accept as an upgrade, and which nothing in the build says a word
+about. [Verifying a release](#verifying-a-release) checks it.
+
+The companion plugin is versioned separately. It installs separately and its
+`plugin/manifest.json` version is its own, bumped when the plugin changes rather than to match an
+app release.
+
+## Keys
 
 They protect different things and neither substitutes for the other.
 
@@ -19,23 +50,9 @@ They protect different things and neither substitutes for the other.
 | If it leaks | an attacker can sign an update — but still has to publish it where the updater looks | an attacker can build an APK that overwrites Shiver on any device that sideloads it |
 | If it is lost | **no existing desktop install can ever be updated again** | **no existing Android install can ever be updated again** |
 
-That last row is the important one, and it is the same on both sides for the same reason: the
-verifier is baked into what the user already has. A desktop Shiver checks updates against the public
-key compiled into it, and Android identifies an app by its package name *and* its signing
-certificate together. Sign with a different key and the system does not see an update — it sees a
-different app, and refuses to install over the top.
+The last row is covered in [If a key is lost or leaked](#if-a-key-is-lost-or-leaked).
 
-For Android there is no recovery at all. Key rotation exists (APK Signature Scheme v3 lineage, fine
-on `minSdk 26`) but it works by proving continuity *from the old key*, so it helps when a key is
-compromised and still held, not when it is gone. Play App Signing can reset a lost upload key, but
-Shiver ships APKs directly rather than through Play, so that route does not apply either.
-
-For the desktop the position is slightly better only because it is recoverable by brute force: ship
-a new version with a new public key compiled in, and tell every existing user to download it by
-hand, because their installed copy will reject anything signed with the new key. That is a release
-nobody can be automatically told about.
-
-## What to do about that, today
+### Backing them up
 
 **Back up both private keys, off that machine, before anything else in this file matters.**
 
@@ -52,39 +69,7 @@ Also back up, because they are needed to *use* the keys and are not secret:
 - the keystore's alias (`keyAlias` in `keystore.properties`)
 - the minisign public key, so a restored private key can be checked against what is already shipped
 
-## Building a release
-
-Bump the version in **two** places:
-
-- `version` under `[workspace.package]` in the root `Cargo.toml`. Every crate inherits it, and
-  `desktop/src-tauri/tauri.conf.json` omits `version`, so the desktop build takes it from there.
-- `version` in `mobile/src-tauri/tauri.conf.json`, which Android needs and cannot get from the
-  crate.
-
-`python3 scripts/check-version.py` (run in CI) fails when they disagree.
-
-**Android is the exception and it fails quietly.** Gradle reads the version from
-`gen/android/app/tauri.properties`, which the CLI writes from `tauri.conf.json` — not from the
-crate, and not from the workspace. With no `version` there, nothing writes that file, and
-`build.gradle.kts` falls back to its own defaults:
-
-```kotlin
-versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
-versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
-```
-
-So the build succeeds and produces a signed APK claiming to be **version 1.0, versionCode 1** —
-which no existing install will accept as an upgrade, and which nothing in the build says a word
-about. Check it before publishing:
-
-```bash
-aapt2 dump badging <apk> | head -1
-# package: name='com.shiver.mobile' versionCode='1005' versionName='0.1.5'
-```
-
-The companion plugin is versioned separately. It installs separately and its
-`plugin/manifest.json` version is its own, bumped when the plugin changes rather than to match an
-app release.
+## Building
 
 ### Desktop
 
@@ -110,14 +95,6 @@ Worth stating because the failure is quiet: a script still pointing at the old p
 that directory happened to hold, which for a while was the *previous* release's installers, and
 ships those instead.
 
-Both go in the GitHub release, along with a `latest.json` naming the version, the download URL and
-that signature — that file is what the updater fetches from
-`https://github.com/GenericD00d/Shiver/releases/latest/download/latest.json`.
-
-A release whose `latest.json` points at an installer whose `.sig` does not verify is not a broken
-update, it is a *silent* one: the updater refuses it and users simply never hear about the version.
-Check the signature verifies before publishing.
-
 ### Android
 
 ```bash
@@ -134,12 +111,6 @@ release build type in `gen/android/app/build.gradle.kts` now pins release APKs t
 whatever is in `jniLibs`, so the flag saves three pointless cross-compiles rather than the release.
 Debug builds keep every ABI, because an emulator wants x86_64.
 
-Worth confirming anyway, since it is one command and the claim is in the file name:
-
-```bash
-unzip -l <apk> | grep -o 'lib/[^/]*' | sort -u   # expect only lib/arm64-v8a
-```
-
 The build now refuses to produce an unsigned release APK — `failOnUnsignedRelease` in
 `gen/android/app/build.gradle.kts` fails the build, naming what is missing, if
 `keystore.properties` is absent or incomplete. Debug builds are unaffected and still work on a
@@ -155,22 +126,25 @@ The APK is Gradle's output rather than cargo's, so it did not move with the work
 mobile/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
 ```
 
-It is named after the variant rather than the version, so rename it on the way into the release —
-`Shiver_<version>_arm64.apk`, matching every release so far.
+## Signing and publishing
 
-An unsigned or differently-signed APK is the failure this guards against, and it is not obvious
-when it happens: it installs perfectly well on a phone that has no Shiver on it, and cannot update
-one that does. Check it before publishing, against the certificate every release since 0.1.0
-carries:
+**Desktop.** The build above signs as it goes. Both installers go in the GitHub release, along with
+a `latest.json` naming the version, the download URL and that signature — that file is what the
+updater fetches from `https://github.com/GenericD00d/Shiver/releases/latest/download/latest.json`.
 
-```bash
-apksigner verify --print-certs <apk>
-# Signer #1 certificate SHA-256 digest: 49e78c33db2056082cca67262ba1b7ef064b920606e08376b430164f0e51874b
-```
+A release whose `latest.json` points at an installer whose `.sig` does not verify is not a broken
+update, it is a *silent* one: the updater refuses it and users simply never hear about the version.
+Check the signature verifies before publishing.
 
-A different fingerprint there cannot upgrade an installed Shiver, whatever else is right about it.
+**Android.** The release APK is signed by the build. It is named after the variant rather than the
+version, so rename it on the way into the release — `Shiver_<version>_arm64.apk`, matching every
+release so far.
 
-## What is deliberately not signed
+**The companion plugin** is published as `shiver-plugin-<version>.zip` with a `SHA256SUMS.txt`
+beside it. The server manager installs it from there, so those names are a contract (see
+[docs/standards.md](docs/standards.md#contracts-between-the-repos)).
+
+### What is deliberately not signed
 
 Shiver's installers carry no OS-level code signature — no Authenticode on Windows, no Developer ID
 on macOS — which is why Windows SmartScreen warns on first run. The README says so plainly, and it
@@ -196,23 +170,7 @@ If that is ever worth fixing:
 
 Verify current pricing and eligibility rather than trusting this paragraph; these terms move.
 
-## If a key is compromised rather than lost
-
-Different problem, better options, because you still hold the key.
-
-- **Android:** rotate with `apksigner`'s signing lineage (`--lineage`), which signs with the new key
-  while proving descent from the old. Devices on Android 9+ accept the rotation; anything older
-  keeps trusting the old certificate, which is a reason to treat rotation as damage limitation
-  rather than a clean fix.
-- **Desktop:** generate a new minisign keypair, ship a version carrying the new public key signed
-  with the *old* one — existing installs will accept that update, and from then on they verify
-  against the new key. This only works while the old key is still usable, which is exactly the
-  window a compromise gives you. Do it before revoking anything.
-
-In both cases, say so publicly. A signature is a claim about provenance; a compromised key makes
-past claims unreliable, and only an announcement fixes that.
-
-## If releases ever move to CI
+### If releases ever move to CI
 
 They are local today and that is a deliberate trade — fewer moving parts, and the keys never leave
 one machine. If that changes:
@@ -225,3 +183,77 @@ one machine. If that changes:
   request that can change a workflow.
 - Keep the checks workflow as it is — no secrets, safe to run on a fork's pull request. Signing
   belongs in a separate workflow with a separate trigger. The two should never be the same job.
+
+## Verifying a release
+
+Before publishing, check each file against what users already have.
+
+**Desktop: the update signature.** A `.sig` is a minisign signature wrapped in base64, and the key
+is the one in `tauri.conf.json`:
+
+```bash
+base64 -d Shiver_<version>_x64-setup.exe.sig > setup.minisig
+minisign -Vm Shiver_<version>_x64-setup.exe -x setup.minisig \
+  -P RWQQW6FJ8JoiH9OCzoylrzR48Teh+rcwG584ewgR/vhCwlb80ViRxFAB
+```
+
+Do the same for the `.msi`.
+
+**Android: the version.** The build can quietly claim to be 1.0 (see [Versions](#versions)):
+
+```bash
+aapt2 dump badging <apk> | head -1
+# package: name='com.shiver.mobile' versionCode='1005' versionName='0.1.5'
+```
+
+**Android: the architectures.** Worth confirming, since it is one command and the claim is in the
+file name:
+
+```bash
+unzip -l <apk> | grep -o 'lib/[^/]*' | sort -u   # expect only lib/arm64-v8a
+```
+
+**Android: the signing certificate.** An unsigned or differently-signed APK is the failure this
+guards against, and it is not obvious when it happens: it installs perfectly well on a phone that
+has no Shiver on it, and cannot update one that does. Check it before publishing, against the
+certificate every release since 0.1.0 carries:
+
+```bash
+apksigner verify --print-certs <apk>
+# Signer #1 certificate SHA-256 digest: 49e78c33db2056082cca67262ba1b7ef064b920606e08376b430164f0e51874b
+```
+
+A different fingerprint there cannot upgrade an installed Shiver, whatever else is right about it.
+
+## If a key is lost or leaked
+
+**If it is lost.** That is the important case, and it is the same on both sides for the same reason:
+the verifier is baked into what the user already has. A desktop Shiver checks updates against the
+public key compiled into it, and Android identifies an app by its package name *and* its signing
+certificate together. Sign with a different key and the system does not see an update — it sees a
+different app, and refuses to install over the top.
+
+For Android there is no recovery at all. Key rotation exists (APK Signature Scheme v3 lineage, fine
+on `minSdk 26`) but it works by proving continuity *from the old key*, so it helps when a key is
+compromised and still held, not when it is gone. Play App Signing can reset a lost upload key, but
+Shiver ships APKs directly rather than through Play, so that route does not apply either.
+
+For the desktop the position is slightly better only because it is recoverable by brute force: ship
+a new version with a new public key compiled in, and tell every existing user to download it by
+hand, because their installed copy will reject anything signed with the new key. That is a release
+nobody can be automatically told about.
+
+**If it is leaked but still held.** A different problem, with better options, because you still
+hold the key.
+
+- **Android:** rotate with `apksigner`'s signing lineage (`--lineage`), which signs with the new key
+  while proving descent from the old. Devices on Android 9+ accept the rotation; anything older
+  keeps trusting the old certificate, which is a reason to treat rotation as damage limitation
+  rather than a clean fix.
+- **Desktop:** generate a new minisign keypair, ship a version carrying the new public key signed
+  with the *old* one — existing installs will accept that update, and from then on they verify
+  against the new key. This only works while the old key is still usable, which is exactly the
+  window a compromise gives you. Do it before revoking anything.
+
+In both cases, say so publicly. A signature is a claim about provenance; a compromised key makes
+past claims unreliable, and only an announcement fixes that.
