@@ -233,3 +233,7 @@ jobs:
 
       - name: Versions agree
         run: python3 scripts/check-version.py
+
+      # the files, sections, paths and links docs/standards.md requires, and this file's own pins
+      - name: Docs follow the Shiver standard
+        run: python3 scripts/check-docs.py
