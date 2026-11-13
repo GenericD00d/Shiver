@@ -112,3 +112,10 @@ Sharkord's Disconnect removes the session from the page, which looks just like a
 so recovery signed straight back in with the stored password. The desktop bridge now reports the
 user's own Disconnect, and the core keeps that entry signed out until the user signs in again
 (`session::disconnected_by_user`). That fixes the desktop app; Android is an open item.
+
+### The Android build failed after the Tauri CLI moved to AGP 9 (fixed)
+
+From 0.2.7 the CLI's template generates the Android Gradle plugin 9.3.1, which compiles Java for 11
+unless told otherwise, while `app/build.gradle.kts`, kept from the 0.1.0 template, set only
+Kotlin's target, 1.8. Kotlin's plugin refuses the mismatch, so CI's Android build, which generates
+the project afresh, failed from 7 November. The app now sets both to 1.8, as the new template does.
