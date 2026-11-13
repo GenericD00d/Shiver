@@ -22,7 +22,7 @@ jobs:
   # Windows: Shiver ships there, and Tauri needs no system packages on it.
   rust:
     name: Rust
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -50,7 +50,7 @@ jobs:
   # The shared crates hold the protocol and storage logic, and need nothing platform-specific.
   shared:
     name: Shared crates (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -67,7 +67,7 @@ jobs:
   # WebKitGTK profiles). The packages are Tauri's own Linux prerequisites.
   desktop-linux:
     name: Desktop (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -100,7 +100,7 @@ jobs:
   # and resources. Debug signs with the generated debug key, so no secret is needed.
   android:
     name: Android
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -124,15 +124,19 @@ jobs:
         run: bun install --frozen-lockfile
         working-directory: mobile
 
-      # The image's own SDK and NDK. Licence acceptance exits non-zero on this image, so it is
-      # tolerated; installing the pinned platform (compileSdk 36) is not.
+      # The image's SDK tools, with a pinned platform and NDK, so a new runner image can't change the
+      # build. Licence acceptance exits non-zero on this image, so it is tolerated; installing the
+      # pinned packages is not.
       - name: Android SDK
+        env:
+          NDK_VERSION: 30.0.16248370
         run: |
           sdkmanager=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
           [ -n "$sdkmanager" ] || { echo "no sdkmanager under $ANDROID_HOME/cmdline-tools" >&2; exit 1; }
           yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
-          "$sdkmanager" "platforms;android-36" "build-tools;36.0.0"
-          echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          "$sdkmanager" "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION"
+          test -d "$ANDROID_HOME/ndk/$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
       # `gen/android` is ignored except for the hand-written files, which init must not replace
       - name: Generate the Android project
@@ -140,6 +144,36 @@ jobs:
           (cd mobile && ./node_modules/.bin/tauri android init)
           git status --porcelain mobile/src-tauri/gen/android
           git checkout -- mobile/src-tauri/gen/android
+
+      # A Tauri CLI bump can move the generated project to a new Android Gradle plugin, Kotlin or
+      # Gradle, as 2.12.4 did (docs/decisions.md). This fails and names what moved, so the move is
+      # merged by hand (RELEASING.md, "When the Tauri CLI moves") instead of discovered in a build.
+      - name: The generated project's Gradle versions are the expected ones
+        env:
+          EXPECT_AGP: 9.3.1
+          EXPECT_KOTLIN: 2.2.10
+          EXPECT_GRADLE: 9.6.1
+        run: |
+          python3 - <<'DRIFT'
+          import os, pathlib, re, sys
+
+          gen = pathlib.Path("mobile/src-tauri/gen/android")
+          text = "\n".join(p.read_text(encoding="utf8") for p in gen.rglob("*")
+                           if p.is_file() and (p.suffix == ".kts" or p.name == "gradle-wrapper.properties"))
+          checks = {
+              "Android Gradle plugin": (r"com\.android\.tools\.build:gradle:([\w.-]+)", os.environ["EXPECT_AGP"]),
+              "Kotlin Gradle plugin": (r"kotlin-gradle-plugin:([\w.-]+)", os.environ["EXPECT_KOTLIN"]),
+              "Gradle": (r"gradle-([\w.-]+?)-(?:bin|all)\.zip", os.environ["EXPECT_GRADLE"]),
+          }
+          moved = []
+          for name, (pattern, expected) in checks.items():
+              found = set(re.findall(pattern, text))
+              if found != {expected}:
+                  moved.append(f"{name}: expected {expected}, generated {', '.join(sorted(found)) or 'nothing'}")
+          if moved:
+              sys.exit("tauri android init generated different versions:\n  " + "\n  ".join(moved))
+          print("AGP, Kotlin and Gradle are the expected versions")
+          DRIFT
 
       # The generated Gradle task runs the CLI through the package manager Tauri detected, which
       # differs on this runner; point it at the CLI binary directly (both edits are asserted).
@@ -170,7 +204,7 @@ jobs:
 
   frontend:
     name: Frontends and plugin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:

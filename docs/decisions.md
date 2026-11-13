@@ -77,6 +77,14 @@ the menu item being chosen shortly before, so a refusal within two minutes of ch
 cancelling is taken as a Disconnect too: the user then signs in by hand. A page can claim a
 Disconnect at any time, which only stops Shiver signing that one entry in.
 
+## 2026-11-13: Fixed CI runners and NDK, and a check on the generated Android project
+
+`ubuntu-latest`, `windows-latest` and the image's newest NDK let a build change while the repo
+didn't, and `tauri android init` in CI moved the Android project to AGP 9.3.1 unseen, which broke
+the Android build from 7 November. Runners now have fixed labels, the NDK is installed at a pinned
+version with `sdkmanager`, and a step fails when the generated AGP, Kotlin plugin or Gradle versions
+differ from the ones written in the workflow. RELEASING.md says what to do when they move.
+
 ## Open items
 
 - **macOS builds.** wry grants every page the camera and microphone there, so a macOS build must not

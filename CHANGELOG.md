@@ -7,6 +7,9 @@ Entries up to 0.2.8 were reconstructed from the commit history on 2026-11-13.
 
 ### Changed
 
+- CI runs on fixed runner images (`ubuntu-24.04`, `windows-2025`) with a pinned Android NDK
+  (30.0.16248370), and fails if a Tauri CLI update changes the generated Android Gradle plugin,
+  Kotlin or Gradle versions, so the build can't change while the repo doesn't.
 - The dependency audit (`cargo audit`, `bun audit`) runs weekly as well as on every push, in its own workflow (`.github/workflows/audit.yml`), so an advisory published while nothing is pushed still shows up. The Shiver standard is at version 2 for this.
 - The docs follow the Shiver standard ([docs/standards.md](docs/standards.md)): `AGENTS.md` is the
   entry point for agents, and SECURITY.md has a trust-boundaries table and a review history.
