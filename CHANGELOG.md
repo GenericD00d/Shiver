@@ -3,7 +3,7 @@
 Shiver's apps share one version. The companion plugin's own version is noted where it changed.
 Entries up to 0.2.8 were reconstructed from the commit history on 2026-11-13.
 
-## Unreleased
+## 0.2.9 (2026-11-14)
 
 ### Changed
 
