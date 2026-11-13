@@ -44,3 +44,18 @@ test('a clock that went back does not stretch the window', () => {
   wait(-1);
   expect(watch.take(true)).toBe(false);
 });
+
+test('a choice is pending until its connect form is taken, or the window passes', () => {
+  let now = 0;
+  const watch = createDisconnectWatch(() => now);
+
+  expect(watch.pending()).toBe(false);
+  watch.chosen();
+  expect(watch.pending()).toBe(true);
+  expect(watch.take(true)).toBe(true);
+  expect(watch.pending()).toBe(false);
+
+  watch.chosen();
+  now = DISCONNECT_WINDOW_MS;
+  expect(watch.pending()).toBe(false);
+});

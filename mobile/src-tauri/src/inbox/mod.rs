@@ -28,8 +28,8 @@ use sessions::{baseline_store_key, forget_session, renew, store_off_thread};
 
 pub use dms::{collect_dms, messages_seen, page_dms, DmEntry, PageDm};
 pub use sessions::{
-    forget_credentials, forget_everywhere, forget_password, harvest_token, remember_password,
-    remember_session, restore, session_for,
+    disconnected_by_user, forget_credentials, forget_everywhere, forget_password, harvest_token,
+    remember_password, remember_session, restore, session_for, signed_in_on_page,
 };
 
 /// Emitted to Shiver's own pages with the per-server unread counts.
@@ -195,6 +195,8 @@ pub fn sync(app: &AppHandle) {
         .registry()
         .servers
         .iter()
+        // after the user's own Disconnect, no connection either
+        .filter(|server| !server.disconnected)
         .map(|server| server.id.clone())
         .collect();
     let showing = app.state::<webview::Showing>().kept_by_page(WATCH_GRACE);

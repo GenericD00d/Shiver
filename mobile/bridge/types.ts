@@ -39,6 +39,10 @@ declare global {
     __SHIVER_DMS__?: () => { channelId: number; name: string; iconUrl: string | null }[] | null;
     /** polled by the core: retired push endpoints the plugin confirmed clearing (handed over once) */
     __SHIVER_CLEARED__?: () => string[];
+    /** the user chose Disconnect in the server menu, and this page is at its connect form since */
+    __SHIVER_DISCONNECTED__?: () => boolean;
+    /** past the connect form, with its own user known */
+    __SHIVER_SIGNED_IN__?: () => boolean;
     /** asked by the activity on a back press; true when the page used it */
     __SHIVER_BACK__?: () => boolean;
     /** asked by the core: open the conversation with this user, chosen in Shiver's DM list over the page */

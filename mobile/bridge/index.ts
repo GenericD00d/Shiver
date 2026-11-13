@@ -6,6 +6,7 @@
  */
 
 import { closeOpenMenu } from '../../shared/web/bridge/channel-menu';
+import { createDisconnectWatch, watchDisconnectChoice } from '../../shared/web/bridge/disconnect';
 import { defineHook, isTopFrame } from '../../shared/web/bridge/dom';
 import {
   closeSidePanel,
@@ -18,7 +19,7 @@ import {
 import { closedDms } from '../../shared/web/bridge/messages';
 import { seedSharkordMutes, watchSharkordMutes } from '../../shared/web/bridge/mutes';
 import { callPlugin, pushMutesToPlugin, storeReadFloor, syncMutesWithPlugin, waitForPlugin } from '../../shared/web/bridge/plugin';
-import { installMuteStyles, readDms, sharkordStore } from '../../shared/web/bridge/sharkord';
+import { CONNECT_FORM, installMuteStyles, readDms, SERVER_VIEW, sharkordStore } from '../../shared/web/bridge/sharkord';
 import { applyPageTheme } from '../../shared/web/bridge/theme';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
 import { installEditInComposer } from './edit';
@@ -56,7 +57,7 @@ function install(shiver: ShiverConfig) {
   installImageZoom();
   installReturnMakesALine();
   installEditInComposer();
-  installAutoReconnect(shiver.session, shiver.entryId);
+  installAutoReconnect(shiver.session, shiver.entryId, installDisconnectReport());
   installQuietReconnect();
 
   const muted = new Set(shiver.muted);
@@ -118,6 +119,33 @@ function install(shiver: ShiverConfig) {
   defineHook('__SHIVER_OPEN_DM__', (userName) => {
     if (typeof userName === 'string' && userName) openConversation(userName);
   });
+}
+
+/**
+ * The user's own Disconnect, told apart from a refused session as on the desktop
+ * (`shared/web/bridge/disconnect.ts`). The core reads `__SHIVER_DISCONNECTED__` and
+ * `__SHIVER_SIGNED_IN__` with the mutes and keeps the entry signed out until the user signs in
+ * again; the returned check keeps the page's own reconnect from signing it back in meanwhile.
+ */
+function installDisconnectReport() {
+  const watch = createDisconnectWatch();
+  let disconnected = false;
+
+  watchDisconnectChoice(watch.chosen);
+
+  const signedIn = () => typeof sharkordStore()?.getState()?.ownUserId === 'number' && document.querySelector(SERVER_VIEW) !== null;
+  const stayOut = () => {
+    if (watch.take(document.querySelector(CONNECT_FORM) !== null)) disconnected = true;
+    // signing in on the page again is the user's answer
+    if (disconnected && signedIn()) disconnected = false;
+
+    return disconnected || watch.pending();
+  };
+
+  defineHook('__SHIVER_DISCONNECTED__', () => stayOut() && disconnected);
+  defineHook('__SHIVER_SIGNED_IN__', signedIn);
+
+  return stayOut;
 }
 
 /**

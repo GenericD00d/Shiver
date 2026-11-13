@@ -22,11 +22,11 @@ Entries up to 0.2.8 were reconstructed from the commit history on 2026-11-13.
 
 ### Fixed
 
-- On desktop, choosing Disconnect on a server's own page now keeps Shiver signed out of that server,
-  after a restart too, until you sign in again there or with Shiver's form. The saved password is
-  kept. Shiver used to sign straight back in. Android still does, for now.
 - On desktop, the limit on how often Shiver tries to sign a server back in resets only once the page
   is really signed in, not whenever its connect form shows.
+- Choosing Disconnect on a server's own page now keeps Shiver signed out of that server, after a
+  restart too, until you sign in again there or with Shiver's form. The saved password is kept.
+  Shiver used to sign straight back in. This works on desktop and Android.
 
 ## 0.2.8 (2026-11-12)
 

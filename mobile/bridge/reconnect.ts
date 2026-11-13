@@ -57,7 +57,7 @@ const reachable = () =>
     .then((response) => response.ok)
     .catch(() => false);
 
-export function installAutoReconnect(session: string | null, entryId: string) {
+export function installAutoReconnect(session: string | null, entryId: string, stayOut: () => boolean = () => false) {
   let attempts = readAttempts();
   let nextAttemptAt = 0;
   /** a probe is in flight */
@@ -100,8 +100,9 @@ export function installAutoReconnect(session: string | null, entryId: string) {
       if (Date.now() - formSince < POLL_MS) return;
     }
 
-    // without a session Shiver holds, the connect form is the honest place to be
-    if (!session || attempts >= DELAYS_MS.length) return hideReconnecting();
+    // without a session Shiver holds, or after the user's own Disconnect, the connect form is the
+    // honest place to be
+    if (!session || stayOut() || attempts >= DELAYS_MS.length) return hideReconnecting();
 
     showReconnecting();
 

@@ -273,6 +273,7 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
         let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
 
         server.identity = None;
+        server.disconnected = false;
 
         Ok(server.origin.clone())
     })?;
@@ -298,10 +299,11 @@ pub async fn sign_in_server(
     let session = Zeroizing::new(login::sign_in(&origin, &identity, &password).await?);
 
     store.update(|registry| {
-        registry
-            .server_mut(&id)
-            .ok_or(Core::UnknownServer)?
-            .identity = Some(identity.clone());
+        let server = registry.server_mut(&id).ok_or(Core::UnknownServer)?;
+
+        server.identity = Some(identity.clone());
+        // signing in is what ends a Disconnect chosen on the page
+        server.disconnected = false;
 
         Ok(())
     })?;

@@ -8,7 +8,7 @@
  * entry in, which a server could do anyway by refusing the password.
  */
 
-import { SERVER_MENU_DISCONNECT } from '../../shared/web/bridge/sharkord';
+import { SERVER_MENU_DISCONNECT } from './sharkord';
 
 /**
  * How long after choosing Disconnect a connect form counts as its result. Sharkord asks for
@@ -23,6 +23,16 @@ export function createDisconnectWatch(clock: () => number = Date.now) {
     /** The menu item was chosen; the confirmation that follows is still the user's to answer. */
     chosen() {
       chosenAt = clock();
+    },
+
+    /**
+     * Whether Disconnect was chosen within the window and its connect form hasn't been taken yet:
+     * the confirmation is up, or its answer is on its way. Nothing should sign the page in then.
+     */
+    pending() {
+      const elapsed = chosenAt === null ? -1 : clock() - chosenAt;
+
+      return elapsed >= 0 && elapsed < DISCONNECT_WINDOW_MS;
     },
 
     /** Whether the page has just been disconnected by the user. Answers yes once per choice. */
