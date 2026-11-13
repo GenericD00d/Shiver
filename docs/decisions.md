@@ -60,6 +60,19 @@ checks and security baseline everywhere.
 `scripts/check-docs.py` checks the structure in CI. This file replaces decisions that were only in
 commit messages.
 
+## 2026-11-13: Disconnect on a server's page keeps Shiver signed out of it
+
+**Why:** choosing Disconnect in Sharkord's server menu is the user asking to leave, so Shiver must
+not undo it. Forgetting the password as well would make signing in again harder for no gain, since
+the user said nothing about the password.
+
+**Consequences:** `ServerEntry.disconnected` stops every automatic sign-in for that entry, across
+restarts, until the user signs in again with Shiver's form or on the page. The session is dropped
+and the page rebuilt without it. The bridge can only tell a Disconnect from a refused session by
+the menu item being chosen shortly before, so a refusal within two minutes of choosing it and then
+cancelling is taken as a Disconnect too: the user then signs in by hand. A page can claim a
+Disconnect at any time, which only stops Shiver signing that one entry in.
+
 ## Open items
 
 - **macOS builds.** wry grants every page the camera and microphone there, so a macOS build must not
@@ -67,6 +80,9 @@ commit messages.
 - **The Android seed key** is SHA-256 of the per-launch secret followed by the origin. HMAC-SHA256
   is the textbook construction. The current one isn't exploitable, because an origin cannot contain
   the padding a length-extension attack would need. Changing it needs a test on a device.
+- **Disconnect on Android.** The desktop app keeps a server signed out after Disconnect on its page
+  (decision of 2026-11-13). The Android app still signs back in. The same flag and bridge report
+  are needed in `mobile/`, tested on a device.
 
 ## Bug log
 
@@ -89,3 +105,10 @@ to `arm64-v8a` (`4221156`).
 
 With no `version` in `mobile/src-tauri/tauri.conf.json`, Gradle falls back to 1.0.
 `scripts/check-version.py` checks the version is there, and RELEASING.md says how to verify an APK.
+
+### Disconnect on a server's page was undone at once (fixed)
+
+Sharkord's Disconnect removes the session from the page, which looks just like a refused session,
+so recovery signed straight back in with the stored password. The desktop bridge now reports the
+user's own Disconnect, and the core keeps that entry signed out until the user signs in again
+(`session::disconnected_by_user`). That fixes the desktop app; Android is an open item.

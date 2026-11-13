@@ -44,6 +44,10 @@ pub struct ServerEntry {
     /// which of its messages notify
     #[serde(default)]
     pub notify: shiver_core::model::NotifyLevel,
+    /// the user chose Disconnect on the server's page: Shiver does not sign this entry in (and keeps
+    /// its password) until the user signs in again, on the page or with Shiver's form
+    #[serde(default)]
+    pub disconnected: bool,
 }
 
 impl ServerEntry {

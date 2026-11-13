@@ -50,10 +50,11 @@ import {
   resolveDmChannels,
   silenceMessagePing
 } from './notifications';
+import { createDisconnectWatch, watchDisconnectChoice } from './disconnect';
 import { createDmTracker } from './dm-tracker';
 import { createHotkeyHandoff } from './hotkey-handoff';
 import { capturePageErrors, takePageErrors } from './page-errors';
-import { isClientReady, isFullscreen, isSignedOut, isStalled } from './page-state';
+import { atConnectForm, isClientReady, isFullscreen, isSignedIn, isSignedOut, isStalled } from './page-state';
 import { applyNotifyLevel, seedDefaults, seedSession } from './storage';
 import type { QueuedMute, QueuedNotification, ShiverConfig } from './types';
 import { setWindowHidden } from './visibility';
@@ -76,6 +77,7 @@ function install(shiver: ShiverConfig) {
   let markAllRead = false;
   const dms = createDmTracker(shiver.origin);
   const hotkeys = createHotkeyHandoff();
+  const disconnect = createDisconnectWatch();
   let notify = shiver.notify;
   /** set when the level changes on a loaded page, whose Sharkord read its switches at load */
   let notifyChangedLive = false;
@@ -92,6 +94,7 @@ function install(shiver: ShiverConfig) {
   });
 
   installExternalLinks((href) => openQueue.push(href));
+  watchDisconnectChoice(disconnect.chosen);
 
   onOpenDmFailure(() => {
     openDmFailed = true;
@@ -134,6 +137,9 @@ function install(shiver: ShiverConfig) {
       openDmFailed,
       ready: isClientReady(state),
       signedOut: connection !== 'connected' && isSignedOut(),
+      // ready at the connect form too, so signing in there needs saying
+      signedIn: isSignedIn(state),
+      userDisconnected: disconnect.take(connection !== 'connected' && atConnectForm()),
       stalled: connection !== 'connected' && connection !== 'connecting' && isStalled(),
       hotkeys: hotkeys.take(),
       mismatch: desktopMismatch(),
@@ -148,13 +154,15 @@ function install(shiver: ShiverConfig) {
     openDmFailed = false;
     markAllRead = false;
 
-    const { notifications, mutes, open, ready, signedOut, stalled, fullscreen, voice, viewingChannelId, mismatch } = drained;
-    const now = JSON.stringify([ready, signedOut, stalled, fullscreen, voice, viewingChannelId, mismatch]);
+    const { notifications, mutes, open, ready, signedIn, signedOut, stalled, fullscreen, voice, viewingChannelId, mismatch } =
+      drained;
+    const now = JSON.stringify([ready, signedIn, signedOut, stalled, fullscreen, voice, viewingChannelId, mismatch]);
     const queued =
       notifications.length ||
       mutes.length ||
       open.length ||
       drained.markAllRead ||
+      drained.userDisconnected ||
       drained.dms ||
       drained.syncedMutes ||
       drained.openDmFailed ||

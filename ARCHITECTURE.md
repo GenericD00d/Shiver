@@ -276,6 +276,9 @@ Modules: `lib` (the public types), `wire`, `html`, `unread`, `connection`, `chec
   - `token` (its `ok()`), and `token_for_new_page` (none when the page exists: rail clicks never
     touch the keychain).
   - `Recovery` and `recover`: signing in again when a page's seeded session is refused.
+  - `disconnected_by_user`, `signed_in_on_page` and `is_disconnected`: the user's own Disconnect
+    on a page, which `ServerEntry.disconnected` keeps until they sign in again. `session`, `renew`
+    and `recover` refuse a disconnected entry, and `watch::sync` gives it no socket.
 - **`secrets`**: `Secret` (Session/Password) in the OS keychain, read as `SecretString` (zeroised),
   with `*_off_thread` helpers.
 - **`voice`**: `VoiceState` (one call across servers, started only by the page on screen),
@@ -503,7 +506,10 @@ Kotlin in each plugin's `android/src/main/java`.
   - `conversations.ts`: `openDmChannelId`, conversation mode (`showConversation`,
     `openDirectMessage`, `selectChannelWhenReady`; an open dialog such as Sharkord's settings is
     closed first), `onOpenDmFailure`.
-  - `page-state.ts`: signed out, stalled, ready, fullscreen.
+  - `page-state.ts`: signed out, signed in, stalled, ready, fullscreen; `atConnectForm`.
+  - `disconnect.ts`: `watchDisconnectChoice` notes Sharkord's Disconnect item being chosen, and
+    `createDisconnectWatch` reports the connect form that follows as the user's own
+    (`userDisconnected`, once); tested in `disconnect.test.ts`.
   - `dm-tracker.ts` (`createDmTracker`: the DM list for the core, each conversation's latest message,
     redrawn only when it changed) and `hotkey-handoff.ts` (`createHotkeyHandoff`: the page's
     shortcuts held for the drain and the core's answer passed back); both tested in
@@ -636,6 +642,12 @@ Kotlin in each plugin's `android/src/main/java`.
 - A page whose seeded session is refused reports itself signed out. `session::recover` signs in
   again and rebuilds the page (`Recovery`). If it can't, the shell is told once
   (`shiver://signed-out`) and asks the user.
+- Choosing Disconnect on the page also ends at the connect form, but the bridge reports it as
+  `userDisconnected`. `session::disconnected_by_user` sets `ServerEntry.disconnected`, drops the
+  stored session (keeping the password) and rebuilds the page without one, so a reload can't sign
+  it back in. Nothing signs that entry in, after a restart either, until the user does: with
+  Shiver's form (`sign_in_server`), or on the page, which then reports `signedIn`
+  (`session::signed_in_on_page`). Android doesn't do this yet ([docs/decisions.md](docs/decisions.md#open-items)).
 - A log-out or removal holds `CREDENTIALS`, so a renewal finishing meanwhile can't store a session
   again.
 

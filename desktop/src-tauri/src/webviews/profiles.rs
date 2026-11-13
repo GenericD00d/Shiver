@@ -157,6 +157,7 @@ mod tests {
             profile: profile.map(str::to_string),
             media_allowed: false,
             notify: NotifyLevel::default(),
+            disconnected: false,
         }
     }
 

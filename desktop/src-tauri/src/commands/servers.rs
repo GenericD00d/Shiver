@@ -135,6 +135,7 @@ pub async fn add_server(
             profile: None,
             media_allowed: false,
             notify: NotifyLevel::default(),
+            disconnected: false,
         };
 
         registry.servers.push(entry.clone());
@@ -218,6 +219,7 @@ pub async fn log_out_server(app: AppHandle, store: State<'_, Store>, id: String)
         server.identity = None;
         server.profile = Some(Uuid::new_v4().simple().to_string());
         server.media_allowed = false;
+        server.disconnected = false;
 
         Ok(server.clone())
     })?;
@@ -269,6 +271,8 @@ pub async fn sign_in_server(
 
         server.account_label.get_or_insert_with(|| identity.clone());
         server.identity = Some(identity.clone());
+        // signing in is what ends a Disconnect chosen on the page
+        server.disconnected = false;
 
         Ok(())
     })?;

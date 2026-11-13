@@ -142,7 +142,9 @@ pub fn sync(app: &AppHandle) {
         .registry()
         .servers
         .iter()
-        .filter(|entry| entry.identity.is_some() && !parked.contains(&entry.id))
+        .filter(|entry| {
+            entry.identity.is_some() && !entry.disconnected && !parked.contains(&entry.id)
+        })
         .filter(|entry| {
             app.get_webview(&webviews::webview_label(&entry.id))
                 .is_none()

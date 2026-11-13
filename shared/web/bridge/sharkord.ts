@@ -66,6 +66,8 @@ export const SIDE_PANEL = '.bg-card[class~="hidden"][class~="lg:flex"]:not(.w-0)
 export const NARROW = '(width < 64rem)';
 export const CONNECT_FORM = '[data-testid="connect-form"]';
 export const SERVER_VIEW = '[data-testid="server-view"]';
+/** "Disconnect" in the server menu, which asks for confirmation before it ends the session */
+export const SERVER_MENU_DISCONNECT = '[data-testid="server-menu-disconnect"]';
 /** each message's wrapper */
 export const MESSAGE_WRAPPER = '[id^="message-"]';
 /** a reaction pill the user is part of (Sharkord marks it with only a 1px border) */

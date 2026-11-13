@@ -7,6 +7,10 @@
 //! Recovery attempts are capped and spaced, and the count resets only when a page actually reports
 //! it is signed in again — so a page that keeps claiming "signed out" (a hostile one, or a Sharkord
 //! change Shiver does not understand) cannot make Shiver re-send the password forever.
+//!
+//! Choosing Disconnect on the server's own page is not a refused session: Shiver then stays signed
+//! out of that entry, across restarts, until the user signs in again on the page or with Shiver's
+//! form. The password is kept for that (`disconnected_by_user`).
 
 use std::{
     collections::HashMap,
@@ -24,7 +28,7 @@ use crate::{
     drain::Readiness,
     model::ServerEntry,
     secrets::{self, Secret},
-    store::Store,
+    store::{RegistryStore, Store},
     voice::VoiceState,
     webviews::{self, ActiveServer},
 };
@@ -47,6 +51,11 @@ pub async fn token(app: &AppHandle, entry: &ServerEntry) -> Option<String> {
 /// A session token, or why there is none: no way to sign in (no password, or the server refused it,
 /// which only the user can answer), or the server could not be reached to sign in (which time does).
 pub async fn session(app: &AppHandle, entry: &ServerEntry) -> Result<String, NoSession> {
+    // asked of the registry, not `entry`: a socket's copy may be older than the user's Disconnect
+    if is_disconnected(app, &entry.id) {
+        return Err(NoSession::Signed);
+    }
+
     let stored = secrets::read_off_thread(Secret::Session, &entry.id)
         .await
         .map(|token| token.to_string());
@@ -99,17 +108,111 @@ fn renew_in_background(app: &AppHandle, entry: &ServerEntry) {
 /// it (which would sign the page back in the next time it is built).
 pub static CREDENTIALS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Whether the entry is still listed and signed in through Shiver.
+/// Whether the entry is still listed and signed in through Shiver: not removed, logged out of, or
+/// disconnected from on its page.
 fn still_signed_in(app: &AppHandle, entry_id: &str) -> bool {
     app.state::<Store>()
         .registry()
         .server(entry_id)
-        .is_some_and(|entry| entry.identity.is_some())
+        .is_some_and(|entry| entry.identity.is_some() && !entry.disconnected)
 }
 
-/// Signs in with the stored password and keeps the new session, unless the entry was logged out of
-/// or removed while it signed in.
+/// Whether the user chose Disconnect on this entry's page and has not signed in again since.
+pub fn is_disconnected(app: &AppHandle, entry_id: &str) -> bool {
+    app.state::<Store>()
+        .registry()
+        .server(entry_id)
+        .is_some_and(|entry| entry.disconnected)
+}
+
+/// The user chose Disconnect on the server's own page. As in a browser, the session ends and the
+/// page waits at its sign-in. Unlike a refused session, Shiver does not sign back in: not now, not
+/// after a restart, and not for a new page or a socket, until the user signs in again. The password
+/// stays, so that takes one click in Shiver's form.
+pub fn disconnected_by_user(app: &AppHandle, entry_id: &str) {
+    let entry = {
+        let store = app.state::<Store>();
+        let registry = store.registry();
+
+        // only an entry Shiver signs in has anything to stop
+        registry
+            .server(entry_id)
+            .filter(|entry| entry.identity.is_some() && !entry.disconnected)
+            .cloned()
+    };
+
+    let Some(entry) = entry else {
+        return;
+    };
+
+    let marked = app.state::<Store>().update(|registry| {
+        if let Some(server) = registry.server_mut(entry_id) {
+            server.disconnected = true;
+        }
+
+        Ok(())
+    });
+
+    if let Err(error) = marked {
+        log::warn!("could not keep {} disconnected: {error}", entry.origin);
+
+        return;
+    }
+
+    app.state::<Recovery>().forget_entry(entry_id);
+
+    let app = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        {
+            // after any renewal that is storing a session right now, which this then takes back
+            let _held = CREDENTIALS.lock().await;
+
+            if let Err(error) = secrets::forget_off_thread(Secret::Session, &entry.id).await {
+                log::warn!("could not drop the session for {}: {error}", entry.origin);
+            }
+        }
+
+        // the page keeps the session it was built with, and would seed it again on a reload
+        if app
+            .get_webview(&webviews::webview_label(&entry.id))
+            .is_some()
+        {
+            rebuild_pages(&app, &entry, None);
+        }
+    });
+}
+
+/// The page reports it is signed in. After a Disconnect that is the user signing in again on the
+/// page, so Shiver goes back to signing this entry in itself.
+pub fn signed_in_on_page(app: &AppHandle, entry_id: &str) {
+    if !is_disconnected(app, entry_id) {
+        return;
+    }
+
+    let cleared = app.state::<Store>().update(|registry| {
+        if let Some(server) = registry.server_mut(entry_id) {
+            server.disconnected = false;
+        }
+
+        Ok(())
+    });
+
+    match cleared {
+        // a socket that found no session was parked
+        Ok(()) => crate::watch::restart(app, entry_id),
+        Err(error) => log::warn!("could not record signing in to {entry_id} again: {error}"),
+    }
+}
+
+/// Signs in with the stored password and keeps the new session, unless the entry was logged out of,
+/// disconnected from or removed while it signed in.
 async fn renew(app: &AppHandle, entry: &ServerEntry) -> Result<String, NoSession> {
+    // the password is not even sent while the user stays disconnected
+    if is_disconnected(app, &entry.id) {
+        return Err(NoSession::Signed);
+    }
+
     let (Some(identity), Some(password)) = (
         entry.identity.as_deref(),
         secrets::read_off_thread(Secret::Password, &entry.id).await,
@@ -226,7 +329,7 @@ pub fn recover(app: &AppHandle, entry_id: &str) -> bool {
         .state::<Store>()
         .registry()
         .server(entry_id)
-        .filter(|entry| entry.identity.is_some())
+        .filter(|entry| entry.identity.is_some() && !entry.disconnected)
         .cloned()
     else {
         return false;
@@ -259,13 +362,14 @@ async fn sign_in_again(app: &AppHandle, entry: &ServerEntry) -> bool {
         return false;
     };
 
-    rebuild_pages(app, entry, &token);
+    rebuild_pages(app, entry, Some(&token));
 
     true
 }
 
-/// Rebuilds an entry's pages so the bridge seeds the new session, leaving the user where they were.
-fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: &str) {
+/// Rebuilds an entry's pages so the bridge seeds the new session (or, with none, none at all),
+/// leaving the user where they were.
+fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: Option<&str>) {
     let (settings, muted) = {
         let store = app.state::<Store>();
         let registry = store.registry();
@@ -297,11 +401,11 @@ fn rebuild_pages(app: &AppHandle, entry: &ServerEntry, token: &str) {
         .is_some_and(|holder| holder != entry.id);
 
     let built = if let Some(name) = conversation {
-        webviews::show_conversation(app, entry, &settings, Some(token), &muted, locked, &name)
+        webviews::show_conversation(app, entry, &settings, token, &muted, locked, &name)
     } else if was_showing {
-        webviews::show_server(app, entry, &settings, Some(token), &muted, locked)
+        webviews::show_server(app, entry, &settings, token, &muted, locked)
     } else {
-        webviews::preload_server(app, entry, &settings, Some(token), &muted, locked)
+        webviews::preload_server(app, entry, &settings, token, &muted, locked)
     };
 
     if let Err(error) = built {

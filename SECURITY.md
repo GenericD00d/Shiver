@@ -32,7 +32,7 @@ each line, and their tests, are in [AGENTS.md](AGENTS.md#rules-that-must-not-bre
 | Untrusted | Where it comes in | What guards it |
 |---|---|---|
 | A server's page: its own client, or anything that server serves | The server's webview | Origin pinning on every navigation; no IPC and no capability; on desktop, commands only from Shiver's own webviews; on Android, no commands while a server page is up |
-| What a page reports about itself | The desktop drain, Android's page reads | Size caps, strict parsing, and nothing believed beyond that page's own entry |
+| What a page reports about itself | The desktop drain, Android's page reads | Size caps, strict parsing, and nothing believed beyond that page's own entry. A reported Disconnect only stops Shiver signing that entry in |
 | A server's API answers and socket frames | `shiver_core::probe` and `login`, `sharkord_client` | https only, Mozilla's roots, no redirects, size caps, text cleaned before it is shown |
 | Links a page hands over | `Openings`, `links::decide` | Rationed, from the page on screen only, opened after a native dialog or a site trusted from that same server |
 | `sharkord://` links, which any website can send | `deep_link` | They only fill in the add screen, under the same address rules as a typed address |
@@ -177,4 +177,4 @@ independent audit. Each row's commit is where its findings were fixed.
 | 2026-10-06 | Audit | `b44f00c` | Fixed once each finding was verified |
 | 2026-10-10 | Review of the 6 October fixes | `23e6a0a` | Four fixes that went too far or not far enough |
 | 2026-10-10 | Audit | `cbc672b` | Unread floors that only rose; a background renewal that could sign a logged-out server back in; smaller fixes |
-| 2026-11-13 | Review of the four Shiver repos | This branch | Sharkord's own in-page Disconnect was undone by Shiver signing straight back in |
+| 2026-11-13 | Review of the four Shiver repos | This branch (desktop; Android open) | Sharkord's own in-page Disconnect was undone by Shiver signing straight back in |
