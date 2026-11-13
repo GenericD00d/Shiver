@@ -28,6 +28,7 @@ serde_json.workspace = true
 # the update check follows GitHub's release redirect, so it has its own client
 reqwest.workspace = true
 semver = "1"
+hmac = "0.12"
 sha2 = "0.10"
 url.workspace = true
 uuid.workspace = true

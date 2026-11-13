@@ -12,9 +12,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use shiver_core::LockExt;
 use tauri::{window::Color, AppHandle, Emitter, Manager, Url, WebviewWindow};
 
@@ -44,17 +45,21 @@ fn seed_key() -> &'static str {
     KEY.get_or_init(|| uuid::Uuid::new_v4().simple().to_string())
 }
 
+/// HMAC-SHA256 of the page's origin, keyed with the per-launch secret. `document-start.ts`
+/// computes the same (`seedKeyFor` in `shared/web/seed-key.ts`); both tests share one vector.
 fn seed_key_for(secret: &str, url: &Url) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(format!("{secret}{}", url.origin().ascii_serialization()))
-    )
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC takes a key of any length");
+
+    mac.update(url.origin().ascii_serialization().as_bytes());
+    format!("{:x}", mac.finalize().into_bytes())
 }
 
 pub fn document_start() -> String {
+    // serialised like every value evaluated into a page, though the key is only ever hex
     format!(
-        "(function(SHIVER_SEED_KEY){{{DOCUMENT_START}\n}})(\"{}\");",
-        seed_key()
+        "(function(SHIVER_SEED_KEY){{{DOCUMENT_START}\n}})({});",
+        Value::from(seed_key())
     )
 }
 
@@ -604,7 +609,8 @@ mod tests {
 
         assert_eq!(
             key("https://chat.example.com/a"),
-            "98aee65411ec7dc40877b6a4f3f4215e6b200ca75c91c8f218a22d4c7f8a43ff"
+            // the same vector as shared/web/seed-key.test.ts
+            "0ae7efbc5b8f6a54a87aef499c9c6d7593400a074e0257b2b0ec313b1ef0abde"
         );
         assert_eq!(
             key("https://chat.example.com:443"),
