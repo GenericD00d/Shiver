@@ -176,6 +176,13 @@ pub struct DrainResult {
     pub ready: bool,
     #[serde(default)]
     pub signed_out: bool,
+    /// signed in: past the connect form, with its own user known
+    #[serde(default)]
+    pub signed_in: bool,
+    /// the user chose Disconnect in the page's server menu, so this connect form is theirs, not a
+    /// refused session (`session::disconnected_by_user`)
+    #[serde(default)]
+    pub user_disconnected: bool,
     /// the page will not recover by itself (Sharkord gave up, or no client started); see `drain::Stalls`
     #[serde(default)]
     pub stalled: bool,
@@ -713,6 +720,26 @@ mod tests {
                 .unwrap()
                 .mark_all_read
         );
+    }
+
+    /// Under the bridge's names (`desktop/bridge/types.ts`): a mismatch would read as "no" and
+    /// quietly bring back signing in after a Disconnect.
+    #[test]
+    fn the_pages_word_on_its_session_arrives_under_the_bridges_names() {
+        let result: DrainResult = serde_json::from_str(
+            r#"{ "ready": true, "signedOut": true, "signedIn": false, "userDisconnected": true }"#,
+        )
+        .unwrap();
+
+        assert!(result.signed_out && result.user_disconnected && !result.signed_in);
+
+        let signed_in: DrainResult = serde_json::from_str(r#"{ "signedIn": true }"#).unwrap();
+
+        assert!(signed_in.signed_in);
+
+        let older: DrainResult = serde_json::from_str("{}").unwrap();
+
+        assert!(!older.user_disconnected && !older.signed_in, "absent is no");
     }
 
     #[test]

@@ -41,4 +41,10 @@ plugin_package = json.loads((root / "plugin/package.json").read_text())["version
 if plugin != plugin_package:
     sys.exit(f"plugin/package.json has {plugin_package}, plugin/manifest.json has {plugin}")
 
+# Each release has its changelog entry, written with the version bump.
+changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+
+if not re.search(rf"^## {re.escape(version)} \(", changelog, re.M):
+    sys.exit(f"CHANGELOG.md has no '## {version} (<date>)' entry")
+
 print(f"every version is {version}; the plugin is {plugin}")

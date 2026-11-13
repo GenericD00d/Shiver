@@ -71,6 +71,10 @@ declare global {
       ready: boolean;
       /** the client refused the session and is asking for credentials */
       signedOut: boolean;
+      /** past the connect form, with its own user known */
+      signedIn: boolean;
+      /** the user chose Disconnect in Sharkord's server menu, so Shiver must not sign back in */
+      userDisconnected: boolean;
       /** Sharkord's client never started in this page (the core revives it) */
       stalled: boolean;
       voice: VoiceSnapshot | null;

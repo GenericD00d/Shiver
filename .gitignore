@@ -75,6 +75,9 @@ keystore.properties
 !RELEASING.md
 !ARCHITECTURE.md
 !CLAUDE.md
+!AGENTS.md
+!CHANGELOG.md
+!docs/*.md
 
 # bug-report screenshots
 example*.png

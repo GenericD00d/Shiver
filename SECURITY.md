@@ -1,4 +1,6 @@
-# Reporting a security problem
+# Security
+
+## Reporting a problem
 
 **Please do not open a public issue for a security problem.** Use GitHub's private reporting
 instead: **Security → Advisories → Report a vulnerability** on
@@ -11,7 +13,7 @@ something to report and asking for a way to send it — no details in the issue 
 Expect a first reply within a week. This is one person's side project, not a company with an
 on-call rota, and saying so is more useful than a service level I cannot meet.
 
-## What this project is
+## What this project handles
 
 Shiver is a desktop and Android client for [Sharkord](https://github.com/sharkord/sharkord). It
 handles session tokens and, by default, passwords; both live in the OS keychain on desktop and in
@@ -19,9 +21,25 @@ handles session tokens and, by default, passwords; both live in the OS keychain 
 unencrypted.
 
 **No independent security audit has been done.** The README says so and it is still true. What
-exists is a full internal review of the source, whose findings are fixed in the current tree.
+exists is a series of internal reviews, listed under [Review history](#review-history), whose
+findings were fixed as they were found.
 
-## What is in scope
+## Trust boundaries
+
+What Shiver does not trust, where it comes in, and what stands in its way. The rules that enforce
+each line, and their tests, are in [AGENTS.md](AGENTS.md#rules-that-must-not-break).
+
+| Untrusted | Where it comes in | What guards it |
+|---|---|---|
+| A server's page: its own client, or anything that server serves | The server's webview | Origin pinning on every navigation; no IPC and no capability; on desktop, commands only from Shiver's own webviews; on Android, no commands while a server page is up |
+| What a page reports about itself | The desktop drain, Android's page reads | Size caps, strict parsing, and nothing believed beyond that page's own entry. A reported Disconnect only stops Shiver signing that entry in |
+| A server's API answers and socket frames | `shiver_core::probe` and `login`, `sharkord_client` | https only, Mozilla's roots, no redirects, size caps, text cleaned before it is shown |
+| Links a page hands over | `Openings`, `links::decide` | Rationed, from the page on screen only, opened after a native dialog or a site trusted from that same server |
+| `sharkord://` links, which any website can send | `deep_link` | They only fill in the add screen, under the same address rules as a typed address |
+| Other users of a server running the companion plugin | The plugin's actions | Per-user rate limits, push endpoints vetted and pinned, and no markup from stored text |
+| Downloads offered as updates | `tauri-plugin-updater` | A minisign signature checked against the key compiled into the app |
+
+## In scope
 
 Roughly, anything that breaks one of the boundaries Shiver claims:
 
@@ -40,7 +58,7 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
 - **The bridge.** It is injected into every Sharkord page and is the only Shiver code that runs on
   a server's origin.
 
-## What is out of scope
+## Out of scope
 
 - **A malicious Sharkord server showing you misleading content.** Shiver renders a server's own
   client; a server can always lie to its own users, even drawing what looks like Shiver's own
@@ -53,7 +71,7 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   OS keychain.** At that point they are running as the user.
 - Reports from automated scanners with no working path to an impact.
 
-## Things worth knowing before you look
+## Design decisions worth knowing
 
 - **Servers are checked against Mozilla's root set only**, not the OS trust store —
   `rustls-tls-webpki-roots` for the websocket and reqwest's `rustls-tls` for http. A server behind a
@@ -142,3 +160,21 @@ Roughly, anything that breaks one of the boundaries Shiver claims:
   checked, and the request is sent over TLS on port 443 to that vetted address with the hostname as
   SNI, so DNS rebinding cannot redirect it. Deliveries in flight are capped server-wide, and the
   queue waiting behind them is bounded.
+
+## Review history
+
+Every review so far has been internal and LLM-assisted, run against the whole tree. None is an
+independent audit. Each row's commit is where its findings were fixed.
+
+| Date | Review | Fixed in | What it found |
+|---|---|---|---|
+| 2026-09-19 | Source review | `bb6c2e9` | 46 findings across the tree |
+| 2026-09-21 | Second pass | `210849a`, `f7a40cf` | The second-pass findings, a broken build, a dependency audit that never ran, and 13 inconsistencies |
+| 2026-09-23 | Companion plugin | `3e73e9d` | Push delivery made pinned; SSRF gaps closed; row writes serialised |
+| 2026-09-25 | In-depth security analysis | `c57214c` | Link dialogs, camera and microphone gating, download gating, the per-launch Android seed key, and more |
+| 2026-09-28 | Security review | `31b6e70` | The gaps it found |
+| 2026-10-01 | Whole-repo review | `44bf654` | A bridge origin guard; notifications split out |
+| 2026-10-06 | Audit | `b44f00c` | Fixed once each finding was verified |
+| 2026-10-10 | Review of the 6 October fixes | `23e6a0a` | Four fixes that went too far or not far enough |
+| 2026-10-10 | Audit | `cbc672b` | Unread floors that only rose; a background renewal that could sign a logged-out server back in; smaller fixes |
+| 2026-11-13 | Review of the four Shiver repos | This branch (desktop; Android open) | Sharkord's own in-page Disconnect was undone by Shiver signing straight back in |

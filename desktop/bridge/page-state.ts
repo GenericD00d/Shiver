@@ -18,12 +18,15 @@ const nativeApply = Reflect.apply;
 
 export const isFullscreen = () => !!nativeFullscreenElement && nativeApply(nativeFullscreenElement, document, []) !== null;
 
+/** Whether Sharkord's connect form is up. */
+export const atConnectForm = () => document.querySelector(CONNECT_FORM) !== null;
+
 /**
  * Whether the client gave up on the session: the connect form is up and auto-login is no longer
  * `true` (Sharkord sets it false when it refuses a token; absent means nothing was seeded).
  */
 export function isSignedOut() {
-  if (!document.querySelector(CONNECT_FORM)) return false;
+  if (!atConnectForm()) return false;
 
   try {
     return localStorage.getItem(AUTO_LOGIN) !== 'true';
@@ -52,9 +55,12 @@ export function isStalled() {
   return Date.now() - startedAt > STALL_MS && !sharkordStore();
 }
 
-/** Connected (own user known and the server view mounted), or showing its connect form. */
-export function isClientReady(state: SharkordState) {
-  if (document.querySelector(CONNECT_FORM)) return true;
-
+/** Signed in: its own user known and the server view mounted. */
+export function isSignedIn(state: SharkordState) {
   return typeof state.ownUserId === 'number' && document.querySelector(SERVER_VIEW) !== null;
+}
+
+/** Signed in, or showing its connect form. */
+export function isClientReady(state: SharkordState) {
+  return atConnectForm() || isSignedIn(state);
 }

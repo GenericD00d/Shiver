@@ -1,4 +1,5 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
@@ -82,11 +83,20 @@ android {
             )
         }
     }
-    kotlinOptions {
-        jvmTarget = "1.8"
+    // Java and Kotlin must target the same JVM: AGP 9 compiles Java for 11 unless told, and
+    // Kotlin's plugin refuses a mismatch. 1.8 as in Tauri's template, and the plugins'.
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
     buildFeatures {
         buildConfig = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_1_8
     }
 }
 

@@ -684,16 +684,31 @@ fn apply_page_state(
         }
     }
 
+    // the user's own Disconnect keeps Shiver out until they sign in again, which signing in on the
+    // page counts as; staying out wins if a page claims both
+    if result.user_disconnected {
+        session::disconnected_by_user(app, entry_id);
+    } else if result.signed_in {
+        session::signed_in_on_page(app, entry_id);
+    }
+
+    let disconnected = result.user_disconnected || session::is_disconnected(app, entry_id);
     let recovery = app.state::<session::Recovery>();
-    let recovering = result.signed_out && session::recover(app, entry_id);
+    let recovering = result.signed_out && !disconnected && session::recover(app, entry_id);
     let ready = result.ready && !recovering;
 
     if result.ready && !result.signed_out {
         recovery.confirmed(entry_id);
     }
 
-    // Shiver cannot sign this one in, so it asks (once) rather than leave the server's login form
-    if result.signed_out && !recovering && has_identity && recovery.take_prompt(entry_id) {
+    // Shiver cannot sign this one in, so it asks (once) rather than leave the server's login form;
+    // not after a Disconnect, when that form is what the user asked for
+    if result.signed_out
+        && !recovering
+        && !disconnected
+        && has_identity
+        && recovery.take_prompt(entry_id)
+    {
         let _ = app.emit_to(
             SHELL_WEBVIEW,
             SIGNED_OUT_EVENT,

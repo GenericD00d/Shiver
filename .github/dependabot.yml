@@ -1,0 +1,10 @@
+# Keeps the GitHub Actions pinned in .github/workflows current: each pin is a commit SHA with its
+# version in a comment, which Dependabot updates together. Same file in every Shiver repo.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: CI

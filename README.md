@@ -18,9 +18,8 @@ What that means in practice:
 
 - **No independent security audit has been done.** It handles your session tokens and, by default,
   your password. Both go in the OS keychain — or `EncryptedSharedPreferences` on Android — never in
-  a file, but read the code before you trust it with either. A full internal review of the source
-  has been done and its findings are fixed in the current tree; that is not the same as an outside
-  audit and is not offered as one.
+  a file, but read the code before you trust it with either. Its internal reviews, and what each one
+  found, are listed in [SECURITY.md](SECURITY.md#review-history); they are not an outside audit.
 - **The installers are unsigned**, so Windows SmartScreen will warn on first run. Desktop updates
   are checked against a signing key built into the binary and will not install without it, so
   losing control of the GitHub account is not enough to ship code to anyone; Windows still has no
@@ -99,6 +98,44 @@ follow you between devices: muted channels, custom statuses, and the push endpoi
 server wake your phone. It also draws usernames in their role colour (an admin can turn that off).
 Everyone on the server gets statuses and colours, browser users included.
 
+## Install
+
+From the [latest release](https://github.com/GenericD00d/Shiver/releases/latest):
+
+- **Windows**: `Shiver_<version>_x64-setup.exe`, or the `.msi`. The installers are unsigned, so
+  SmartScreen warns the first time; updates after that are signed and checked (see
+  [RELEASING.md](RELEASING.md)).
+- **Android 8.0 or newer**: `Shiver_<version>_arm64.apk`, installed by hand.
+- **Linux**: build it from source, as below.
+- **macOS** isn't supported yet; [SECURITY.md](SECURITY.md) says what is missing.
+
+The companion plugin is optional and goes on a server; [plugin/README.md](plugin/README.md) covers
+installing it.
+
+## Usage
+
+- **Add a server** with **+** at the bottom of the rail. Type its address (https only), or follow
+  Sharkord's "open in the desktop app" link. Shiver checks the server, shows its name and logo, and
+  signs you in.
+- **Move between servers** with the rail. On desktop, Ctrl+1 to 9 and Ctrl+Alt+Up/Down do the same.
+  Drag a server to reorder it, or onto another to make a folder.
+- **A server's menu** (right-click on desktop, hold on Android) has its notification level, signing
+  in and out, and **Forget my password**.
+- **Notifications** from every server collect behind the bell on desktop. Direct messages from every
+  server are in the list at the top of the rail.
+- **On Android**, swipe past Sharkord's channel drawer to reach the rail.
+
+## Settings
+
+Settings is the gear at the bottom of the rail:
+
+- **Appearance**: colour presets, and the five colours Shiver applies to itself and to each server's
+  client. On the defaults it restyles nothing.
+- **Notifications**: the sound volume, up to 250%, and the platform's own switches.
+- **Desktop only**: the microphone mute shortcut, closing to the tray, starting at login, camera and
+  microphone answers (Windows), and the log folder under About.
+- **Android only**: push notifications per server, over UnifiedPush.
+
 ## Known limitations
 
 - **The DM inbox on Android, for a server Shiver holds no session for.** Android lists each
@@ -135,9 +172,20 @@ handing you an artifact that installs on your own phone and can never update any
 `--debug` to build without it. [`RELEASING.md`](RELEASING.md) covers both signing keys, what each
 protects, and what is and is not recoverable if one is lost.
 
-## Layout
+Working on the code: [AGENTS.md](AGENTS.md) has the checks to run and the rules not to break, and
+[ARCHITECTURE.md](ARCHITECTURE.md) maps every module.
 
-`desktop/` and `mobile/` are the two clients (each: `src/` Shiver's own UI, `bridge/` the script
-injected into Sharkord pages, `src-tauri/` the Rust core), `shared/` is what both use, and `plugin/`
-is the optional companion plugin. [`ARCHITECTURE.md`](ARCHITECTURE.md) maps every module in detail.
+## The Shiver family
+
+- **Shiver**, this repo: the desktop and Android client, and the companion plugin
+- [shiver-server-manager](https://github.com/GenericD00d/shiver-server-manager): sets up and runs
+  Sharkord servers, with the Shiver plugins, from a terminal menu or a web page
+- [shiver-media-player](https://github.com/GenericD00d/shiver-media-player): a plugin for watching
+  videos together in a voice channel
+- [shiver-temp-share](https://github.com/GenericD00d/shiver-temp-share): a plugin for sharing large
+  files with links that expire
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
 
