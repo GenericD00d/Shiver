@@ -108,17 +108,11 @@ clears it. Not yet tried on a device.
 
 - **macOS builds.** wry grants every page the camera and microphone there, so a macOS build must not
   ship until Shiver answers those requests itself. See SECURITY.md.
-- **Disconnect on Android.** The desktop app keeps a server signed out after Disconnect on its page
-  (decision of 2026-11-13). The Android app still signs back in. The same flag and bridge report
-  are needed in `mobile/`, tested on a device.
 - **Android SDK 37 and Tauri v3.** The Tauri CLI's new template sets `compileSdk` and `targetSdk`
   to 37 and turns off AGP 9's built-in Kotlin and new DSL in `gradle.properties` "until Tauri v3".
   Move to SDK 37 when Google Play requires it, testing on a device, since a new target SDK changes
   runtime behaviour; drop those flags when Tauri v3 does. The plugins' build files already use
   `kotlin { compilerOptions }`.
-- **The Android seed key** is SHA-256 of the per-launch secret followed by the origin. HMAC-SHA256
-  is the textbook construction. The current one isn't exploitable, because an origin cannot contain
-  the padding a length-extension attack would need. Changing it needs a test on a device.
 
 ## Bug log
 
