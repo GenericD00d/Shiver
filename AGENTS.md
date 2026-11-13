@@ -99,7 +99,8 @@ SECURITY.md explains why each one matters.
 - **Shared constants** stay in step between `shared/web/settings.ts` and `shiver_core::model`.
 - **Android's generated project** (`mobile/src-tauri/gen/android/`) is mostly generated, but
   `MainActivity.kt`, `AndroidManifest.xml`, `res/xml/` and `res/values*/` are hand-written. Merge
-  the output of `tauri android init`; never accept it whole.
+  the output of `tauri android init`; never accept it whole. When the Tauri CLI moves, CI fails
+  on the generated Gradle versions: follow RELEASING.md, "When the Tauri CLI moves".
 - **Compatibility code** to delete once upgrading from those versions is no longer supported:
   - `push::migrate_tokens` and `ensure_push_tokens`, for Android 0.1.4 and older;
   - `remove_legacy_cache` in `shiver_core::store`, for 0.1.0 to 0.1.2;

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # sha256 of docs/standards.md, with line endings normalised to \n. It changes only when the standard
 # does: see "Changing this standard" in docs/standards.md.
-STANDARDS_SHA256 = "6a25e29fe7ace179e85922d5a26ed64b98ec53b1f578b8cb5a6a8583c1cebb59"
+STANDARDS_SHA256 = "c4c2c9d623358750809bb83b56cdafbafd7829df1d7279a9a8c51735504f78dd"
 
 MAX_AGENTS_LINES = 200
 
