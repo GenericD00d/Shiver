@@ -78,7 +78,7 @@ Disconnect at any time, which only stops Shiver signing that one entry in.
 The key a `#shiver-seed` fragment must carry was SHA-256 of the per-launch secret followed by the
 origin. That wasn't exploitable, since an origin can't carry the padding a length extension needs,
 but HMAC-SHA256 is the textbook construction. `seed_key_for` and `seedKeyFor`
-(`mobile/bridge/seed-key.ts`) now compute HMAC-SHA256 of the origin keyed with the secret, with
+(`shared/web/seed-key.ts`) now compute HMAC-SHA256 of the origin keyed with the secret, with
 one shared test vector, and `document_start` serialises the key with `serde_json`, as every value
 evaluated into a page is.
 

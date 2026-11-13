@@ -19,7 +19,7 @@ import { defineHook, installExternalLinks, isTopFrame } from '../../shared/web/b
 import { watchDmActivity } from '../../shared/web/bridge/messages';
 import { watchSharkordMutes } from '../../shared/web/bridge/mutes';
 import { installSessionShim, takeSeedFromLocation } from '../../shared/web/session';
-import { seedKeyFor } from './seed-key';
+import { seedKeyFor } from '../../shared/web/seed-key';
 
 declare const SHIVER_SEED_KEY: string;
 

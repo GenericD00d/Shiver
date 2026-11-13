@@ -46,7 +46,7 @@ fn seed_key() -> &'static str {
 }
 
 /// HMAC-SHA256 of the page's origin, keyed with the per-launch secret. `document-start.ts`
-/// computes the same (`seedKeyFor` in `mobile/bridge/seed-key.ts`); both tests share one vector.
+/// computes the same (`seedKeyFor` in `shared/web/seed-key.ts`); both tests share one vector.
 fn seed_key_for(secret: &str, url: &Url) -> String {
     let mut mac =
         Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC takes a key of any length");
@@ -609,7 +609,7 @@ mod tests {
 
         assert_eq!(
             key("https://chat.example.com/a"),
-            // the same vector as mobile/bridge/seed-key.test.ts
+            // the same vector as shared/web/seed-key.test.ts
             "0ae7efbc5b8f6a54a87aef499c9c6d7593400a074e0257b2b0ec313b1ef0abde"
         );
         assert_eq!(
