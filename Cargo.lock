@@ -4047,7 +4047,7 @@ dependencies = [
 
 [[package]]
 name = "sharkord-client"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "futures-util",
  "log",
@@ -4062,7 +4062,7 @@ dependencies = [
 
 [[package]]
 name = "shiver"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "base64 0.22.1",
  "keyring",
@@ -4096,7 +4096,7 @@ dependencies = [
 
 [[package]]
 name = "shiver-core"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
@@ -4111,7 +4111,7 @@ dependencies = [
 
 [[package]]
 name = "shiver-mobile"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "hmac",
  "reqwest 0.12.28",
@@ -4757,7 +4757,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-shiver-push"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -4768,7 +4768,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-shiver-rail"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -4779,7 +4779,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-shiver-secrets"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "serde",
  "serde_json",
